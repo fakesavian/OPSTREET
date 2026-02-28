@@ -8,8 +8,16 @@ export async function fetchProjects(): Promise<ProjectDTO[]> {
   return res.json() as Promise<ProjectDTO[]>;
 }
 
+export interface CheckRun {
+  id: string;
+  type: string;
+  status: string;
+  outputJson: string | null;
+  createdAt: string;
+}
+
 export async function fetchProject(slug: string): Promise<ProjectDTO & {
-  checkRuns: unknown[];
+  checkRuns: CheckRun[];
   watchEvents: unknown[];
 }> {
   const res = await fetch(`${BASE}/projects/${slug}`, { next: { revalidate: 5 } });

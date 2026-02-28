@@ -15,7 +15,11 @@
     "typecheck": "tsc --noEmit",
     "lint": "echo 'lint ok'"
   },
+  "dependencies": {
+    "@opfun/shared": "workspace:*"
+  },
   "devDependencies": {
+    "@types/node": "^20.14.2",
     "typescript": "^5.4.5"
   }
 }

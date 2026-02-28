@@ -1,44 +1,23 @@
 /**
  * OPNet integration wrapper.
- * Milestone 1: stubs only.
- * Milestone 2+: will call Bob (opnet-bob MCP) tools: OpnetDev, OpnetAudit, OpnetCli.
- * SAFETY: never pass secrets, private keys, or seed phrases to these stubs or the MCP server.
+ * Milestone 2: scaffold + audit live via Bob MCP.
+ * Milestone 3+: deploy via Bob OpnetCli.
+ * SAFETY: never pass secrets, private keys, or seed phrases to Bob or this module.
  */
 
-export interface ScaffoldResult {
-  contractSource: string;
-  files: Record<string, string>;
-}
+export { BobClient, getBob } from "./bob-client.js";
+export { scaffoldContract, type ScaffoldInput, type ScaffoldOutput } from "./scaffolder.js";
+export { auditContract, type AuditOutput, type AuditIssue } from "./auditor.js";
+export {
+  generateOP20Contract,
+  type OP20TemplateVars,
+} from "./templates/op20-fixed.js";
 
-export interface AuditResult {
-  passed: boolean;
-  issues: Array<{ severity: "INFO" | "WARN" | "FAIL"; message: string }>;
-  summary: string;
-}
-
-export interface DeployResult {
+/** Stub: deploy to testnet (Milestone 3 will call Bob OpnetCli) */
+export async function deployToTestnet(_projectId: string): Promise<{
   contractAddress: string;
   deployTx: string;
-  buildHash: string;
   network: "testnet";
-}
-
-/** Stub: scaffold OP_20 contract (Milestone 2 will call OpnetDev via Bob) */
-export async function scaffoldOP20(_opts: {
-  name: string;
-  ticker: string;
-  decimals: number;
-  maxSupply: string;
-}): Promise<ScaffoldResult> {
-  throw new Error("Not implemented until Milestone 2 (requires Bob OpnetDev tool)");
-}
-
-/** Stub: run audit (Milestone 2 will call OpnetAudit via Bob) */
-export async function auditContract(_projectId: string): Promise<AuditResult> {
-  throw new Error("Not implemented until Milestone 2 (requires Bob OpnetAudit tool)");
-}
-
-/** Stub: deploy to testnet (Milestone 3 will call OpnetCli via Bob) */
-export async function deployToTestnet(_projectId: string): Promise<DeployResult> {
-  throw new Error("Not implemented until Milestone 3 (requires Bob OpnetCli tool)");
+}> {
+  throw new Error("Not implemented until Milestone 3 (requires Bob OpnetCli + funded testnet wallet)");
 }
