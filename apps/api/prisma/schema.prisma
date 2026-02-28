@@ -1,0 +1,56 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id             String    @id @default(cuid())
+  slug           String    @unique
+  name           String
+  ticker         String
+  decimals       Int       @default(18)
+  maxSupply      String    @default("1000000000")
+  description    String
+  linksJson      String    @default("{}")
+  iconUrl        String?
+  status         String    @default("DRAFT")
+  contractAddress String?
+  network        String    @default("testnet")
+  deployTx       String?
+  buildHash      String?
+  sourceRepoUrl  String?
+  riskScore      Int?
+  riskCardJson   String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  checkRuns   CheckRun[]
+  watchEvents WatchEvent[]
+}
+
+model CheckRun {
+  id         String   @id @default(cuid())
+  projectId  String
+  type       String
+  status     String   @default("PENDING")
+  outputJson String?
+  createdAt  DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model WatchEvent {
+  id         String   @id @default(cuid())
+  projectId  String
+  severity   String   @default("INFO")
+  title      String
+  detailsJson String?
+  txId       String?
+  createdAt  DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
