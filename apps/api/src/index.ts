@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { projectRoutes } from "./routes/projects.js";
+import { deployRoutes } from "./routes/deploy.js";
 
 const app = Fastify({ logger: { level: "info" } });
 
@@ -10,6 +11,7 @@ await app.register(cors, {
 });
 
 await app.register(projectRoutes);
+await app.register(deployRoutes);
 
 const port = Number(process.env["PORT"] ?? 3001);
 const host = process.env["HOST"] ?? "0.0.0.0";

@@ -4,7 +4,8 @@ export type ProjectStatus =
   | "READY"
   | "LAUNCHED"
   | "FLAGGED"
-  | "GRADUATED";
+  | "GRADUATED"
+  | "DEPLOY_PACKAGE_READY";
 
 export type CheckRunType = "SCAFFOLD" | "STATIC" | "AUDIT" | "DEPLOY";
 export type CheckRunStatus = "PENDING" | "OK" | "WARN" | "FAIL";

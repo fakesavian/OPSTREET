@@ -36,7 +36,13 @@ interface FullProject extends ProjectDTO {
   watchEvents: unknown[];
 }
 
-export function RunChecksPanel({ initialProject }: { initialProject: FullProject }) {
+export function RunChecksPanel({
+  initialProject,
+  onStatusChange,
+}: {
+  initialProject: FullProject;
+  onStatusChange?: (status: string) => void;
+}) {
   const [project, setProject] = useState<FullProject>(initialProject);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
@@ -47,6 +53,7 @@ export function RunChecksPanel({ initialProject }: { initialProject: FullProject
       if (res.ok) {
         const data = (await res.json()) as FullProject;
         setProject(data);
+        onStatusChange?.(data.status);
         return data.status;
       }
     } catch {
