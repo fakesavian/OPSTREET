@@ -25,11 +25,16 @@ model Project {
   sourceRepoUrl  String?
   riskScore      Int?
   riskCardJson   String?
+  pledgeCount    Int       @default(0)
+  viewCount      Int       @default(0)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
   checkRuns   CheckRun[]
   watchEvents WatchEvent[]
+
+  @@index([status])
+  @@index([pledgeCount])
 }
 
 model CheckRun {
@@ -41,16 +46,27 @@ model CheckRun {
   createdAt  DateTime @default(now())
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
 }
 
 model WatchEvent {
-  id         String   @id @default(cuid())
-  projectId  String
-  severity   String   @default("INFO")
-  title      String
+  id          String   @id @default(cuid())
+  projectId   String
+  severity    String   @default("INFO")
+  title       String
   detailsJson String?
-  txId       String?
-  createdAt  DateTime @default(now())
+  txId        String?
+  /// M9: Deduplication key — watcher sets this to prevent spam on recurring conditions.
+  /// Format: "<rule-code>:<projectId>" e.g. "CODE_CHANGE:clxxx". If an unresolved event
+  /// with the same dedupKey exists for this project within 24 h, the POST is skipped.
+  dedupKey    String?
+  /// M9: Set to true when the triggering condition is no longer active.
+  resolved    Boolean  @default(false)
+  createdAt   DateTime @default(now())
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
+  @@index([projectId, dedupKey])
 }

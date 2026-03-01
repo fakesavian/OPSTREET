@@ -107,6 +107,7 @@ async function postWatchEvent(
   severity: WatchSeverity,
   title: string,
   detailsJson?: Record<string, unknown>,
+  dedupKey?: string,
 ): Promise<void> {
   try {
     const res = await fetch(`${API_URL}/projects/${projectId}/watch-events`, {
@@ -115,7 +116,7 @@ async function postWatchEvent(
         "Content-Type": "application/json",
         "X-Admin-Secret": ADMIN_SECRET,
       },
-      body: JSON.stringify({ severity, title, detailsJson }),
+      body: JSON.stringify({ severity, title, detailsJson, dedupKey }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({})) as { error?: string };
@@ -172,19 +173,20 @@ async function monitorProject(bob: BobClient, project: FullProject): Promise<voi
     }
   } catch (err) {
     console.error(`[watcher] ${ticker}: getCode error:`, err);
-    await postWatchEvent(id, "WARN", `getCode RPC error — cannot verify contract`, {
-      error: err instanceof Error ? err.message : String(err),
-    });
+    await postWatchEvent(
+      id, "WARN", `getCode RPC error — cannot verify contract`,
+      { error: err instanceof Error ? err.message : String(err) },
+      `RPC_ERROR:${id}`,  // M9: dedup — only one RPC-error event per 24 h per project
+    );
     return;
   }
 
   if (!codePresent) {
     console.error(`[watcher] CRITICAL: ${ticker} contract code missing!`);
     await postWatchEvent(
-      id,
-      "CRITICAL",
-      `Contract code missing — possible rug or self-destruct`,
+      id, "CRITICAL", `Contract code missing — possible rug or self-destruct`,
       { address: contractAddress, hexAddress: hexAddr, rpcResponse: codeSummary },
+      `CODE_MISSING:${id}`,  // M9: dedup
     );
     return;
   }
@@ -194,10 +196,9 @@ async function monitorProject(bob: BobClient, project: FullProject): Promise<voi
   const codeFingerprint = codeSummary.slice(0, 64); // rough fingerprint
   if (prevCode !== undefined && prevCode !== codeFingerprint) {
     await postWatchEvent(
-      id,
-      "CRITICAL",
-      `Contract bytecode changed since last check — unexpected upgrade`,
+      id, "CRITICAL", `Contract bytecode changed since last check — unexpected upgrade`,
       { address: contractAddress, prevFingerprint: prevCode, currFingerprint: codeFingerprint },
+      `CODE_CHANGE:${id}:${codeFingerprint.slice(0, 8)}`,  // M9: unique per changed fingerprint
     );
   }
   lastCodeHash.set(id, codeFingerprint);
@@ -217,10 +218,9 @@ async function monitorProject(bob: BobClient, project: FullProject): Promise<voi
       const ownerFingerprint = slotText.slice(0, 128);
       if (prevOwner !== undefined && prevOwner !== ownerFingerprint) {
         await postWatchEvent(
-          id,
-          "WARN",
-          `Storage slot 0 (possible owner) changed since last check`,
+          id, "WARN", `Storage slot 0 (possible owner) changed since last check`,
           { prevValue: prevOwner, currValue: ownerFingerprint },
+          `OWNER_CHANGE:${id}:${ownerFingerprint.slice(0, 8)}`,  // M9: unique per new owner value
         );
       }
       lastOwnerSlot.set(id, ownerFingerprint);
@@ -233,8 +233,9 @@ async function monitorProject(bob: BobClient, project: FullProject): Promise<voi
   const cycles = (pollCycleCount.get(id) ?? 0) + 1;
   pollCycleCount.set(id, cycles);
   if (cycles % 3 === 0) {
+    // Heartbeat INFO — no dedupKey so each heartbeat is always recorded (low spam by design)
     await postWatchEvent(id, "INFO", `Contract alive — code and storage verified`, {
-      address: contractAddress, network: OPNET_NETWORK,
+      address: contractAddress, network: OPNET_NETWORK, cycle: cycles,
     });
   }
 
