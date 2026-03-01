@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
+import { WalletButton } from "./WalletButton";
 
 const NAV_LINKS = [
   { label: "Feed", href: "/" },
@@ -89,7 +90,13 @@ export function MobileNav() {
             {label}
           </a>
         ))}
-        <div className="mt-auto pt-6 border-t border-zinc-800 text-[10px] text-zinc-600">
+        {/* Wallet section */}
+        <div className="pt-4 border-t border-zinc-800">
+          <p className="text-[9px] uppercase tracking-wider text-zinc-600 mb-2">Wallet</p>
+          <WalletButton variant="mobile" />
+        </div>
+
+        <div className="mt-auto pt-4 text-[10px] text-zinc-600">
           OP_NET Testnet Only · No real money
         </div>
       </div>

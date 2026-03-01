@@ -3,6 +3,9 @@ import { z } from "zod";
 import { prisma } from "../db.js";
 
 const ADMIN_SECRET = process.env["ADMIN_SECRET"] ?? "dev-secret-change-me";
+// T5: Optional Discord webhook for CRITICAL alerts (fire-and-forget, opt-in)
+const DISCORD_WEBHOOK_URL = process.env["DISCORD_WEBHOOK_URL"];
+const APP_URL = process.env["APP_URL"] ?? "http://localhost:3000";
 
 // M9: How long a dedupKey suppresses duplicate events (24 hours).
 const DEDUP_WINDOW_MS = 24 * 60 * 60 * 1_000;
@@ -72,8 +75,50 @@ export async function watchEventRoutes(app: FastifyInstance) {
       app.log.warn(`[watchtower] Project ${project.id} (${project.ticker}) FLAGGED: ${result.data.title}`);
     }
 
+    // T5: Discord webhook — fire-and-forget, opt-in via DISCORD_WEBHOOK_URL env var
+    if (result.data.severity === "CRITICAL" && DISCORD_WEBHOOK_URL) {
+      const projectUrl = `${APP_URL}/p/${project.slug as string}`;
+      fetch(DISCORD_WEBHOOK_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          embeds: [
+            {
+              title: `⚠️ CRITICAL: ${result.data.title}`,
+              description: `**${project.ticker as string}** (${project.name as string})\n${projectUrl}`,
+              color: 0xff3333,
+              timestamp: new Date().toISOString(),
+              footer: { text: "OPFun Watchtower · Testnet" },
+            },
+          ],
+        }),
+      }).catch(() => undefined); // never block the response
+    }
+
     return reply.status(201).send(event);
   });
+
+  // PATCH /projects/:id/watch-events/:eventId/resolve — mark event resolved (admin-gated)
+  app.patch<{ Params: { id: string; eventId: string } }>(
+    "/projects/:id/watch-events/:eventId/resolve",
+    async (request, reply) => {
+      if (request.headers["x-admin-secret"] !== ADMIN_SECRET) {
+        return reply.status(401).send({ error: "Unauthorized" });
+      }
+
+      const event = await prisma.watchEvent.findFirst({
+        where: { id: request.params.eventId, projectId: request.params.id },
+      });
+      if (!event) return reply.status(404).send({ error: "Event not found" });
+
+      const updated = await prisma.watchEvent.update({
+        where: { id: event.id },
+        data: { resolved: true },
+      });
+
+      return reply.send(updated);
+    },
+  );
 
   // GET /projects/:id/watch-events — public read for feed / project page
   app.get<{ Params: { id: string } }>("/projects/:id/watch-events", async (request, reply) => {

@@ -2,7 +2,7 @@
 
 ---
 
-## Current State (last updated: Round 1 + toolchain complete)
+## Current State (last updated: Round 3 complete — all MUST + SHOULD items done)
 
 ### Done
 - [x] Milestone 1: Project CRUD + feed + project page (working)
@@ -18,12 +18,20 @@
 - [x] Bob MCP call timeout (30s, Promise.race)
 - [x] DB indexes on Project, CheckRun, WatchEvent
 - [x] Playwright + gitleaks toolchain installed; pnpm test + pnpm secrets:scan wired
+- [x] S2: ADMIN_SECRET fail-fast (prod exit, dev warn)
+- [x] S3: Status state machine (`assertCanTransition`, `canTransition`) — guards all transitions
+- [x] S4: Stale CHECKING projects reset to DRAFT on API boot
+- [x] S7: Watcher uses `?status=LAUNCHED` filter; API `GET /projects` supports `?status=` query param
+- [x] S8: Risk Card UI shows `contractMatchesArtifact` badge (green Verified / yellow Unverified)
+- [x] S9: Mobile nav (animated hamburger + slide-in drawer, closes on route change, body scroll lock)
+- [x] S10: Create form validation (inline errors, touched/submitAttempted state, char counter)
+- [x] S11: Neo-brutalism CSS (border-2, offset box-shadows, font-black, input-error utility)
+- [x] S12: Pledge button success flash ("Pledged! ♥" green for 2s, useRef transition detection)
+- [x] S13: Deploy panel 3-step progress indicator (Package → Deploy → Confirm)
+- [x] S14: Risk Card visual flag breakdown (color-coded rows, +pts badges, score bar)
 
 ### Broken / At Risk
-- [ ] ADMIN_SECRET defaults to "dev-secret-change-me" — API does not fail-fast in prod (security risk)
-- [ ] Projects stuck in CHECKING on restart — no cleanup on boot
-- [ ] Watcher fetches ALL projects then filters client-side (S7) — should use ?status=LAUNCHED
-- [ ] packages/risk is a stub (scoring is in auditor.ts) — the orphaned workspace can confuse devs
+- [ ] packages/risk is a stub (scoring is in auditor.ts) — orphaned workspace may confuse devs
 - [ ] opnet-bob MCP not registered in local config (Bob works at runtime via API but not via `claude mcp list`)
 
 ### Mocked / Simulation
@@ -43,25 +51,22 @@
 
 ---
 
-## Should-fix (quality) — Round 2 targets
+## Should-fix (quality) — ALL DONE ✅
 
-- [ ] S2: ADMIN_SECRET required at API startup (fail-fast or warn)
-- [ ] S3: Status transition validation helper (`assertCanTransition`)
-- [ ] S4: Reset stale CHECKING projects on API boot
-- [ ] S7: Watcher uses `?status=LAUNCHED` API query param; API supports query filter
-- [ ] S8: Risk Card UI shows `contractMatchesArtifact` badge (Verified / Unverified)
-- [ ] S9: Mobile nav (hamburger + drawer)
-- [ ] S10: Create form validation feedback (inline errors)
-- [ ] S11: Neo-brutalism UI punch (2px borders, orange CTAs, font-black headings)
-- [ ] S12: Pledge button clarity + feedback (loading state, success toast)
-- [ ] S13: Deploy panel — 3-step progress indicator (Package → Deploy → Confirm)
-- [ ] S14: Risk Card visual flag breakdown (color-coded rows, score bar)
-- [x] S1: DB indexes — done (Round 1)
-- [x] S5: run-checks idempotency — done (Round 1)
-- [x] S6: Watcher env var ADMIN_SECRET — done (Round 1)
-- [x] Playwright smoke test (create flow) — done (toolchain)
-- [x] Secrets scan (gitleaks) — done (toolchain)
-- [ ] Mobile UX pass (tap targets, responsive layout) — see S9/S11
+- [x] S1: DB indexes
+- [x] S2: ADMIN_SECRET fail-fast
+- [x] S3: Status transition state machine
+- [x] S4: Reset stale CHECKING on boot
+- [x] S5: run-checks idempotency
+- [x] S6: Watcher env var ADMIN_SECRET
+- [x] S7: Watcher + API `?status=` filter
+- [x] S8: contractMatchesArtifact badge
+- [x] S9: Mobile nav hamburger + drawer
+- [x] S10: Create form inline validation
+- [x] S11: Neo-brutalism CSS pass
+- [x] S12: Pledge success flash
+- [x] S13: Deploy 3-step progress indicator
+- [x] S14: Risk Card visual flag breakdown
 
 ---
 

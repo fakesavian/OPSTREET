@@ -1,121 +1,194 @@
 # OPFun Secure Launchpad
 
-> Launch fast on OP_NET — every token ships with an automated **Risk Card**, security checks, and live monitoring.
+> **Pump.fun-style token launches on OP_NET — with a Risk Card on every token.**
 
-**Testnet only. No real money. Fixed-supply tokens by default.**
+Every token launched here ships with:
+- Automated OP_20 contract scaffolding (via Bob AI / OPNet MCP)
+- A transparent **Risk Card** — permissions, token economics, release integrity
+- A 0–100 **risk score** computed from static analysis
+- A **Watchtower** that monitors deployed contracts and alerts on anomalies
+- A **bonding curve simulator** + pledge / graduation mechanic
+- **Bitcoin wallet login** (Unisat / OKX) for identity and pledge attribution
+
+**Testnet only. No real funds.**
 
 ---
 
 ## Quick start
 
-### 1. Prerequisites
+### Prerequisites
 
-- Node.js ≥ 18
-- pnpm ≥ 9 (`npm i -g pnpm`)
-- Claude Code + opnet-bob MCP (for Milestone 2+):
-  ```bash
-  claude mcp add --transport http opnet-bob https://ai.opnet.org/mcp
-  ```
+- Node.js >= 18
+- pnpm >= 9 (`npm install -g pnpm`)
 
-### 2. Install dependencies
+### Install
 
 ```bash
 cd opfun-secure-launchpad
 pnpm install
 ```
 
-### 3. Set up the database
+### Database setup
 
 ```bash
 pnpm db:migrate
+pnpm --filter api db:seed    # optional: seed a demo project
 ```
 
-Optionally seed a demo project:
-
-```bash
-pnpm db:seed
-```
-
-### 4. Run everything
+### Run everything locally
 
 ```bash
 pnpm dev
 ```
 
-This starts:
-| App | URL |
-|---|---|
-| Web (Next.js) | http://localhost:3000 |
-| API (Fastify) | http://localhost:3001 |
-| Watcher (logs) | console |
+| Process | URL | Description |
+|---------|-----|-------------|
+| `apps/web` | http://localhost:3000 | Next.js UI |
+| `apps/api` | http://localhost:3001 | Fastify REST API |
+| `apps/watcher` | — | Watchtower worker (polls every 5 min) |
 
 ---
 
-## Useful commands
+## Environment variables
 
-```bash
-# Individual apps
-pnpm --filter web dev
-pnpm --filter api dev
-pnpm --filter watcher dev
+### `apps/api/.env`
 
-# Type check all packages
-pnpm typecheck
+```env
+DATABASE_URL="file:./dev.db"
+PORT=3001
+ADMIN_SECRET="change-me-in-production"   # required — API exits in prod if default
+# DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."  # optional: CRITICAL alerts
+# APP_URL="https://yourapp.com"                               # used in Discord embed links
+```
 
-# Lint all
-pnpm lint
+### `apps/watcher/.env` (or shell env)
 
-# Prisma studio
-cd apps/api && npx prisma studio
+```env
+API_URL=http://localhost:3001
+ADMIN_SECRET=change-me-in-production
+WATCH_INTERVAL_MS=300000     # 5 minutes default
+```
+
+### `apps/web/.env.local`
+
+```env
+NEXT_PUBLIC_API_URL=http://localhost:3001
 ```
 
 ---
 
-## API endpoints (Milestone 1)
+## Connect Bob (OPNet MCP)
+
+Bob scaffolds OP_20 contracts and runs security audits automatically.
+
+```bash
+claude mcp add opnet-bob --transport http https://ai.opnet.org/mcp
+```
+
+No API key required. The API calls Bob when you click **Run Security Checks**.
+**Never** paste private keys or mnemonics into any prompt that reaches Bob.
+
+---
+
+## Wallet login
+
+Click **Connect Wallet** in the header (desktop) or mobile nav drawer.
+Supports [Unisat](https://unisat.io) and OKX Wallet (Bitcoin/Taproot).
+
+- Address is stored in `localStorage` only — nothing sent to the server except for pledge attribution.
+- Pledges are rate-limited 1 per wallet address (or IP if no wallet) per project per 24 h.
+
+---
+
+## Project lifecycle
+
+```
+DRAFT → CHECKING → READY → LAUNCHED → GRADUATED
+                       ↑         ↓
+                    FLAGGED  (Watchtower CRITICAL event)
+```
+
+| Status | Meaning |
+|--------|---------|
+| `DRAFT` | Created, not yet checked |
+| `CHECKING` | Scaffold + audit in progress |
+| `READY` | Checks passed, Risk Card generated |
+| `DEPLOY_PACKAGE_READY` | Deploy package generated, awaiting manual deploy |
+| `LAUNCHED` | Deployed to OP_NET testnet — Watchtower active |
+| `FLAGGED` | Watchtower detected a CRITICAL anomaly |
+| `GRADUATED` | Reached 100 pledges |
+
+---
+
+## API reference
+
+### Projects
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/projects` | — | Create project |
+| `GET` | `/projects?sort=new\|trending&status=LAUNCHED` | — | List projects (filterable) |
+| `GET` | `/projects/:slug` | — | Full project with checkRuns + watchEvents |
+| `POST` | `/projects/:id/run-checks` | — | Trigger async scaffold + audit |
+| `POST` | `/projects/:id/pledge` | — | Pledge (body: `{ walletAddress? }`) |
+| `POST` | `/projects/:id/view` | — | Record a page view |
+
+### Deploy (X-Admin-Secret required)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/projects` | Create a project |
-| `GET` | `/projects` | List all projects |
-| `GET` | `/projects/:slug` | Get project + check runs + events |
-| `POST` | `/projects/:id/run-checks` | *(stub — returns 501 until M2)* |
-| `GET` | `/health` | Health check |
+| `POST` | `/projects/:id/deploy` | Generate deploy package |
+| `POST` | `/projects/:id/confirm-deploy` | Record contract address + TX |
+| `GET` | `/projects/:id/deploy-package` | Get deploy instructions |
+
+### Watch Events
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/projects/:id/watch-events` | Admin | Write event (Watchtower) |
+| `GET` | `/projects/:id/watch-events` | — | List events (newest first) |
+| `PATCH` | `/projects/:id/watch-events/:eventId/resolve` | Admin | Mark event resolved |
+
+---
+
+## QA / security
+
+```bash
+pnpm typecheck      # TypeScript across all packages
+pnpm lint           # ESLint (Next.js rules)
+pnpm test           # Playwright smoke tests (requires running web app)
+pnpm secrets:scan   # Gitleaks scan of git history
+```
+
+---
+
+## Monorepo structure
+
+```
+opfun-secure-launchpad/
+├── apps/
+│   ├── web/       Next.js 14 App Router + Tailwind (neo-brutalism)
+│   ├── api/       Fastify + Prisma + Zod + SQLite
+│   └── watcher/   Watchtower background worker
+├── packages/
+│   ├── shared/    TypeScript types (ProjectDTO) + slugify
+│   ├── opnet/     Bob MCP client, scaffolder, auditor, deployer
+│   └── risk/      Risk scoring stub (scoring lives in opnet/auditor.ts)
+├── tests/         Playwright smoke tests
+├── tools/         gitleaks portable binary (gitignored)
+├── DECISIONS.md   Engineering non-negotiables
+├── RISK_CARD_SPEC.md  Risk Card JSON schema + scoring rubric
+└── TODO.md        Live backlog
+```
 
 ---
 
 ## Milestones
 
-| # | Status | Description |
-|---|--------|-------------|
-| 1 | ✅ **Done** | Scaffold + CRUD projects |
-| 2 | ⬜ Pending | Bob integration: contract scaffold + Risk Card |
-| 3 | ⬜ Pending | Testnet deploy via Bob OpnetCli |
-| 4 | ⬜ Pending | Watchtower: real contract monitoring |
-| 5 | ⬜ Pending | Pump.fun polish: feed ranking, bonding curve sim |
-
----
-
-## Structure
-
-```
-opfun-secure-launchpad/
-  apps/
-    web/        # Next.js 14 + Tailwind (port 3000)
-    api/        # Fastify + Prisma + SQLite (port 3001)
-    watcher/    # Health poll stub → full Watchtower (M4)
-  packages/
-    shared/     # Shared TypeScript types + utils
-    risk/       # Risk scoring engine
-    opnet/      # OPNet integration (Bob MCP wrappers)
-  docs/
-    MVP_PLAN.md
-```
-
----
-
-## Security guardrails
-
-- All tokens default to **fixed supply, no mint, no admin keys**.
-- Risky options show as red/critical in the Risk Card.
-- No mainnet. No real-money mechanics. No paid RNG.
-- Never paste private keys or seed phrases into Bob or any MCP tool.
+| # | Name | Status |
+|---|------|--------|
+| M1 | Skeleton + CRUD + UI pages | ✅ Done |
+| M2 | Contract scaffolding + Risk Card | ✅ Done |
+| M3 | Testnet deploy flow | ✅ Done |
+| M4 | Watchtower monitoring | ✅ Done |
+| M5 | Trending feed, bonding curve, graduation, wallet login | ✅ Done |

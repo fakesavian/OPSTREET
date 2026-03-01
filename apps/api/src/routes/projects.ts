@@ -141,10 +141,24 @@ export async function projectRoutes(app: FastifyInstance) {
   });
 
   // POST /projects/:id/pledge — increment pledge count; auto-graduate at threshold
-  app.post<{ Params: { id: string } }>("/projects/:id/pledge", async (request, reply) => {
-    // M3: IP-based rate limit — 1 pledge per project per IP per 24 h.
-    const ip = (request.headers["x-forwarded-for"] as string ?? request.ip ?? "unknown").split(",")[0]!.trim();
-    const rlKey = `${request.params.id}:${ip}`;
+  app.post<{ Params: { id: string }; Body: { walletAddress?: string } }>(
+    "/projects/:id/pledge",
+    async (request, reply) => {
+    // Rate limit: prefer wallet address (more accurate) over IP
+    const walletAddress =
+      typeof (request.body as Record<string, unknown>)?.walletAddress === "string"
+        ? ((request.body as { walletAddress: string }).walletAddress).trim()
+        : null;
+
+    let rlKey: string;
+    if (walletAddress && walletAddress.length > 10) {
+      // Wallet-based rate limit — 1 pledge per address per project per 24 h
+      rlKey = `${request.params.id}:wallet:${walletAddress.toLowerCase()}`;
+    } else {
+      // M3: IP-based fallback
+      const ip = (request.headers["x-forwarded-for"] as string ?? request.ip ?? "unknown").split(",")[0]!.trim();
+      rlKey = `${request.params.id}:${ip}`;
+    }
     const lastPledge = pledgeRecords.get(rlKey);
     if (lastPledge !== undefined && Date.now() - lastPledge < ONE_DAY_MS) {
       return reply.status(429).send({ error: "You have already pledged for this project today." });
