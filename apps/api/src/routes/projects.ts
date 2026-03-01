@@ -65,10 +65,12 @@ export async function projectRoutes(app: FastifyInstance) {
     return reply.status(201).send(serializeProject(project));
   });
 
-  // GET /projects?sort=trending|new
-  app.get<{ Querystring: { sort?: string } }>("/projects", async (request, reply) => {
+  // GET /projects?sort=trending|new&status=LAUNCHED (status filter optional — S7)
+  app.get<{ Querystring: { sort?: string; status?: string } }>("/projects", async (request, reply) => {
     const sort = request.query.sort === "trending" ? "pledgeCount" : "createdAt";
+    const { status } = request.query;
     const projects = await prisma.project.findMany({
+      where: status ? { status } : undefined,
       orderBy: { [sort]: "desc" },
       take: 50,
     });

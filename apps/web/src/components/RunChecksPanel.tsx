@@ -10,8 +10,9 @@ const STATUS_LABELS: Record<string, string> = {
   CHECKING: "Running checks…",
   READY: "Checks passed",
   LAUNCHED: "Launched",
-  FLAGGED: "Flagged",
+  FLAGGED: "Flagged — anomaly detected",
   GRADUATED: "Graduated",
+  DEPLOY_PACKAGE_READY: "Deploy package ready",
 };
 
 const STATUS_COLOR: Record<string, string> = {
@@ -21,6 +22,7 @@ const STATUS_COLOR: Record<string, string> = {
   LAUNCHED: "text-blue-400",
   FLAGGED: "text-red-400",
   GRADUATED: "text-purple-400",
+  DEPLOY_PACKAGE_READY: "text-brand-400",
 };
 
 interface CheckRun {
@@ -146,7 +148,7 @@ export function RunChecksPanel({
         </div>
 
         {riskCard ? (
-          <RiskCardView card={riskCard} />
+          <RiskCardView card={riskCard} riskScore={project.riskScore} />
         ) : (
           <div className="rounded-xl border border-dashed border-zinc-700 py-10 text-center">
             {isChecking ? (
@@ -274,17 +276,62 @@ function RiskScoreBadge({ score }: { score: number }) {
   );
 }
 
-function RiskCardView({ card }: { card: RiskCard }) {
+// S8 + S14: Enhanced Risk Card with color-coded rows, score bar, and artifact badge.
+
+function RiskCardView({ card, riskScore }: { card: RiskCard; riskScore?: number | null }) {
+  // S14: Score progress bar colors per RISK_CARD_SPEC.md thresholds
+  const score = riskScore ?? 0;
+  const barColor =
+    score < 20 ? "bg-green-500" : score < 40 ? "bg-yellow-500" : score < 70 ? "bg-orange-500" : "bg-red-500";
+  const barLabel =
+    score < 20 ? "LOW RISK" : score < 40 ? "MEDIUM RISK" : score < 70 ? "HIGH RISK" : "CRITICAL";
+
+  // Derived: no-timelock penalty applies when any privileged control is active
+  const hasPrivilege =
+    card.permissions.hasOwnerKey ||
+    card.permissions.canMint ||
+    card.permissions.canUpgrade ||
+    card.permissions.canPause;
+  const noTimelockPenalty = hasPrivilege && !card.permissions.hasTimelocks;
+
   return (
     <div className="space-y-4">
+      {/* S14: Score bar */}
+      {riskScore !== null && riskScore !== undefined && (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-3">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-zinc-500">
+              Risk Score Breakdown
+            </span>
+            <span className={`text-sm font-black ${
+              score < 20 ? "text-green-400" : score < 40 ? "text-yellow-400" : score < 70 ? "text-orange-400" : "text-red-400"
+            }`}>
+              {score} / 100 — {barLabel}
+            </span>
+          </div>
+          <div className="h-2 w-full rounded-full bg-zinc-800 overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all ${barColor}`}
+              style={{ width: `${Math.min(score, 100)}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       <RiskSection title="Permissions / Admin Risk">
-        <RiskRow label="Owner / admin keys" value={card.permissions.hasOwnerKey} invert />
-        <RiskRow label="Can mint more supply" value={card.permissions.canMint} invert />
-        <RiskRow label="Can pause transfers" value={card.permissions.canPause} invert />
-        <RiskRow label="Can upgrade logic" value={card.permissions.canUpgrade} invert />
-        <RiskRow label="Has timelocks" value={card.permissions.hasTimelocks} />
+        <RiskRow label="Owner / admin keys" value={card.permissions.hasOwnerKey} invert points={25} />
+        <RiskRow label="Can mint more supply" value={card.permissions.canMint} invert points={40} />
+        <RiskRow label="Can pause transfers" value={card.permissions.canPause} invert points={15} />
+        <RiskRow label="Can upgrade logic" value={card.permissions.canUpgrade} invert points={25} />
+        <RiskRow label="Has timelocks" value={card.permissions.hasTimelocks} points={15} timelockRow />
+        {noTimelockPenalty && (
+          <div className="flex items-center gap-1.5 rounded-lg bg-orange-950/30 border border-orange-900/50 px-2 py-1.5 text-xs text-orange-400">
+            <span>⚠</span>
+            <span>Privileged controls active without timelocks <span className="font-bold">+15 pts</span></span>
+          </div>
+        )}
         {card.permissions.timelockDelay !== null && (
-          <div className="text-xs text-zinc-500">
+          <div className="text-xs text-zinc-500 pl-1">
             Timelock delay: {card.permissions.timelockDelay}s
           </div>
         )}
@@ -316,12 +363,10 @@ function RiskCardView({ card }: { card: RiskCard }) {
       </RiskSection>
 
       <RiskSection title="Release Integrity">
-        <RiskRow label="Build hash recorded" value={card.releaseIntegrity.buildHashRecorded} />
+        <RiskRow label="Build hash recorded" value={card.releaseIntegrity.buildHashRecorded} points={10} />
+        {/* S8: Artifact Verified badge — prominent when present */}
         {card.releaseIntegrity.contractMatchesArtifact !== null && (
-          <RiskRow
-            label="Contract matches artifact"
-            value={card.releaseIntegrity.contractMatchesArtifact}
-          />
+          <ArtifactVerifiedBadge verified={card.releaseIntegrity.contractMatchesArtifact} />
         )}
         {card.releaseIntegrity.auditTimestamp && (
           <div className="text-xs text-zinc-500">
@@ -346,6 +391,34 @@ function RiskCardView({ card }: { card: RiskCard }) {
   );
 }
 
+// S8: Artifact Verified badge — shown after confirm-deploy when contractMatchesArtifact is set.
+function ArtifactVerifiedBadge({ verified }: { verified: boolean }) {
+  if (verified) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-green-800/60 bg-green-950/30 px-3 py-2">
+        <span className="text-green-400 text-base">✓</span>
+        <div className="flex-1">
+          <p className="text-xs font-bold text-green-300">Artifact Verified</p>
+          <p className="text-[10px] text-zinc-500">
+            Deployed contract matches the recorded build hash.
+          </p>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-yellow-800/60 bg-yellow-950/20 px-3 py-2">
+      <span className="text-yellow-400 text-base">?</span>
+      <div className="flex-1">
+        <p className="text-xs font-bold text-yellow-300">Artifact Unverified</p>
+        <p className="text-[10px] text-zinc-500">
+          Confirm deploy to link the contract address to the build hash.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function RiskSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="rounded-xl border border-zinc-800 p-4">
@@ -355,14 +428,44 @@ function RiskSection({ title, children }: { title: string; children: React.React
   );
 }
 
-function RiskRow({ label, value, invert }: { label: string; value: boolean; invert?: boolean }) {
-  const isRisky = invert ? value : !value;
+// S14: RiskRow — color-coded background + optional risk point contribution.
+function RiskRow({
+  label,
+  value,
+  invert,
+  points,
+  timelockRow,
+}: {
+  label: string;
+  value: boolean;
+  invert?: boolean;
+  points?: number;
+  timelockRow?: boolean;
+}) {
+  const isRisky = timelockRow ? !value : invert ? value : !value;
+  const showPoints = points !== undefined && isRisky;
   return (
-    <div className="flex items-center justify-between text-sm">
-      <span className="text-zinc-300">{label}</span>
-      <span className={`font-semibold ${isRisky ? "text-red-400" : "text-green-400"}`}>
-        {value ? "Yes" : "No"}
-      </span>
+    <div
+      className={`flex items-center justify-between text-sm rounded-lg px-2 py-1.5 ${
+        isRisky ? "bg-red-950/20 border border-red-900/30" : "bg-green-950/10 border border-green-900/20"
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <span className={`text-xs font-bold ${isRisky ? "text-red-400" : "text-green-400"}`}>
+          {isRisky ? "✗" : "✓"}
+        </span>
+        <span className="text-zinc-300">{label}</span>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {showPoints && (
+          <span className="text-[10px] font-bold text-red-400/80 bg-red-950/40 px-1.5 py-0.5 rounded">
+            +{points} pts
+          </span>
+        )}
+        <span className={`font-semibold text-xs ${isRisky ? "text-red-400" : "text-green-400"}`}>
+          {value ? "Yes" : "No"}
+        </span>
+      </div>
     </div>
   );
 }

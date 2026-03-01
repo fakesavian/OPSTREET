@@ -96,10 +96,11 @@ interface FullProject extends ProjectDTO {
 }
 
 async function fetchLaunchedProjects(): Promise<FullProject[]> {
-  const res = await fetch(`${API_URL}/projects`);
+  // S7: filter server-side — avoids loading all projects into the watcher
+  const res = await fetch(`${API_URL}/projects?status=LAUNCHED`);
   if (!res.ok) throw new Error(`API /projects returned ${res.status}`);
   const all = (await res.json()) as FullProject[];
-  return all.filter((p) => p.status === "LAUNCHED" && p.contractAddress);
+  return all.filter((p) => p.contractAddress);
 }
 
 async function postWatchEvent(
