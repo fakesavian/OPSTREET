@@ -75,6 +75,16 @@ export function DeployPanel({ project, onStatusChange }: DeployPanelProps) {
     }
   }
 
+  // S13: derive which of the 3 deploy steps is active
+  type DeployStep = 0 | 1 | 2;
+  const deployStep: DeployStep = isLaunched
+    ? 2
+    : phase === "manual" && (contractAddress || deployTx)
+    ? 2
+    : phase === "manual"
+    ? 1
+    : 0;
+
   if (isLaunched) {
     return (
       <div className="card border-green-900/50 bg-green-950/20">
@@ -109,10 +119,14 @@ export function DeployPanel({ project, onStatusChange }: DeployPanelProps) {
 
   return (
     <div className="card">
-      <h2 className="font-bold text-white mb-1">Deploy to Testnet</h2>
+      <h2 className="font-black text-white mb-1">Deploy to Testnet</h2>
       <p className="text-xs text-zinc-500 mb-4">
         Admin-gated · OPNet Testnet only · Generates a complete deploy package
       </p>
+
+      {/* S13: 3-step progress indicator */}
+      <DeploySteps currentStep={deployStep} />
+
 
       {phase === "idle" && canDeploy && (
         <div className="space-y-3">
@@ -234,6 +248,54 @@ export function DeployPanel({ project, onStatusChange }: DeployPanelProps) {
           {error}
         </div>
       )}
+    </div>
+  );
+}
+
+// S13: 3-step deploy progress indicator
+const DEPLOY_STEPS = [
+  { label: "Package", desc: "Generate deploy package" },
+  { label: "Deploy", desc: "Run deploy.ts script" },
+  { label: "Confirm", desc: "Submit contract address" },
+] as const;
+
+function DeploySteps({ currentStep }: { currentStep: 0 | 1 | 2 }) {
+  return (
+    <div className="flex items-center gap-0 mb-5">
+      {DEPLOY_STEPS.map((s, i) => {
+        const done = i < currentStep;
+        const active = i === currentStep;
+        return (
+          <div key={s.label} className="flex items-center flex-1 last:flex-none">
+            <div className="flex items-center gap-1.5">
+              <div
+                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-black border-2 transition-colors ${
+                  done
+                    ? "border-green-700 bg-green-900/50 text-green-400"
+                    : active
+                    ? "border-brand-500 bg-brand-500/20 text-brand-300"
+                    : "border-zinc-700 text-zinc-600"
+                }`}
+              >
+                {done ? "✓" : i + 1}
+              </div>
+              <div>
+                <p
+                  className={`text-[11px] font-black leading-none ${
+                    done ? "text-green-400" : active ? "text-white" : "text-zinc-600"
+                  }`}
+                >
+                  {s.label}
+                </p>
+                <p className="text-[9px] text-zinc-600 leading-tight mt-0.5">{s.desc}</p>
+              </div>
+            </div>
+            {i < DEPLOY_STEPS.length - 1 && (
+              <div className={`mx-2 flex-1 h-0.5 ${i < currentStep ? "bg-green-800" : "bg-zinc-800"}`} />
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { CreateProjectSchema } from "../schemas.js";
 import { slugify } from "@opfun/shared";
 import { scaffoldContract } from "@opfun/opnet";
 import { auditContract } from "@opfun/opnet";
+import { assertCanTransition, canTransition } from "../statusMachine.js";
 
 // Resolve to packages/opnet/generated/
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -105,14 +106,18 @@ export async function projectRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: "Project not found" });
     }
 
-    // M5: Idempotency guard — only allow from DRAFT or FLAGGED.
-    if (project.status === "CHECKING") {
-      return reply.status(409).send({ error: "Checks already in progress.", status: "CHECKING" });
-    }
-    if (!["DRAFT", "FLAGGED"].includes(project.status as string)) {
+    // S3 + M5: Validate CHECKING transition through the state machine.
+    try {
+      assertCanTransition(project.status as string, "CHECKING");
+    } catch {
       return reply.status(409).send({
         error: `Cannot run checks from status '${project.status}'.`,
-        hint: project.status === "READY" ? "Project already has a Risk Card." : undefined,
+        hint:
+          project.status === "CHECKING"
+            ? "Checks already in progress."
+            : project.status === "READY"
+            ? "Project already has a Risk Card. Re-run only from DRAFT or FLAGGED."
+            : undefined,
       });
     }
 
@@ -150,9 +155,9 @@ export async function projectRoutes(app: FastifyInstance) {
 
     const GRADUATION_THRESHOLD = 100;
     const newCount = (project.pledgeCount as number) + 1;
+    // S3: use state machine to check if graduation is valid from current status
     const shouldGraduate =
-      newCount >= GRADUATION_THRESHOLD &&
-      (project.status === "LAUNCHED" || project.status === "READY");
+      newCount >= GRADUATION_THRESHOLD && canTransition(project.status as string, "GRADUATED");
 
     const updated = await prisma.project.update({
       where: { id: project.id },

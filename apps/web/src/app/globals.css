@@ -7,29 +7,61 @@
 }
 
 body {
-  @apply bg-zinc-950 text-zinc-100 antialiased;
+  @apply bg-[#0a0a0a] text-zinc-100 antialiased;
 }
 
+/* ── Neo-brutalism design tokens ─────────────────────────────────────────── */
+/* S11: 2px solid borders, offset box-shadows, font-black headings            */
+
+/* Standard info card */
 .card {
-  @apply rounded-2xl border border-zinc-800 bg-zinc-900 p-5 transition-colors hover:border-zinc-700;
+  @apply rounded-2xl border-2 border-zinc-800 bg-zinc-900/80 p-5 transition-colors hover:border-zinc-700;
+}
+
+/* Compact token feed card — used in FeedClient */
+.token-card {
+  @apply rounded-xl border-2 border-zinc-800 bg-zinc-900/60 transition-all duration-200
+    hover:border-zinc-700 hover:bg-zinc-900 cursor-pointer;
 }
 
 .btn-primary {
-  @apply rounded-xl bg-brand-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-brand-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors;
+  @apply rounded-xl border-2 border-brand-600 bg-brand-500 px-5 py-2.5 text-sm font-black
+    text-white shadow-[3px_3px_0_#c2410c]
+    hover:bg-brand-600 hover:shadow-[1px_1px_0_#9a3412]
+    active:scale-[0.98] active:shadow-none
+    focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500
+    disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none
+    transition-all duration-100;
 }
 
 .btn-secondary {
-  @apply rounded-xl border border-zinc-700 bg-zinc-800 px-5 py-2.5 text-sm font-semibold text-zinc-200 hover:bg-zinc-700 transition-colors;
+  @apply rounded-xl border-2 border-zinc-700 bg-zinc-800 px-5 py-2.5 text-sm font-bold
+    text-zinc-200 shadow-[2px_2px_0_#27272a]
+    hover:bg-zinc-700 hover:shadow-[1px_1px_0_#18181b]
+    active:scale-[0.98] active:shadow-none
+    transition-all duration-100;
 }
 
 .badge {
-  @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+  @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold;
 }
 
 .input {
-  @apply w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 transition-colors;
+  @apply w-full rounded-xl border-2 border-zinc-700 bg-zinc-800/80 px-4 py-2.5 text-sm
+    text-zinc-100 placeholder-zinc-500
+    focus:border-brand-500 focus:outline-none focus:ring-0
+    transition-colors;
+}
+
+.input-error {
+  @apply border-red-500 focus:border-red-400;
 }
 
 .label {
-  @apply block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5;
+  @apply block text-xs font-black uppercase tracking-wider text-zinc-400 mb-1.5;
+}
+
+/* Stats strip used in token page top bar */
+.stat-pill {
+  @apply flex flex-col items-center px-4 py-2 border-r-2 border-zinc-800 last:border-r-0;
 }

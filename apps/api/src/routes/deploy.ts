@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { prisma } from "../db.js";
 import { deployContract } from "@opfun/opnet";
+import { assertCanTransition } from "../statusMachine.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GENERATED_DIR = path.resolve(__dirname, "../../../../packages/opnet/generated");
@@ -26,7 +27,10 @@ export async function deployRoutes(app: FastifyInstance) {
     const project = await prisma.project.findUnique({ where: { id: request.params.id } });
     if (!project) return reply.status(404).send({ error: "Project not found" });
 
-    if (project.status !== "READY") {
+    // S3: validate READY → CHECKING via state machine
+    try {
+      assertCanTransition(project.status as string, "CHECKING");
+    } catch {
       return reply.status(409).send({
         error: `Cannot deploy from status '${project.status}'. Project must be READY.`,
         hint: project.status === "DRAFT" ? "Run /run-checks first to generate a Risk Card." : undefined,
