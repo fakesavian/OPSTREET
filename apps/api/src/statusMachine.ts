@@ -8,8 +8,10 @@
 
 export const ALLOWED_TRANSITIONS: Readonly<Record<string, string[]>> = {
   DRAFT: ["CHECKING"],
-  CHECKING: ["READY", "FLAGGED"],
+  CHECKING: ["READY", "FLAGGED", "DEPLOY_PACKAGE_READY"],
   READY: ["CHECKING", "LAUNCHED", "GRADUATED"],
+  // DEPLOY_PACKAGE_READY: package generated but not yet auto-deployed; same exits as READY
+  DEPLOY_PACKAGE_READY: ["CHECKING", "LAUNCHED"],
   FLAGGED: ["CHECKING"],
   LAUNCHED: ["FLAGGED", "GRADUATED"],
   GRADUATED: [],

@@ -10,12 +10,15 @@ const config: Config = {
     extend: {
       colors: {
         brand: {
-          50: "#fff7ed",
+          50:  "#fff7ed",
           100: "#ffedd5",
+          300: "#fdba74",  // step indicators, deploy steps
           400: "#fb923c",
           500: "#f97316",
           600: "#ea580c",
-          900: "#431407",
+          700: "#c2410c",  // box-shadow values, borders
+          900: "#7c2d12",
+          950: "#431407",  // dark bg overlays (bg-brand-950/20)
         },
       },
       fontFamily: {

@@ -35,7 +35,10 @@ export function ProjectCard({ project }: { project: ProjectDTO }) {
 
       <div className="mt-4 flex items-center justify-between text-xs text-zinc-500">
         <div className="flex items-center gap-2">
-          <span className={`badge ${statusStyle}`}>{project.status}</span>
+          <span className={`badge ${statusStyle}`}>
+            {project.status === "FLAGGED" && "⚠ "}
+            {project.status}
+          </span>
           <span className="font-mono">{project.ticker}</span>
           <span>·</span>
           <span>{project.network}</span>

@@ -31,6 +31,8 @@ export interface ProjectDTO {
   riskCardJson: RiskCard | null;
   /** Parsed version of riskCardJson, added by the API serializer */
   riskCard: RiskCard | null;
+  pledgeCount: number;
+  viewCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -74,6 +76,8 @@ export interface WatchEventDTO {
   title: string;
   detailsJson: Record<string, unknown> | null;
   txId: string | null;
+  /** True once the triggering condition is no longer active (admin-resolved). */
+  resolved: boolean;
   createdAt: string;
 }
 

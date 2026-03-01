@@ -22,7 +22,8 @@ const app = Fastify({ logger: { level: "info" } });
 
 await app.register(cors, {
   origin: process.env["CORS_ORIGIN"] ?? "http://localhost:3000",
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  // PATCH added for /watch-events/:id/resolve; PUT kept for future use
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 });
 
 await app.register(projectRoutes);

@@ -11,3 +11,7 @@ tools/*.exe
 tools/*.zip
 test-results/
 playwright-report/
+# Next.js generated declaration file (auto-generated, should not be committed)
+apps/web/next-env.d.ts
+# TypeScript incremental build info (large, contains base58-like hashes)
+apps/web/tsconfig.tsbuildinfo
