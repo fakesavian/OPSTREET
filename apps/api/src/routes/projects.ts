@@ -11,6 +11,22 @@ import { auditContract } from "@opfun/opnet";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GENERATED_DIR = path.resolve(__dirname, "../../../../packages/opnet/generated");
 
+// M10: Bob call timeout (30 s). Prevents indefinite hangs.
+const BOB_TIMEOUT_MS = 30_000;
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Timeout after ${ms}ms: ${label}`)), ms),
+    ),
+  ]);
+}
+
+// M3: In-memory pledge rate-limit — 1 pledge per (projectId + IP) per 24 h.
+// Simple and dep-free for MVP; replace with Redis for production scale.
+const pledgeRecords = new Map<string, number>(); // key: `${projectId}:${ip}`, value: epoch ms
+const ONE_DAY_MS = 24 * 60 * 60 * 1_000;
+
 export async function projectRoutes(app: FastifyInstance) {
   // POST /projects
   app.post("/projects", async (request, reply) => {
@@ -49,10 +65,11 @@ export async function projectRoutes(app: FastifyInstance) {
     return reply.status(201).send(serializeProject(project));
   });
 
-  // GET /projects
-  app.get("/projects", async (_req, reply) => {
+  // GET /projects?sort=trending|new
+  app.get<{ Querystring: { sort?: string } }>("/projects", async (request, reply) => {
+    const sort = request.query.sort === "trending" ? "pledgeCount" : "createdAt";
     const projects = await prisma.project.findMany({
-      orderBy: { createdAt: "desc" },
+      orderBy: { [sort]: "desc" },
       take: 50,
     });
     return reply.send(projects.map(serializeProject));
@@ -86,6 +103,17 @@ export async function projectRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: "Project not found" });
     }
 
+    // M5: Idempotency guard — only allow from DRAFT or FLAGGED.
+    if (project.status === "CHECKING") {
+      return reply.status(409).send({ error: "Checks already in progress.", status: "CHECKING" });
+    }
+    if (!["DRAFT", "FLAGGED"].includes(project.status as string)) {
+      return reply.status(409).send({
+        error: `Cannot run checks from status '${project.status}'.`,
+        hint: project.status === "READY" ? "Project already has a Risk Card." : undefined,
+      });
+    }
+
     // Mark project as CHECKING
     await prisma.project.update({
       where: { id },
@@ -103,6 +131,52 @@ export async function projectRoutes(app: FastifyInstance) {
     runChecks(project).catch((err: unknown) => {
       app.log.error(err, `run-checks failed for project ${id}`);
     });
+  });
+
+  // POST /projects/:id/pledge — increment pledge count; auto-graduate at threshold
+  app.post<{ Params: { id: string } }>("/projects/:id/pledge", async (request, reply) => {
+    // M3: IP-based rate limit — 1 pledge per project per IP per 24 h.
+    const ip = (request.headers["x-forwarded-for"] as string ?? request.ip ?? "unknown").split(",")[0]!.trim();
+    const rlKey = `${request.params.id}:${ip}`;
+    const lastPledge = pledgeRecords.get(rlKey);
+    if (lastPledge !== undefined && Date.now() - lastPledge < ONE_DAY_MS) {
+      return reply.status(429).send({ error: "You have already pledged for this project today." });
+    }
+
+    const project = await prisma.project.findUnique({ where: { id: request.params.id } });
+    if (!project) return reply.status(404).send({ error: "Project not found" });
+
+    const GRADUATION_THRESHOLD = 100;
+    const newCount = (project.pledgeCount as number) + 1;
+    const shouldGraduate =
+      newCount >= GRADUATION_THRESHOLD &&
+      (project.status === "LAUNCHED" || project.status === "READY");
+
+    const updated = await prisma.project.update({
+      where: { id: project.id },
+      data: {
+        pledgeCount: newCount,
+        ...(shouldGraduate ? { status: "GRADUATED" } : {}),
+      },
+    });
+
+    // Record after successful write to avoid blocking on DB errors
+    pledgeRecords.set(rlKey, Date.now());
+
+    return reply.send({
+      pledgeCount: updated.pledgeCount,
+      status: updated.status,
+      graduated: shouldGraduate,
+    });
+  });
+
+  // POST /projects/:id/view — increment view counter (fire-and-forget, no auth)
+  app.post<{ Params: { id: string } }>("/projects/:id/view", async (request, reply) => {
+    // Best-effort: don't fail the caller if this errors
+    prisma.project
+      .update({ where: { id: request.params.id }, data: { viewCount: { increment: 1 } } })
+      .catch(() => undefined);
+    return reply.status(204).send();
   });
 
   // GET /health
@@ -125,15 +199,19 @@ async function runChecks(project: any): Promise<void> {
 
   try {
     const outputDir = path.join(GENERATED_DIR, projectId);
-    const result = await scaffoldContract({
-      projectId,
-      name: project.name as string,
-      ticker: project.ticker as string,
-      decimals: project.decimals as number,
-      maxSupply: project.maxSupply as string,
-      iconUrl: project.iconUrl as string | undefined,
-      outputDir,
-    });
+    const result = await withTimeout(
+      scaffoldContract({
+        projectId,
+        name: project.name as string,
+        ticker: project.ticker as string,
+        decimals: project.decimals as number,
+        maxSupply: project.maxSupply as string,
+        iconUrl: project.iconUrl as string | undefined,
+        outputDir,
+      }),
+      BOB_TIMEOUT_MS,
+      "scaffoldContract",
+    );
 
     contractSource = result.contractSource;
     buildHash = result.buildHash;
@@ -178,13 +256,17 @@ async function runChecks(project: any): Promise<void> {
   });
 
   try {
-    const auditResult = await auditContract(contractSource, {
-      name: project.name as string,
-      ticker: project.ticker as string,
-      decimals: project.decimals as number,
-      maxSupply: project.maxSupply as string,
-      buildHash,
-    });
+    const auditResult = await withTimeout(
+      auditContract(contractSource, {
+        name: project.name as string,
+        ticker: project.ticker as string,
+        decimals: project.decimals as number,
+        maxSupply: project.maxSupply as string,
+        buildHash,
+      }),
+      BOB_TIMEOUT_MS,
+      "auditContract",
+    );
 
     const auditStatus = auditResult.passed ? "OK" : "WARN";
 
