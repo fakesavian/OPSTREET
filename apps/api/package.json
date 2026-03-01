@@ -16,7 +16,6 @@
   "dependencies": {
     "@fastify/cors": "^9.0.1",
     "@opfun/shared": "workspace:*",
-    "@opfun/risk": "workspace:*",
     "@opfun/opnet": "workspace:*",
     "@prisma/client": "^5.14.0",
     "fastify": "^4.28.1",

@@ -74,7 +74,7 @@ function staticAnalyze(source: string): {
     },
     // OPNet-specific safety checks
     {
-      pattern: /[^a-zA-Z](\+|-|\*|\/)[^=\+\->].*u256|u256.*[^a-zA-Z](\+|-|\*|\/)[^=\+\->]/,
+      pattern: /u256\s*[\+\-\*\/]/,
       severity: "FAIL",
       code: "OA-005",
       flag: "",
@@ -95,6 +95,30 @@ function staticAnalyze(source: string): {
       code: "OA-007",
       flag: "",
       message: "Low-level buffer use detected — ensure correct sizes to prevent overflows",
+      present: true,
+    },
+    {
+      pattern: /selfdestruct|SUICIDE|destroy\s*\(/i,
+      severity: "FAIL",
+      code: "OA-008",
+      flag: "",
+      message: "Self-destruct pattern detected — contract can be permanently destroyed",
+      present: true,
+    },
+    {
+      pattern: /delegatecall/i,
+      severity: "FAIL",
+      code: "OA-009",
+      flag: "",
+      message: "delegatecall detected — external code can be executed in this contract's context",
+      present: true,
+    },
+    {
+      pattern: /sstore|_writeStorage\s*\(/,
+      severity: "WARN",
+      code: "OA-010",
+      flag: "",
+      message: "Raw storage write detected — verify critical state slots cannot be overwritten",
       present: true,
     },
   ];

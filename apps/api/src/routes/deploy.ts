@@ -26,10 +26,10 @@ export async function deployRoutes(app: FastifyInstance) {
     const project = await prisma.project.findUnique({ where: { id: request.params.id } });
     if (!project) return reply.status(404).send({ error: "Project not found" });
 
-    if (!["READY", "DRAFT"].includes(project.status as string)) {
+    if (project.status !== "READY") {
       return reply.status(409).send({
-        error: `Cannot deploy from status '${project.status}'. Project must be READY or DRAFT.`,
-        hint: project.status === "DRAFT" ? "Run /run-checks first." : undefined,
+        error: `Cannot deploy from status '${project.status}'. Project must be READY.`,
+        hint: project.status === "DRAFT" ? "Run /run-checks first to generate a Risk Card." : undefined,
       });
     }
 
