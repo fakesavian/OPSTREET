@@ -9,9 +9,12 @@
     "lint": "pnpm --recursive lint",
     "typecheck": "pnpm --recursive typecheck",
     "db:migrate": "pnpm --filter api db:migrate",
-    "db:seed": "pnpm --filter api db:seed"
+    "db:seed": "pnpm --filter api db:seed",
+    "test": "playwright test",
+    "secrets:scan": "tools/gitleaks.exe detect --config .gitleaks.toml --redact"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "concurrently": "^8.2.2",
     "typescript": "^5.4.5"
   }

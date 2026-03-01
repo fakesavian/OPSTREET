@@ -1,0 +1,39 @@
+title = "OPFun Secure Launchpad — Gitleaks Config"
+
+[extend]
+# Extend the default ruleset (Gitleaks built-in high-confidence rules)
+useDefault = true
+
+# ─── Custom rules for OP_NET / Bitcoin-specific secrets ─────────────────────
+
+[[rules]]
+id = "opnet-mnemonic"
+description = "Possible OPNet / Bitcoin BIP-39 mnemonic in source"
+regex = '''(?i)(?:OPNET_MNEMONIC|BIP39|mnemonic)\s*[=:]\s*["']?(?:[a-z]+ ){11,23}[a-z]+'''
+tags = ["bitcoin", "opnet", "mnemonic"]
+
+[[rules]]
+id = "wif-private-key"
+description = "Bitcoin WIF private key"
+regex = '''[5KL][1-9A-HJ-NP-Za-km-z]{50,51}'''
+tags = ["bitcoin", "private-key"]
+
+[[rules]]
+id = "admin-secret-literal"
+description = "Hard-coded ADMIN_SECRET value in source (not .env)"
+regex = '''ADMIN_SECRET\s*=\s*["'][^"']{8,}["']'''
+tags = ["secret", "admin"]
+
+# ─── Allowlist ───────────────────────────────────────────────────────────────
+
+[allowlist]
+description = "Safe paths — fixtures, docs, test scaffolding, build artifacts"
+paths = [
+  '''\.env\.example$''',
+  '''\.gitleaks\.toml$''',
+  '''docs/''',
+  '''tests/''',
+  '''apps/watcher/src/index\.ts$''',  # contains literal "dev-secret-change-me" default
+  '''apps/api/src/routes/''',          # same default string pattern
+  '''tsconfig\.tsbuildinfo$''',        # TS build info hashes false-positive as WIF keys
+]
