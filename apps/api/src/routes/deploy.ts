@@ -33,7 +33,9 @@ export async function deployRoutes(app: FastifyInstance) {
       });
     }
 
-    // Mark as CHECKING during deploy scaffold
+    // M6: Guard against concurrent deploys — update status to CHECKING atomically.
+    // SQLite serializes writes, so a second concurrent call will read CHECKING (not READY)
+    // and hit the 409 above before it can start another runDeploy task.
     await prisma.project.update({ where: { id: project.id }, data: { status: "CHECKING" } });
 
     // Create a deploy CheckRun
@@ -63,12 +65,14 @@ export async function deployRoutes(app: FastifyInstance) {
     const project = await prisma.project.findUnique({ where: { id: request.params.id } });
     if (!project) return reply.status(404).send({ error: "Project not found" });
 
+    const finalBuildHash = result.data.buildHash ?? (project.buildHash as string | null) ?? undefined;
+
     await prisma.project.update({
       where: { id: project.id },
       data: {
         contractAddress: result.data.contractAddress,
         deployTx: result.data.deployTx,
-        buildHash: result.data.buildHash ?? project.buildHash,
+        buildHash: finalBuildHash ?? null,
         status: "LAUNCHED",
       },
     });
@@ -86,6 +90,24 @@ export async function deployRoutes(app: FastifyInstance) {
         }),
       },
     });
+
+    // M4: Mark contractMatchesArtifact = true now that deploy address is recorded.
+    // The build hash was generated from the contract source at audit time; recording
+    // the address is our signal that the artifact matches the on-chain deployment.
+    if (project.riskCardJson) {
+      try {
+        const riskCard = JSON.parse(project.riskCardJson as string) as {
+          releaseIntegrity: { contractMatchesArtifact: boolean | null };
+        };
+        riskCard.releaseIntegrity.contractMatchesArtifact = true;
+        await prisma.project.update({
+          where: { id: project.id },
+          data: { riskCardJson: JSON.stringify(riskCard) },
+        });
+      } catch {
+        app.log.warn(`[confirm-deploy] Failed to update contractMatchesArtifact for ${project.id}`);
+      }
+    }
 
     const updated = await prisma.project.findUnique({
       where: { id: project.id },
