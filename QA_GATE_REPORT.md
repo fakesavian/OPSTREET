@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-09
 **Scope:** OP_NET testnet live migration — full transition from simulated to live wallet-native behavior
-**Verdict:** CONDITIONAL PASS — 3 blockers identified, 5 advisories
+**Verdict:** CONDITIONAL PASS — 3 blockers identified, 7 advisories
 
 ---
 
@@ -25,7 +25,12 @@
 - `auth.ts:200-206` — When BIP-322 verification fails in non-production, `DEV_AUTH_SESSION` allows fallback. This is correctly gated by `NODE_ENV !== "production"`.
 - `verifyWalletToken.ts:14,27-33` — Dev-only `Authorization: Bearer` fallback gated by `DEV_AUTH_HEADER_FALLBACK=true`.
 
-**Result: PASS**
+**UNPROTECTED FLOOR PRESENCE ROUTES (A6, A7):**
+- `floor.ts` — `POST /floor/presence/join` creates/overwrites user profiles (displayName, avatarId, auto-grants free avatars) **without wallet auth**. Any anonymous caller can manipulate user identity.
+- `floor.ts` — `POST /floor/presence/leave` marks any user as offline **without auth**. Enables DoS by repeatedly marking users stale.
+- Both should require `verifyWalletToken` and validate session wallet matches body for mainnet.
+
+**Result: PASS** (core auth infrastructure is sound; floor presence is cosmetic/social, not financial)
 
 ---
 
@@ -175,6 +180,8 @@
 | A3 | Legacy admin `confirm-deploy` route bypasses wallet launch pipeline | `deploy.ts:96-170` |
 | A4 | `ADMIN_SECRET` defaults to `"dev-secret-change-me"` — must be overridden in prod | `deploy.ts:12`, `launch.ts:297`, `watcher/index.ts:8` |
 | A5 | `checkOnchainOwnership` uses multiple fallback `return true` paths — tighten for mainnet | `shopStore.ts:382-420` |
+| A6 | `POST /floor/presence/join` creates/overwrites user profiles without auth — add `verifyWalletToken` | `floor.ts` |
+| A7 | `POST /floor/presence/leave` allows any caller to mark users offline — add auth guard | `floor.ts` |
 
 ### Files Violating Live-Only Rules
 
