@@ -2,66 +2,282 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Font ──────────────────────────────────────────────────────────────────── */
 :root {
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+
+  /* Neo-brut palette */
+  --ink:          #111111;
+  --cream:        #FFF7E8;
+  --bg-yellow:    #FFD84D;
+  --panel-cream:  #FFFBEB;
+  --green:        #22C55E;
+  --red:          #EF4444;
+  --orange:       #F97316;
+
+  /* Semantic vars mapped to new palette */
+  --bg-base:        var(--bg-yellow);
+  --bg-card:        var(--panel-cream);
+  --bg-card-hover:  #FFF3D6;
+  --bg-input:       var(--panel-cream);
+  --border:         var(--ink);
+  --border-hover:   #333333;
+  --text-primary:   var(--ink);
+  --text-secondary: #333333;
+  --text-muted:     #666666;
+  --layout-y-pad:   2rem;
+
+  /* Neo-brut system */
+  --border-w:       3px;
+  --radius-lg:      16px;
+  --radius-md:      10px;
+  --shadow-hard:    8px 8px 0 var(--ink);
+  --shadow-hard-sm: 5px 5px 0 var(--ink);
+  --shadow-hard-lg: 10px 10px 0 var(--ink);
+  --dot-grid:       url(/assets/opfun/backgrounds/halftone_tile.svg);
 }
 
 body {
-  @apply bg-[#0a0a0a] text-zinc-100 antialiased;
+  background-color: var(--bg-yellow);
+  background-image: var(--dot-grid);
+  background-repeat: repeat;
+  background-size: 16px 16px;
+  color: var(--text-primary);
+  @apply antialiased;
 }
 
-/* ── Neo-brutalism design tokens ─────────────────────────────────────────── */
-/* S11: 2px solid borders, offset box-shadows, font-black headings            */
+/* ── Neo-brutalism primitives ─────────────────────────────────────────────── */
 
-/* Standard info card */
+/* Base card panel */
+.op-panel {
+  background: var(--panel-cream);
+  border: var(--border-w) solid var(--ink);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-hard);
+}
+
+
+/* Yellow primary button */
+.op-btn-primary {
+  background: var(--bg-yellow);
+  border: var(--border-w) solid var(--ink);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-hard-sm);
+  font-weight: 900;
+  color: var(--ink);
+  transition: box-shadow 80ms, transform 80ms;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 1.25rem;
+  font-size: 0.875rem;
+}
+.op-btn-primary:hover  { box-shadow: 3px 3px 0 var(--ink); transform: translate(2px, 2px) scale(1.01); }
+.op-btn-primary:active { box-shadow: none; transform: translate(5px, 5px); }
+.op-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: var(--shadow-hard-sm); }
+
+/* Outline button */
+.op-btn-outline {
+  background: transparent;
+  border: var(--border-w) solid var(--ink);
+  border-radius: var(--radius-md);
+  box-shadow: 3px 3px 0 var(--ink);
+  font-weight: 700;
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 1.25rem;
+  font-size: 0.875rem;
+  transition: background 80ms, box-shadow 80ms, transform 80ms;
+}
+.op-btn-outline:hover  { background: var(--panel-cream); box-shadow: 2px 2px 0 var(--ink); transform: translate(1px, 1px); }
+.op-btn-outline:active { box-shadow: none; transform: translate(3px, 3px); }
+
+/* Pill chip (filter / status) */
+.op-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 800;
+  background: var(--panel-cream);
+  color: var(--ink);
+  cursor: pointer;
+  box-shadow: 3px 3px 0 var(--ink);
+  transition: background 80ms, box-shadow 80ms, transform 80ms;
+}
+.op-pill:hover { background: #FFF3D6; box-shadow: 2px 2px 0 var(--ink); transform: translate(1px, 1px); }
+.op-pill:active { box-shadow: none; transform: translate(3px, 3px); }
+.op-pill-active {
+  background: var(--bg-yellow);
+}
+
+/* ── Legacy compatibility classes ─────────────────────────────────────────── */
+
+/* Standard info card (remapped) */
 .card {
-  @apply rounded-2xl border-2 border-zinc-800 bg-zinc-900/80 p-5 transition-colors hover:border-zinc-700;
+  background: var(--bg-card);
+  border: var(--border-w) solid var(--border);
+  color: var(--text-primary);
+  @apply rounded-2xl p-5 transition-colors;
+}
+.card:hover {
+  border-color: var(--border-hover);
 }
 
-/* Compact token feed card — used in FeedClient */
+/* Compact token feed card */
 .token-card {
-  @apply rounded-xl border-2 border-zinc-800 bg-zinc-900/60 transition-all duration-200
-    hover:border-zinc-700 hover:bg-zinc-900 cursor-pointer;
+  background: var(--bg-card);
+  border: var(--border-w) solid var(--border);
+  box-shadow: 5px 5px 0 var(--ink);
+  @apply rounded-xl transition-all duration-200 cursor-pointer;
+}
+.token-card:hover {
+  border-color: var(--border-hover);
+  background: var(--bg-card-hover);
+  box-shadow: 7px 7px 0 var(--ink);
+  transform: translate(-1px, -1px);
 }
 
 .btn-primary {
-  @apply rounded-xl border-2 border-brand-600 bg-brand-500 px-5 py-2.5 text-sm font-black
-    text-white shadow-[3px_3px_0_#c2410c]
-    hover:bg-brand-600 hover:shadow-[1px_1px_0_#9a3412]
-    active:scale-[0.98] active:shadow-none
-    focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500
-    disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none
-    transition-all duration-100;
+  background: var(--bg-yellow);
+  border: var(--border-w) solid var(--ink);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-hard-sm);
+  font-weight: 900;
+  color: var(--ink);
+  transition: box-shadow 80ms, transform 80ms;
+  @apply px-5 py-2.5 text-sm inline-flex items-center justify-center;
 }
+.btn-primary:hover  { box-shadow: 3px 3px 0 var(--ink); transform: translate(2px, 2px); }
+.btn-primary:active { box-shadow: none; transform: translate(5px, 5px); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
 
 .btn-secondary {
-  @apply rounded-xl border-2 border-zinc-700 bg-zinc-800 px-5 py-2.5 text-sm font-bold
-    text-zinc-200 shadow-[2px_2px_0_#27272a]
-    hover:bg-zinc-700 hover:shadow-[1px_1px_0_#18181b]
-    active:scale-[0.98] active:shadow-none
-    transition-all duration-100;
+  background: var(--panel-cream);
+  border: var(--border-w) solid var(--ink);
+  color: var(--ink);
+  border-radius: var(--radius-md);
+  box-shadow: 4px 4px 0 var(--ink);
+  @apply px-5 py-2.5 text-sm font-bold transition-all duration-100 inline-flex items-center justify-center;
 }
+.btn-secondary:hover {
+  background: var(--bg-card-hover);
+  box-shadow: 2px 2px 0 var(--ink);
+  transform: translate(2px, 2px);
+}
+.btn-secondary:active {
+  box-shadow: none;
+  transform: translate(4px, 4px);
+}
+
 
 .badge {
   @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold;
 }
 
 .input {
-  @apply w-full rounded-xl border-2 border-zinc-700 bg-zinc-800/80 px-4 py-2.5 text-sm
-    text-zinc-100 placeholder-zinc-500
-    focus:border-brand-500 focus:outline-none focus:ring-0
+  background: var(--bg-input);
+  border: var(--border-w) solid var(--border);
+  color: var(--text-primary);
+  @apply w-full rounded-xl px-4 py-2.5 text-sm
+    focus:outline-none focus:ring-0
     transition-colors;
 }
+.input::placeholder {
+  color: var(--text-muted);
+}
+.input:focus {
+  border-color: var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
 
 .input-error {
   @apply border-red-500 focus:border-red-400;
 }
 
 .label {
-  @apply block text-xs font-black uppercase tracking-wider text-zinc-400 mb-1.5;
+  color: var(--text-secondary);
+  @apply block text-xs font-black uppercase tracking-wider mb-1.5;
 }
 
 /* Stats strip used in token page top bar */
 .stat-pill {
-  @apply flex flex-col items-center px-4 py-2 border-r-2 border-zinc-800 last:border-r-0;
+  border-right: var(--border-w) solid var(--border);
+  @apply flex flex-col items-center px-4 py-2 last:border-r-0;
+}
+
+/* ── Semantic aliases (op-* shorthand) ─────────────────────────────────── */
+:root {
+  --op-bg:     #FFD84D;
+  --op-paper:  #FFFBEB;
+  --op-ink:    #111111;
+  --op-shadow: 8px 8px 0 #111111;
+  --op-green:  #22C55E;
+  --op-red:    #EF4444;
+}
+
+.op-icon-circle {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  border: 3px solid var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* ── Block Timer Bar ──────────────────────────────────────────────────── */
+.block-timer-bar {
+  background: var(--panel-cream);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 900;
+  border-bottom: var(--border-w) solid var(--ink);
+  letter-spacing: 0.04em;
+}
+
+/* ── Card hover lift + shadow grow ────────────────────────────────────── */
+.op-card-hover {
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.op-card-hover:hover {
+  transform: translate(-3px, -3px);
+  box-shadow: 11px 11px 0 #111111;
+}
+
+/* ── Nav link underline sweep ─────────────────────────────────────────── */
+.op-link-highlight {
+  position: relative;
+}
+.op-link-highlight::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 2px;
+  height: 2px;
+  background: var(--ink);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 200ms ease;
+}
+.op-link-highlight:hover::after {
+  transform: scaleX(1);
+}
+
+/* ── Utility: hide scrollbar ───────────────────────────────────────────── */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
 }
