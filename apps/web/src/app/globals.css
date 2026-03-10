@@ -281,3 +281,11 @@ body {
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
+
+/* ── Text shadow utilities ─────────────────────────────────────────────── */
+.text-shadow-cream {
+  text-shadow: 2px 2px 0 var(--panel-cream), -1px -1px 0 var(--panel-cream);
+}
+.text-shadow-cream-sm {
+  text-shadow: 1px 1px 0 var(--panel-cream);
+}
