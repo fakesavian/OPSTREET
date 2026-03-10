@@ -98,9 +98,9 @@ export async function createProject(data: {
   links: Record<string, string>;
   iconUrl?: string;
   sourceRepoUrl?: string;
-  liquidityToken: "TBTC" | "MOTO" | "PILL";
-  liquidityAmount: string;
-  liquidityFundingTx: string;
+  liquidityToken?: "TBTC" | "MOTO" | "PILL";
+  liquidityAmount?: string;
+  liquidityFundingTx?: string;
 }): Promise<ProjectDTO> {
   const res = await fetch(`${BASE}/projects`, {
     method: "POST",
@@ -499,6 +499,28 @@ export interface PoolParamsResponse {
   routerAddress: string;
   liquidityToken: string;
   liquidityAmount: string;
+  baseTokenAddress: string;
+  quoteTokenAddress: string;
+  instructions: string[];
+}
+
+export interface PreparedInteractionResponse {
+  offlineBufferHex: string;
+  refundTo: string;
+  maximumAllowedSatToSpend: string;
+  feeRate: number;
+}
+
+export interface PoolCreateIntentResponse {
+  status: "POOL_CREATE_INTENT";
+  projectId: string;
+  ticker: string;
+  poolBaseToken: string;
+  baseTokenAddress: string;
+  quoteTokenAddress: string;
+  poolAddress: string;
+  factoryAddress: string;
+  interaction: PreparedInteractionResponse;
   instructions: string[];
 }
 
@@ -512,6 +534,20 @@ export async function fetchPoolParams(projectId: string): Promise<PoolParamsResp
     throw new Error((err as { error?: string }).error ?? `HTTP ${res.status}`);
   }
   return res.json() as Promise<PoolParamsResponse>;
+}
+
+export async function fetchPoolCreateIntent(projectId: string): Promise<PoolCreateIntentResponse> {
+  const res = await fetchOrExplain(`${BASE}/projects/${projectId}/pool-create-intent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({}),
+  }, "preparing pool creation");
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<PoolCreateIntentResponse>;
 }
 
 export async function launchBuild(projectId: string): Promise<{ message: string; launchStatus: string }> {
@@ -552,9 +588,11 @@ export async function submitDeploy(projectId: string, data: {
 }
 
 export async function submitPool(projectId: string, data: {
-  poolTx: string;
+  poolTx?: string;
   poolAddress: string;
   poolBaseToken?: string;
+  signedFundingTxHex?: string;
+  signedInteractionTxHex?: string;
 }): Promise<ProjectDTO> {
   const res = await fetchOrExplain(`${BASE}/projects/${projectId}/pool-submit`, {
     method: "POST",

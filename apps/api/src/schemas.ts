@@ -18,6 +18,13 @@ export const CreateProjectSchema = z.object({
     .default({}),
   iconUrl: z.string().url().optional(),
   sourceRepoUrl: z.string().url().optional(),
+  liquidityToken: z.enum(["TBTC", "MOTO", "PILL"]).optional(),
+  liquidityAmount: z
+    .string()
+    .regex(/^\d+(\.\d+)?$/, "liquidityAmount must be a positive number string")
+    .refine((v) => Number(v) > 0, "liquidityAmount must be greater than 0")
+    .optional(),
+  liquidityFundingTx: z.string().min(8).optional(),
 });
 
 export type CreateProjectInput = z.infer<typeof CreateProjectSchema>;
