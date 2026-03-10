@@ -39,7 +39,6 @@ export function DeployPanel({ project, onStatusChange }: DeployPanelProps) {
         const e = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(e.error ?? `HTTP ${res.status}`);
       }
-      // Poll for completion
       onStatusChange("CHECKING");
       setPhase("done");
       const instr = await pollForInstructions(project.id, adminSecret);
@@ -75,7 +74,6 @@ export function DeployPanel({ project, onStatusChange }: DeployPanelProps) {
     }
   }
 
-  // S13: derive which of the 3 deploy steps is active
   type DeployStep = 0 | 1 | 2;
   const deployStep: DeployStep = isLaunched
     ? 2
@@ -87,20 +85,22 @@ export function DeployPanel({ project, onStatusChange }: DeployPanelProps) {
 
   if (isLaunched) {
     return (
-      <div className="card border-green-900/50 bg-green-950/20">
-        <h2 className="font-bold text-white mb-3">Deployed to Testnet</h2>
-        <div className="space-y-2 text-sm">
+      <div className="op-panel border-opGreen bg-opGreen/10">
+        <div className="px-5 py-4 border-b-2 border-ink/10">
+          <h2 className="font-black text-ink mb-1">Deployed to Testnet</h2>
+        </div>
+        <div className="p-5 space-y-3 text-sm">
           {project.contractAddress && (
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-zinc-500">Contract Address</p>
-              <p className="font-mono text-green-300 text-xs mt-0.5 break-all">
+              <p className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">Contract Address</p>
+              <p className="font-mono text-opGreen text-xs mt-0.5 break-all">
                 {project.contractAddress}
               </p>
               <a
                 href={`${EXPLORER}/contract/${project.contractAddress}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="mt-1 inline-flex items-center gap-1 text-xs text-brand-400 hover:text-brand-300"
+                className="mt-1 inline-flex items-center gap-1 text-xs font-bold text-ink hover:text-opGreen transition-colors"
               >
                 View on OPNet Testnet Explorer ↗
               </a>
@@ -108,8 +108,8 @@ export function DeployPanel({ project, onStatusChange }: DeployPanelProps) {
           )}
           {project.deployTx && (
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-zinc-500">Deploy TX</p>
-              <p className="font-mono text-zinc-400 text-xs mt-0.5 break-all">{project.deployTx}</p>
+              <p className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">Deploy TX</p>
+              <p className="font-mono text-[var(--text-muted)] text-xs mt-0.5 break-all">{project.deployTx}</p>
             </div>
           )}
         </div>
@@ -118,141 +118,143 @@ export function DeployPanel({ project, onStatusChange }: DeployPanelProps) {
   }
 
   return (
-    <div className="card">
-      <h2 className="font-black text-white mb-1">Deploy to Testnet</h2>
-      <p className="text-xs text-zinc-500 mb-4">
-        Admin-gated · OPNet Testnet only · Generates a complete deploy package
-      </p>
+    <div className="op-panel">
+      <div className="px-5 py-4 border-b-2 border-ink/10">
+        <h2 className="font-black text-ink mb-0.5">Deploy to Testnet</h2>
+        <p className="text-xs text-[var(--text-muted)]">
+          Admin-gated · OPNet Testnet only · Generates a complete deploy package
+        </p>
+      </div>
 
-      {/* S13: 3-step progress indicator */}
-      <DeploySteps currentStep={deployStep} />
+      <div className="p-5 space-y-4">
+        <DeploySteps currentStep={deployStep} />
 
-
-      {phase === "idle" && canDeploy && (
-        <div className="space-y-3">
-          <div>
-            <label className="label">Admin Secret</label>
-            <input
-              type="password"
-              className="input"
-              placeholder="Enter admin secret (ADMIN_SECRET env var)"
-              value={adminSecret}
-              onChange={(e) => setAdminSecret(e.target.value)}
-            />
+        {phase === "idle" && canDeploy && (
+          <div className="space-y-3">
+            <div>
+              <label className="label">Admin Secret</label>
+              <input
+                type="password"
+                className="input"
+                placeholder="Enter admin secret (ADMIN_SECRET env var)"
+                value={adminSecret}
+                onChange={(e) => setAdminSecret(e.target.value)}
+              />
+            </div>
+            <button onClick={triggerDeploy} disabled={loading} className="btn-primary w-full">
+              Generate Deploy Package →
+            </button>
+            <button
+              onClick={() => setShowConfirm(true)}
+              className="btn-secondary w-full text-sm"
+            >
+              Already deployed? Confirm address manually
+            </button>
           </div>
-          <button onClick={triggerDeploy} disabled={loading} className="btn-primary w-full">
-            Generate Deploy Package →
-          </button>
-          <button
-            onClick={() => setShowConfirm(true)}
-            className="btn-secondary w-full text-sm"
-          >
-            Already deployed? Confirm address manually
-          </button>
-        </div>
-      )}
+        )}
 
-      {phase === "scaffolding" && (
-        <div className="flex items-center gap-3 py-4 text-sm text-zinc-400">
-          <span className="h-3 w-3 rounded-full bg-brand-500 animate-pulse" />
-          Scaffolding deploy package and compiling contract…
-        </div>
-      )}
-
-      {phase === "manual" && (
-        <div className="space-y-4">
-          <div className="rounded-xl border border-zinc-700 bg-zinc-900 p-4">
-            <p className="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">
-              Deploy Instructions
-            </p>
-            <pre className="text-xs text-zinc-300 whitespace-pre-wrap leading-relaxed font-mono">
-              {instructions || "Deploy package ready. See packages/opnet/generated/ for files."}
-            </pre>
+        {phase === "scaffolding" && (
+          <div className="flex items-center gap-3 py-4">
+            <span className="h-3 w-3 rounded-full bg-opYellow border-2 border-ink animate-pulse" />
+            <span className="text-sm text-ink font-bold">Scaffolding deploy package and compiling contract…</span>
           </div>
+        )}
 
-          <div className="rounded-xl border border-brand-900/50 bg-brand-950/20 p-4 space-y-3">
-            <p className="text-sm font-semibold text-zinc-200">
-              After running the deploy script, confirm the result:
-            </p>
+        {phase === "manual" && (
+          <div className="space-y-4">
+            <div className="rounded-xl border-2 border-ink bg-[var(--cream)] p-4">
+              <p className="text-xs font-black uppercase tracking-wider text-[var(--text-muted)] mb-2">
+                Deploy Instructions
+              </p>
+              <pre className="text-xs text-ink whitespace-pre-wrap leading-relaxed font-mono">
+                {instructions || "Deploy package ready. See packages/opnet/generated/ for files."}
+              </pre>
+            </div>
+
+            <div className="rounded-xl border-2 border-opGreen/30 bg-opGreen/5 p-4 space-y-3">
+              <p className="text-sm font-semibold text-ink">
+                After running the deploy script, confirm the result:
+              </p>
+              <div>
+                <label className="label">Contract Address</label>
+                <input
+                  className="input font-mono"
+                  placeholder="bcrt1p..."
+                  value={contractAddress}
+                  onChange={(e) => setContractAddress(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="label">Deploy TX ID</label>
+                <input
+                  className="input font-mono"
+                  placeholder="txid..."
+                  value={deployTx}
+                  onChange={(e) => setDeployTx(e.target.value)}
+                />
+              </div>
+              <button
+                onClick={confirmDeploy}
+                disabled={confirming}
+                className="btn-primary w-full"
+              >
+                {confirming ? "Confirming…" : "Confirm Deployment →"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Manual confirm overlay (before triggering scaffold) */}
+        {showConfirm && phase === "idle" && (
+          <div className="mt-4 space-y-3 rounded-xl border-2 border-ink bg-[var(--cream)] p-4">
+            <p className="text-sm font-semibold text-ink">Confirm existing deployment</p>
+            <div>
+              <label className="label">Admin Secret</label>
+              <input type="password" className="input" placeholder="Admin secret"
+                value={adminSecret} onChange={(e) => setAdminSecret(e.target.value)} />
+            </div>
             <div>
               <label className="label">Contract Address</label>
-              <input
-                className="input font-mono"
-                placeholder="bcrt1p..."
-                value={contractAddress}
-                onChange={(e) => setContractAddress(e.target.value)}
-              />
+              <input className="input font-mono" placeholder="bcrt1p..."
+                value={contractAddress} onChange={(e) => setContractAddress(e.target.value)} />
             </div>
             <div>
               <label className="label">Deploy TX ID</label>
-              <input
-                className="input font-mono"
-                placeholder="txid..."
-                value={deployTx}
-                onChange={(e) => setDeployTx(e.target.value)}
-              />
+              <input className="input font-mono" placeholder="txid..."
+                value={deployTx} onChange={(e) => setDeployTx(e.target.value)} />
             </div>
-            <button
-              onClick={confirmDeploy}
-              disabled={confirming}
-              className="btn-primary w-full"
-            >
-              {confirming ? "Confirming…" : "Confirm Deployment →"}
-            </button>
+            <div className="flex gap-2">
+              <button onClick={confirmDeploy} disabled={confirming} className="btn-primary flex-1">
+                {confirming ? "Confirming…" : "Confirm"}
+              </button>
+              <button onClick={() => setShowConfirm(false)} className="btn-secondary flex-1">
+                Cancel
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Manual confirm overlay (before triggering scaffold) */}
-      {showConfirm && phase === "idle" && (
-        <div className="mt-4 space-y-3 rounded-xl border border-zinc-700 bg-zinc-900/50 p-4">
-          <p className="text-sm font-semibold text-zinc-200">Confirm existing deployment</p>
-          <div>
-            <label className="label">Admin Secret</label>
-            <input type="password" className="input" placeholder="Admin secret"
-              value={adminSecret} onChange={(e) => setAdminSecret(e.target.value)} />
-          </div>
-          <div>
-            <label className="label">Contract Address</label>
-            <input className="input font-mono" placeholder="bcrt1p..."
-              value={contractAddress} onChange={(e) => setContractAddress(e.target.value)} />
-          </div>
-          <div>
-            <label className="label">Deploy TX ID</label>
-            <input className="input font-mono" placeholder="txid..."
-              value={deployTx} onChange={(e) => setDeployTx(e.target.value)} />
-          </div>
-          <div className="flex gap-2">
-            <button onClick={confirmDeploy} disabled={confirming} className="btn-primary flex-1">
-              {confirming ? "Confirming…" : "Confirm"}
-            </button>
-            <button onClick={() => setShowConfirm(false)} className="btn-secondary flex-1">
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
+        {!canDeploy && !isLaunched && (
+          <p className="text-sm text-[var(--text-muted)]">
+            {project.status === "DRAFT"
+              ? "Run security checks first before deploying."
+              : project.status === "CHECKING"
+              ? "Checks in progress…"
+              : `Status '${project.status}' — cannot deploy right now.`}
+          </p>
+        )}
 
-      {!canDeploy && !isLaunched && (
-        <p className="text-sm text-zinc-500">
-          {project.status === "DRAFT"
-            ? "Run security checks first before deploying."
-            : project.status === "CHECKING"
-            ? "Checks in progress…"
-            : `Status '${project.status}' — cannot deploy right now.`}
-        </p>
-      )}
-
-      {error && (
-        <div className="mt-3 rounded-xl border border-red-900 bg-red-950/30 px-4 py-3 text-sm text-red-400">
-          {error}
-        </div>
-      )}
+        {error && (
+          <div className="mt-3 rounded-xl border-2 border-opRed bg-opRed/5 px-4 py-3 text-sm text-opRed">
+            {error}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-// S13: 3-step deploy progress indicator
+// 3-step deploy progress indicator
 const DEPLOY_STEPS = [
   { label: "Package", desc: "Generate deploy package" },
   { label: "Deploy", desc: "Run deploy.ts script" },
@@ -261,7 +263,7 @@ const DEPLOY_STEPS = [
 
 function DeploySteps({ currentStep }: { currentStep: 0 | 1 | 2 }) {
   return (
-    <div className="flex items-center gap-0 mb-5">
+    <div className="flex items-center gap-0 mb-1">
       {DEPLOY_STEPS.map((s, i) => {
         const done = i < currentStep;
         const active = i === currentStep;
@@ -271,10 +273,10 @@ function DeploySteps({ currentStep }: { currentStep: 0 | 1 | 2 }) {
               <div
                 className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-black border-2 transition-colors ${
                   done
-                    ? "border-green-700 bg-green-900/50 text-green-400"
+                    ? "border-opGreen bg-opGreen/20 text-opGreen"
                     : active
-                    ? "border-brand-500 bg-brand-500/20 text-brand-300"
-                    : "border-zinc-700 text-zinc-600"
+                    ? "border-opYellow bg-opYellow/20 text-ink"
+                    : "border-ink/30 text-[var(--text-muted)]"
                 }`}
               >
                 {done ? "✓" : i + 1}
@@ -282,16 +284,16 @@ function DeploySteps({ currentStep }: { currentStep: 0 | 1 | 2 }) {
               <div>
                 <p
                   className={`text-[11px] font-black leading-none ${
-                    done ? "text-green-400" : active ? "text-white" : "text-zinc-600"
+                    done ? "text-opGreen" : active ? "text-ink" : "text-[var(--text-muted)]"
                   }`}
                 >
                   {s.label}
                 </p>
-                <p className="text-[9px] text-zinc-600 leading-tight mt-0.5">{s.desc}</p>
+                <p className="text-[9px] text-[var(--text-muted)] leading-tight mt-0.5">{s.desc}</p>
               </div>
             </div>
             {i < DEPLOY_STEPS.length - 1 && (
-              <div className={`mx-2 flex-1 h-0.5 ${i < currentStep ? "bg-green-800" : "bg-zinc-800"}`} />
+              <div className={`mx-2 flex-1 h-0.5 ${i < currentStep ? "bg-opGreen" : "bg-ink/10"}`} />
             )}
           </div>
         );
@@ -301,7 +303,6 @@ function DeploySteps({ currentStep }: { currentStep: 0 | 1 | 2 }) {
 }
 
 async function pollForInstructions(projectId: string, adminSecret: string): Promise<string> {
-  // Poll until not CHECKING, then fetch deploy-package for instructions
   for (let i = 0; i < 30; i++) {
     await new Promise((r) => setTimeout(r, 2000));
     try {

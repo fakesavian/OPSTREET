@@ -44,7 +44,7 @@ export function LandingTokenCard({ project }: { project: ProjectDTO }) {
       <div className="op-panel overflow-hidden transition-all duration-100 group-hover:-translate-x-0.5 group-hover:-translate-y-0.5 group-hover:shadow-hard-lg">
         <div className="flex items-start gap-4 p-5 pb-3">
           <div
-            className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border-3 border-ink text-lg font-black text-white shadow-hard-sm"
+            className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border-3 border-ink text-lg font-black text-ink shadow-hard-sm"
             style={{ background: bg }}
           >
             {project.ticker.slice(0, 2).toUpperCase()}

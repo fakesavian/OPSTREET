@@ -29,13 +29,13 @@ const PHASES = [
 const STATUS_STYLES = {
   COMPLETE: "bg-opGreen text-white",
   "IN PROGRESS": "bg-opYellow text-ink animate-pulse",
-  UPCOMING: "bg-gray-300 text-gray-600",
+  UPCOMING: "bg-ink/10 text-ink/60",
 };
 
 const DOT_STYLES = {
   COMPLETE: "bg-opGreen border-opGreen",
   "IN PROGRESS": "bg-opYellow border-opYellow",
-  UPCOMING: "bg-gray-300 border-gray-400",
+  UPCOMING: "bg-ink/10 border-ink/30",
 };
 
 export function RoadmapSection() {
