@@ -70,6 +70,18 @@ export interface OpnetLiquidityFundingRequest {
   memo?: string;
 }
 
+export interface OpnetPreparedInteraction {
+  offlineBufferHex: string;
+  refundTo: string;
+  maximumAllowedSatToSpend: string;
+  feeRate: number;
+}
+
+export interface OpnetSignedInteractionResult {
+  signedFundingTxHex?: string | null;
+  signedInteractionTxHex: string;
+}
+
 // ── Bech32m address re-encoding ──────────────────────────────────────────
 // OPNet testnet uses HRP "opt" (opt1p... for taproot) instead of "tb" (tb1p...).
 // OP_WALLET rejects standard Bitcoin testnet addresses.
@@ -487,6 +499,9 @@ function normalizeWalletError(raw: string): string {
   if (/duplicated wallet|same key|mldsa|conflict/i.test(msg)) {
     return "OP_WALLET reports a duplicate wallet/MLDSA key conflict. Open the wallet and tap \"Resolve Now\" before submitting trades.";
   }
+  if (/insufficient|not enough funds|balance too low/i.test(msg)) {
+    return "Insufficient funds in OP_WALLET for this transaction and its network fees.";
+  }
   if (/reject|denied|cancelled|canceled|declined/i.test(msg)) {
     return "Wallet request was rejected.";
   }
@@ -504,9 +519,50 @@ function normalizeWalletError(raw: string): string {
 }
 
 function isFatalWalletError(msg: string): boolean {
-  return /duplicated wallet|same key|mldsa|conflict|reject|denied|cancelled|canceled|declined|not connected|unauthori|permission|invalid.*address|invalid.*recipient/i.test(
+  return /duplicated wallet|same key|mldsa|conflict|insufficient|not enough funds|balance too low|reject|denied|cancelled|canceled|declined|not connected|unauthori|permission|invalid.*address|invalid.*recipient/i.test(
     msg,
   );
+}
+
+export async function signOpnetInteractionWithWallet(
+  provider: WalletProviderType,
+  interaction: OpnetPreparedInteraction,
+): Promise<OpnetSignedInteractionResult> {
+  if (provider !== "opnet") {
+    throw new Error("Use an OPNet wallet to sign this interaction.");
+  }
+
+  const opnet = getOPNet();
+  if (!opnet) {
+    throw new Error("OPNet wallet extension not found.");
+  }
+
+  await ensureOPNetTestnet(opnet);
+
+  try {
+    const [{ CallResult }, { networks }] = await Promise.all([
+      import("opnet/browser"),
+      import("@btc-vision/bitcoin"),
+    ]);
+
+    const simulation = CallResult.fromOfflineBuffer(interaction.offlineBufferHex);
+    const signed = await simulation.signTransaction({
+      signer: null,
+      mldsaSigner: null,
+      refundTo: toOpnetTestnetAddress(interaction.refundTo),
+      maximumAllowedSatToSpend: BigInt(interaction.maximumAllowedSatToSpend),
+      feeRate: interaction.feeRate,
+      network: networks.testnet,
+    });
+
+    return {
+      signedFundingTxHex: signed.fundingTransactionRaw ?? null,
+      signedInteractionTxHex: signed.interactionTransactionRaw,
+    };
+  } catch (error) {
+    const normalized = normalizeWalletError(errorMessage(error));
+    throw new Error(normalized);
+  }
 }
 
 function methodArgs(methodName: string, payload: OpnetTradeRequest): unknown[][] {
