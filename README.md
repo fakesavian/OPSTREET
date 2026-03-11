@@ -126,8 +126,14 @@ OPNET_RPC_URL=""                     # Required for trade confirmation + pool in
 OPNET_RPC_KEY=""
 
 # apps/web/.env.local
+# Option A (recommended): leave NEXT_PUBLIC_API_URL unset and use /api rewrite with OPFUN_API_URL.
+# Option B: set NEXT_PUBLIC_API_URL directly to your API origin.
 NEXT_PUBLIC_API_URL="http://localhost:3001"
 NEXT_PUBLIC_LIQUIDITY_VAULT_ADDRESS="tb1ppdtv25qr5ydzr9733rl23pt9gx36cvffxe8mr82t2ntd9ddf3uus6wecwc"
+
+# apps/web production env (Vercel)
+# Backend origin for Next.js /api proxy rewrites.
+OPFUN_API_URL="https://your-api-origin.example.com"
 ```
 
 ### Run

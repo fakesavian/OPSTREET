@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import type { ProjectDTO } from "@opfun/shared";
+import { getApiBase } from "@/lib/apiBase";
 
-const API = process.env["NEXT_PUBLIC_API_URL"] ?? "http://localhost:3001";
+const API = getApiBase();
 const EXPLORER = "https://testnet.opnet.org";
 
 interface DeployPanelProps {

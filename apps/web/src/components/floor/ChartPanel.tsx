@@ -5,11 +5,12 @@ import type { FloorTickerDTO } from "@opfun/shared";
 import { TokenChart } from "../TokenChart";
 import { useWallet } from "../WalletProvider";
 import { submitOpnetTradeWithWallet } from "@/lib/wallet";
+import { getApiBase } from "@/lib/apiBase";
 
 type TradeSide = "BUY" | "SELL";
 type PaymentToken = "MOTO" | "PILL";
 
-const API = process.env["NEXT_PUBLIC_API_URL"] ?? "http://localhost:3001";
+const API = getApiBase();
 
 interface Props {
   ticker: FloorTickerDTO[];

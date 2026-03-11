@@ -9,8 +9,9 @@ import {
 } from "@opfun/shared";
 import { submitOpnetTradeWithWallet, type WalletProviderType } from "@/lib/wallet";
 import { fetchMarketState, type MarketStateResponse } from "@/lib/api";
+import { getApiBase } from "@/lib/apiBase";
 
-const API = process.env["NEXT_PUBLIC_API_URL"] ?? "http://localhost:3001";
+const API = getApiBase();
 
 type OrderMode = "SWAP" | "SEND";
 type ConfirmBlocks = 1 | 2 | 3;

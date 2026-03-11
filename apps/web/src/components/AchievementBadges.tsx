@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { getApiBase } from "@/lib/apiBase";
 
-const API = process.env["NEXT_PUBLIC_API_URL"] ?? "http://localhost:3001";
+const API = getApiBase();
 
 interface Badge {
   id: string;

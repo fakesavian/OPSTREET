@@ -7,12 +7,20 @@ import type {
   FloorTickerDTO,
   FloorStatsDTO,
 } from "@opfun/shared";
+import { getApiBase, isLocalApiBase } from "./apiBase";
 
-const BASE = process.env["NEXT_PUBLIC_API_URL"] ?? "http://localhost:3001";
+const BASE = getApiBase();
 
 function apiUnavailableError(action: string): Error {
+  const localFallback =
+    isLocalApiBase(BASE) &&
+    typeof window !== "undefined" &&
+    !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname.toLowerCase());
+  const hint = localFallback
+    ? "Set NEXT_PUBLIC_API_URL (or OPFUN_API_URL + /api rewrite) to your live backend and redeploy."
+    : "Start the local stack with `pnpm dev` and try again.";
   return new Error(
-    `Cannot reach API at ${BASE} while ${action}. Start the local stack with \`pnpm dev\` and try again.`,
+    `Cannot reach API at ${BASE} while ${action}. ${hint}`,
   );
 }
 

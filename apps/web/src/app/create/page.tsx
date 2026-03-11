@@ -12,7 +12,9 @@ type Step = 0 | 1 | 2;
 type FieldErrors = Partial<Record<string, string>>;
 type TouchedFields = Partial<Record<string, boolean>>;
 
-const LIQUIDITY_VAULT_ADDRESS = process.env["NEXT_PUBLIC_LIQUIDITY_VAULT_ADDRESS"] ?? "";
+const DEFAULT_LIQUIDITY_VAULT_ADDRESS = "tb1ppdtv25qr5ydzr9733rl23pt9gx36cvffxe8mr82t2ntd9ddf3uus6wecwc";
+const LIQUIDITY_VAULT_ADDRESS =
+  process.env["NEXT_PUBLIC_LIQUIDITY_VAULT_ADDRESS"]?.trim() || DEFAULT_LIQUIDITY_VAULT_ADDRESS;
 const LIQUIDITY_TOKEN_TO_SATS: Record<"TBTC" | "MOTO" | "PILL", number> = {
   TBTC: 100_000_000,
   MOTO: 65_000,
@@ -82,10 +84,6 @@ export default function CreatePage() {
     try {
       if (!wallet) throw new Error("Connect an OP_WALLET first.");
       if (wallet.provider !== "opnet") throw new Error("OP_WALLET is required to fund initial liquidity.");
-      if (!LIQUIDITY_VAULT_ADDRESS) {
-        throw new Error("Liquidity vault address is not configured. Set NEXT_PUBLIC_LIQUIDITY_VAULT_ADDRESS.");
-      }
-
       const liquidityUnits = Number(form.liquidityAmount);
       if (!Number.isFinite(liquidityUnits) || liquidityUnits <= 0) {
         throw new Error("Liquidity amount must be greater than zero.");

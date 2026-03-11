@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useCallback, type ReactNode } from "react";
 import type { ProjectDTO, RiskCard } from "@opfun/shared";
+import { getApiBase } from "@/lib/apiBase";
 
-const API = process.env["NEXT_PUBLIC_API_URL"] ?? "http://localhost:3001";
+const API = getApiBase();
 
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: "Draft - ready for audit",

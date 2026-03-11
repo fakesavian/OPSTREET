@@ -11,8 +11,9 @@ import { BuyFlowPanel } from "./BuyFlowPanel";
 import { useWallet } from "./WalletProvider";
 import { AchievementBadges } from "./AchievementBadges";
 import { OpBadge } from "./opfun/OpBadge";
+import { getApiBase } from "@/lib/apiBase";
 
-const API = process.env["NEXT_PUBLIC_API_URL"] ?? "http://localhost:3001";
+const API = getApiBase();
 
 type FullProject = ProjectDTO & { checkRuns: CheckRun[]; watchEvents: WatchEvent[] };
 
