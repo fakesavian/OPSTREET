@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "prebuild": "pnpm --filter @opfun/opnet build && pnpm run db:generate",
     "build": "tsc --project tsconfig.json",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
