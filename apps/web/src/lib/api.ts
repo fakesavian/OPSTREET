@@ -668,6 +668,7 @@ export interface ShopCatalogItemState {
     freeMint: boolean;
   };
   owned: boolean;
+  mintStatus: "PENDING" | "CONFIRMED" | "FAILED" | null;
   mintedAt: string | null;
   active: boolean;
   collectionAddress: string | null;
@@ -730,6 +731,7 @@ export interface MintConfirmResponse {
   collectionAddress: string;
   tokenId: string;
   mintTxId: string;
+  fundingTxId?: string | null;
   confirmedAt: string | null;
   active: boolean;
 }
@@ -760,12 +762,16 @@ export async function shopMintIntent(itemKey: ShopItemKey): Promise<MintIntentRe
   return res.json() as Promise<MintIntentResponse>;
 }
 
-export async function shopMintConfirm(itemKey: ShopItemKey, mintTxId: string): Promise<MintConfirmResponse> {
+export async function shopMintConfirm(
+  itemKey: ShopItemKey,
+  signedInteractionTxHex: string,
+  signedFundingTxHex?: string,
+): Promise<MintConfirmResponse> {
   const res = await fetch(`${BASE}/shop/mint-confirm`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
-    body: JSON.stringify({ itemKey, mintTxId }),
+    body: JSON.stringify({ itemKey, signedInteractionTxHex, signedFundingTxHex }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

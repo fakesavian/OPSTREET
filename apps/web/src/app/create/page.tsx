@@ -3,12 +3,21 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createProject } from "@/lib/api";
+import { DEFAULT_GAME_PAYMENT_TOKEN, GAME_PAYMENT_TOKENS } from "@opfun/shared";
+import { useWallet } from "@/components/WalletProvider";
+import { submitOpnetLiquidityFundingWithWallet } from "@/lib/wallet";
 
 const STEPS = ["Token Info", "Links", "Review"] as const;
 type Step = 0 | 1 | 2;
-
 type FieldErrors = Partial<Record<string, string>>;
 type TouchedFields = Partial<Record<string, boolean>>;
+
+const LIQUIDITY_VAULT_ADDRESS = process.env["NEXT_PUBLIC_LIQUIDITY_VAULT_ADDRESS"] ?? "";
+const LIQUIDITY_TOKEN_TO_SATS: Record<"TBTC" | "MOTO" | "PILL", number> = {
+  TBTC: 100_000_000,
+  MOTO: 65_000,
+  PILL: 70_000,
+};
 
 function validateStep0(form: {
   name: string;
@@ -16,55 +25,46 @@ function validateStep0(form: {
   decimals: number;
   maxSupply: string;
   description: string;
+  liquidityToken: "TBTC" | "MOTO" | "PILL";
+  liquidityAmount: string;
 }): FieldErrors {
   const errors: FieldErrors = {};
   if (!form.name || form.name.length < 2) errors["name"] = "Name must be at least 2 characters.";
   if (form.name.length > 80) errors["name"] = "Name must be 80 characters or fewer.";
   if (!form.ticker || form.ticker.length < 2) errors["ticker"] = "Ticker must be at least 2 characters.";
   if (form.ticker.length > 10) errors["ticker"] = "Ticker must be 10 characters or fewer.";
-  if (!/^[A-Z0-9]+$/.test(form.ticker)) errors["ticker"] = "Ticker must be uppercase A–Z and 0–9 only.";
+  if (!/^[A-Z0-9]+$/.test(form.ticker)) errors["ticker"] = "Ticker must be uppercase A-Z and 0-9 only.";
   if (!form.maxSupply || !/^\d+$/.test(form.maxSupply)) errors["maxSupply"] = "Max supply must be a positive whole number.";
   else if (Number(form.maxSupply) <= 0) errors["maxSupply"] = "Max supply must be greater than zero.";
-  if (!form.description || form.description.length < 10)
-    errors["description"] = "Description must be at least 10 characters.";
+  if (!form.description || form.description.length < 10) errors["description"] = "Description must be at least 10 characters.";
   if (form.description.length > 2000) errors["description"] = "Description must be 2000 characters or fewer.";
+  if (!["TBTC", "MOTO", "PILL"].includes(form.liquidityToken)) errors["liquidityToken"] = "Select a liquidity token.";
+  if (!form.liquidityAmount || !/^\d+(\.\d+)?$/.test(form.liquidityAmount)) {
+    errors["liquidityAmount"] = "Liquidity amount must be a positive number.";
+  } else if (Number(form.liquidityAmount) <= 0) {
+    errors["liquidityAmount"] = "Liquidity amount must be greater than zero.";
+  }
   return errors;
 }
 
 export default function CreatePage() {
   const router = useRouter();
+  const { wallet } = useWallet();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [step, setStep] = useState<Step>(0);
-
   const [form, setForm] = useState({
-    name: "",
-    ticker: "",
-    decimals: 18,
-    maxSupply: "1000000000",
-    description: "",
-    website: "",
-    twitter: "",
-    github: "",
-    iconUrl: "",
-    sourceRepoUrl: "",
+    name: "", ticker: "", decimals: 18, maxSupply: "1000000000", description: "",
+    liquidityToken: "MOTO" as "TBTC" | "MOTO" | "PILL", liquidityAmount: "100",
+    website: "", twitter: "", github: "", iconUrl: "", sourceRepoUrl: "",
   });
-
-  // S10: per-field touched state — errors show only after blur or submit attempt
   const [touched, setTouched] = useState<TouchedFields>({});
   const [submitAttempted, setSubmitAttempted] = useState(false);
 
   const step0Errors = validateStep0(form);
-  const showError = (field: string) =>
-    (touched[field] || submitAttempted) ? step0Errors[field] : undefined;
-
-  function blur(field: string) {
-    setTouched((t) => ({ ...t, [field]: true }));
-  }
-
-  function set(field: string, value: string | number) {
-    setForm((prev) => ({ ...prev, [field]: value }));
-  }
+  const showError = (field: string) => (touched[field] || submitAttempted) ? step0Errors[field] : undefined;
+  function blur(field: string) { setTouched((t) => ({ ...t, [field]: true })); }
+  function set(field: string, value: string | number) { setForm((prev) => ({ ...prev, [field]: value })); }
 
   function next(e: React.FormEvent) {
     e.preventDefault();
@@ -80,41 +80,82 @@ export default function CreatePage() {
     setError("");
     setLoading(true);
     try {
+      if (!wallet) throw new Error("Connect an OP_WALLET first.");
+      if (wallet.provider !== "opnet") throw new Error("OP_WALLET is required to fund initial liquidity.");
+      if (!LIQUIDITY_VAULT_ADDRESS) {
+        throw new Error("Liquidity vault address is not configured. Set NEXT_PUBLIC_LIQUIDITY_VAULT_ADDRESS.");
+      }
+
+      const liquidityUnits = Number(form.liquidityAmount);
+      if (!Number.isFinite(liquidityUnits) || liquidityUnits <= 0) {
+        throw new Error("Liquidity amount must be greater than zero.");
+      }
+
+      const amountSats = Math.max(
+        1,
+        Math.round(liquidityUnits * LIQUIDITY_TOKEN_TO_SATS[form.liquidityToken]),
+      );
+
+      const funding = await submitOpnetLiquidityFundingWithWallet(wallet.provider, {
+        toAddress: LIQUIDITY_VAULT_ADDRESS,
+        amountSats,
+        memo: `OpStreet liquidity ${form.ticker}`,
+      });
+      if (!funding?.txId) {
+        throw new Error("Liquidity funding transaction was not returned by wallet.");
+      }
+
       const links: Record<string, string> = {};
       if (form.website) links["website"] = form.website;
       if (form.twitter) links["twitter"] = form.twitter;
       if (form.github) links["github"] = form.github;
-
       const project = await createProject({
-        name: form.name,
-        ticker: form.ticker.toUpperCase(),
-        decimals: form.decimals,
-        maxSupply: form.maxSupply,
-        description: form.description,
-        links,
-        iconUrl: form.iconUrl || undefined,
-        sourceRepoUrl: form.sourceRepoUrl || undefined,
+        name: form.name, ticker: form.ticker.toUpperCase(), decimals: form.decimals,
+        maxSupply: form.maxSupply, description: form.description, links,
+        iconUrl: form.iconUrl || undefined, sourceRepoUrl: form.sourceRepoUrl || undefined,
+        liquidityToken: form.liquidityToken,
+        liquidityAmount: form.liquidityAmount,
+        liquidityFundingTx: funding.txId,
       });
       router.push(`/p/${project.slug}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      const msg = err instanceof Error ? err.message : "Something went wrong";
+      if (/invalid.*address|invalid.*recipient|network/i.test(msg)) {
+        setError(`${msg} Open OP_WALLET and verify you are on "OP_NET Testnet" (Signet).`);
+      } else {
+        setError(msg);
+      }
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="mx-auto max-w-2xl">
+    <div className="mx-auto max-w-2xl py-6">
       {/* Header */}
       <div className="mb-8">
-        <a href="/" className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
-          ← Back to feed
+        <a href="/" className="text-xs font-bold text-[var(--text-muted)] hover:text-ink transition-colors">
+          &larr; Back to feed
         </a>
-        <h1 className="mt-3 text-3xl font-black text-white">Launch a token</h1>
-        <p className="mt-2 text-zinc-400">
-          Fixed supply · No mint · No hidden admin powers by default.{" "}
-          <span className="text-green-400">Testnet only.</span>
+        <h1 className="mt-3 text-3xl font-black text-ink">Launch a Token</h1>
+        <p className="mt-2 text-sm font-bold text-ink">
+          Fixed supply &middot; No mint &middot; No hidden admin powers.
         </p>
+        <p className="mt-2 text-xs text-[var(--text-muted)]">
+          Default platform payment token:{" "}
+          <span className="font-black text-ink">${DEFAULT_GAME_PAYMENT_TOKEN}</span>{" "}
+          ({GAME_PAYMENT_TOKENS[DEFAULT_GAME_PAYMENT_TOKEN].contractAddress}).
+          Alternate supported token:{" "}
+          <span className="font-black text-ink">$PILL</span>.
+        </p>
+        <a
+          href="https://opnet.org/opwallet/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 inline-flex items-center gap-1 rounded-lg border-2 border-ink bg-opYellow px-2 py-1 text-[10px] font-black text-ink hover:bg-opYellow/80 transition-colors"
+        >
+          Install OP_WALLET &rarr;
+        </a>
       </div>
 
       {/* Step indicator */}
@@ -124,29 +165,21 @@ export default function CreatePage() {
             <button
               type="button"
               onClick={() => i < step && setStep(i as Step)}
-              className={`flex items-center gap-2 text-xs font-bold transition-colors ${
-                i === step
-                  ? "text-white"
-                  : i < step
-                  ? "text-brand-400 hover:text-brand-300 cursor-pointer"
-                  : "text-zinc-600 cursor-default"
+              className={`flex items-center gap-2 text-xs font-black transition-colors ${
+                i === step ? "text-ink" : i < step ? "text-opGreen cursor-pointer" : "text-[var(--text-muted)] cursor-default"
               }`}
             >
-              <span
-                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-black border-2 transition-colors ${
-                  i === step
-                    ? "border-brand-500 bg-brand-500/20 text-brand-300"
-                    : i < step
-                    ? "border-brand-700 bg-brand-900/50 text-brand-400"
-                    : "border-zinc-700 text-zinc-600"
-                }`}
-              >
-                {i < step ? "✓" : i + 1}
+              <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-black border-2 transition-colors ${
+                i === step ? "border-ink bg-opYellow text-ink"
+                : i < step ? "border-opGreen bg-opGreen/20 text-opGreen"
+                : "border-ink/30 text-[var(--text-muted)]"
+              }`}>
+                {i < step ? "\u2713" : i + 1}
               </span>
               {label}
             </button>
             {i < STEPS.length - 1 && (
-              <div className={`mx-2 flex-1 h-0.5 ${i < step ? "bg-brand-700" : "bg-zinc-800"}`} />
+              <div className={`mx-2 flex-1 h-0.5 border-t-2 ${i < step ? "border-opGreen" : "border-ink/20"}`} />
             )}
           </div>
         ))}
@@ -154,13 +187,13 @@ export default function CreatePage() {
 
       {/* Step 0: Token Info */}
       {step === 0 && (
-        <form onSubmit={next} noValidate className="space-y-6">
-          <div className="card space-y-4">
-            <h2 className="font-black text-zinc-200">Token basics</h2>
+        <form onSubmit={next} noValidate className="space-y-5">
+          <div className="op-panel p-5 space-y-4">
+            <h2 className="font-black text-ink text-sm uppercase tracking-wider">Token Basics</h2>
 
             <FieldGroup label="Token name *" error={showError("name")}>
               <input
-                className={`input ${showError("name") ? "input-error" : ""}`}
+                className={`input ${showError("name") ? "border-opRed" : ""}`}
                 placeholder="e.g. Orange Protocol"
                 value={form.name}
                 onChange={(e) => set("name", e.target.value)}
@@ -172,22 +205,18 @@ export default function CreatePage() {
             <div className="grid grid-cols-2 gap-4">
               <FieldGroup label="Ticker *" error={showError("ticker")}>
                 <input
-                  className={`input font-mono uppercase ${showError("ticker") ? "input-error" : ""}`}
+                  className={`input font-mono uppercase ${showError("ticker") ? "border-opRed" : ""}`}
                   placeholder="ORP"
                   value={form.ticker}
                   onChange={(e) => set("ticker", e.target.value.toUpperCase())}
                   onBlur={() => blur("ticker")}
                 />
-                {!showError("ticker") && (
-                  <p className="mt-1 text-[11px] text-zinc-600">Uppercase A-Z / 0-9</p>
-                )}
+                {!showError("ticker") && <p className="mt-1 text-[11px] text-[var(--text-muted)]">Uppercase A-Z / 0-9</p>}
               </FieldGroup>
               <FieldGroup label="Decimals">
                 <input
                   className="input"
-                  type="number"
-                  min={0}
-                  max={18}
+                  type="number" min={0} max={18}
                   value={form.decimals}
                   onChange={(e) => set("decimals", parseInt(e.target.value, 10))}
                 />
@@ -196,58 +225,76 @@ export default function CreatePage() {
 
             <FieldGroup label="Max supply *" error={showError("maxSupply")}>
               <input
-                className={`input font-mono ${showError("maxSupply") ? "input-error" : ""}`}
+                className={`input font-mono ${showError("maxSupply") ? "border-opRed" : ""}`}
                 placeholder="1000000000"
                 value={form.maxSupply}
                 onChange={(e) => set("maxSupply", e.target.value)}
                 onBlur={() => blur("maxSupply")}
               />
               {!showError("maxSupply") && (
-                <p className="mt-1 text-[11px] text-zinc-600">
-                  Fixed forever — cannot be increased after launch.
-                </p>
+                <p className="mt-1 text-[11px] text-[var(--text-muted)]">Fixed forever &mdash; cannot be increased after launch.</p>
               )}
             </FieldGroup>
 
+            <div className="grid grid-cols-2 gap-4">
+              <FieldGroup label="Initial liquidity token *" error={showError("liquidityToken")}>
+                <select
+                  className={`input ${showError("liquidityToken") ? "border-opRed" : ""}`}
+                  value={form.liquidityToken}
+                  onChange={(e) => set("liquidityToken", e.target.value as "TBTC" | "MOTO" | "PILL")}
+                  onBlur={() => blur("liquidityToken")}
+                >
+                  <option value="TBTC">TBTC</option>
+                  <option value="MOTO">MOTO</option>
+                  <option value="PILL">PILL</option>
+                </select>
+              </FieldGroup>
+              <FieldGroup label="Initial liquidity amount *" error={showError("liquidityAmount")}>
+                <input
+                  className={`input font-mono ${showError("liquidityAmount") ? "border-opRed" : ""}`}
+                  placeholder="100"
+                  value={form.liquidityAmount}
+                  onChange={(e) => set("liquidityAmount", e.target.value)}
+                  onBlur={() => blur("liquidityAmount")}
+                />
+              </FieldGroup>
+            </div>
+
             <FieldGroup label="Description *" error={showError("description")}>
               <textarea
-                className={`input min-h-[90px] resize-y ${showError("description") ? "input-error" : ""}`}
+                className={`input min-h-[90px] resize-y ${showError("description") ? "border-opRed" : ""}`}
                 placeholder="What is this token for? Who is it for?"
                 value={form.description}
                 onChange={(e) => set("description", e.target.value)}
                 onBlur={() => blur("description")}
               />
-              <p className="mt-1 text-[11px] text-zinc-600 text-right">
-                {form.description.length} / 2000
-              </p>
+              <p className="mt-1 text-[11px] text-[var(--text-muted)] text-right">{form.description.length} / 2000</p>
             </FieldGroup>
           </div>
 
           {submitAttempted && Object.keys(step0Errors).length > 0 && (
-            <div className="rounded-xl border-2 border-red-800 bg-red-950/30 px-4 py-3 text-sm text-red-400">
-              Fix the errors above before continuing.
+            <div className="op-panel px-4 py-3 text-sm text-opRed border-opRed bg-opRed/5">
+              &#9888; Fix the errors above before continuing.
             </div>
           )}
 
-          <button type="submit" className="btn-primary w-full py-3 text-base">
-            Next: Links →
-          </button>
+          <button type="submit" className="op-btn-primary w-full py-3 text-base">Next: Links &rarr;</button>
         </form>
       )}
 
       {/* Step 1: Links */}
       {step === 1 && (
-        <form onSubmit={next} className="space-y-6">
-          <div className="card space-y-4">
-            <h2 className="font-black text-zinc-200">Links</h2>
-            <p className="text-xs text-zinc-500">All optional. Help the community find your project.</p>
+        <form onSubmit={next} className="space-y-5">
+          <div className="op-panel p-5 space-y-4">
+            <h2 className="font-black text-ink text-sm uppercase tracking-wider">Links</h2>
+            <p className="text-xs text-[var(--text-muted)]">All optional. Help the community find your project.</p>
             {(["website", "twitter", "github"] as const).map((field) => (
               <div key={field}>
                 <label className="label">{field.charAt(0).toUpperCase() + field.slice(1)}</label>
                 <input
                   className="input"
                   type="url"
-                  placeholder="https://…"
+                  placeholder="https://..."
                   value={form[field]}
                   onChange={(e) => set(field, e.target.value)}
                 />
@@ -255,59 +302,42 @@ export default function CreatePage() {
             ))}
           </div>
 
-          <div className="card space-y-4">
-            <h2 className="font-black text-zinc-200">Advanced (optional)</h2>
+          <div className="op-panel p-5 space-y-4">
+            <h2 className="font-black text-ink text-sm uppercase tracking-wider">Advanced (optional)</h2>
             <div>
               <label className="label">Icon URL</label>
-              <input
-                className="input"
-                type="url"
-                placeholder="https://…"
-                value={form.iconUrl}
-                onChange={(e) => set("iconUrl", e.target.value)}
-              />
+              <input className="input" type="url" placeholder="https://..." value={form.iconUrl} onChange={(e) => set("iconUrl", e.target.value)} />
             </div>
             <div>
-              <label className="label">Source repo</label>
-              <input
-                className="input"
-                type="url"
-                placeholder="https://github.com/…"
-                value={form.sourceRepoUrl}
-                onChange={(e) => set("sourceRepoUrl", e.target.value)}
-              />
+              <label className="label">Source Repo</label>
+              <input className="input" type="url" placeholder="https://github.com/..." value={form.sourceRepoUrl} onChange={(e) => set("sourceRepoUrl", e.target.value)} />
             </div>
           </div>
 
           <div className="flex gap-3">
-            <button type="button" onClick={() => setStep(0)} className="btn-secondary flex-1 py-3">
-              ← Back
-            </button>
-            <button type="submit" className="btn-primary flex-1 py-3">
-              Next: Review →
-            </button>
+            <button type="button" onClick={() => setStep(0)} className="op-btn-outline flex-1 py-3">&larr; Back</button>
+            <button type="submit" className="op-btn-primary flex-1 py-3">Next: Review &rarr;</button>
           </div>
         </form>
       )}
 
       {/* Step 2: Review */}
       {step === 2 && (
-        <form onSubmit={submit} className="space-y-6">
-          <div className="card space-y-3">
-            <h2 className="font-black text-zinc-200">Review your token</h2>
-
+        <form onSubmit={submit} className="space-y-5">
+          <div className="op-panel p-5 space-y-4">
+            <h2 className="font-black text-ink text-sm uppercase tracking-wider">Review Your Token</h2>
             <div className="grid grid-cols-2 gap-3 text-sm">
               <ReviewRow label="Name" value={form.name} />
               <ReviewRow label="Ticker" value={form.ticker} mono />
               <ReviewRow label="Max Supply" value={Number(form.maxSupply).toLocaleString()} mono />
               <ReviewRow label="Decimals" value={String(form.decimals)} mono />
+              <ReviewRow label="Liquidity Token" value={form.liquidityToken} mono />
+              <ReviewRow label="Liquidity Amount" value={form.liquidityAmount} mono />
             </div>
-
-            <div className="rounded-lg border-2 border-zinc-800 bg-zinc-900 px-3 py-2 text-sm">
-              <p className="text-[10px] uppercase tracking-wider text-zinc-600 mb-1">Description</p>
-              <p className="text-zinc-300 leading-relaxed">{form.description}</p>
+            <div className="rounded-xl border-2 border-ink bg-[#FFF7E8] px-3 py-2.5">
+              <p className="text-[10px] uppercase tracking-wider font-bold text-ink/60 mb-1">Description</p>
+              <p className="text-ink text-sm leading-relaxed">{form.description}</p>
             </div>
-
             {(form.website || form.twitter || form.github) && (
               <div className="flex flex-wrap gap-2">
                 {form.website && <LinkChip label="Website" href={form.website} />}
@@ -318,29 +348,25 @@ export default function CreatePage() {
           </div>
 
           {/* Safe defaults */}
-          <div className="rounded-xl border-2 border-green-800 bg-green-950/30 px-4 py-3 text-sm">
-            <p className="font-black text-green-400 mb-1">Safe defaults confirmed</p>
-            <ul className="text-green-700 space-y-0.5 text-xs">
-              <li>Fixed supply — cannot mint more tokens</li>
-              <li>No admin keys — no privileged functions</li>
-              <li>No pause — transfers always enabled</li>
-              <li>No upgrade — contract is immutable</li>
-              <li>OP_NET testnet only — no real funds</li>
+          <div className="rounded-xl border-2 border-[#15803D] bg-[#D1FAE5] px-4 py-3">
+            <p className="font-black text-[#15803D] mb-2 text-sm">&#10003; Safe Defaults Confirmed</p>
+            <ul className="text-[#166534] space-y-0.5 text-xs font-bold">
+              <li>&#10003; Fixed supply &mdash; cannot mint more tokens</li>
+              <li>&#10003; No admin keys &mdash; no privileged functions</li>
+              <li>&#10003; No pause &mdash; transfers always enabled</li>
+              <li>&#10003; No upgrade &mdash; contract is immutable</li>
+              <li>&#10003; Deployed on OP_NET</li>
             </ul>
           </div>
 
           {error && (
-            <div className="rounded-xl border-2 border-red-800 bg-red-950/30 px-4 py-3 text-sm text-red-400">
-              {error}
-            </div>
+            <div className="rounded-xl border-2 border-[#EF4444] bg-[#FEE2E2] px-4 py-3 text-sm font-bold text-[#B91C1C]">&#9888; {error}</div>
           )}
 
           <div className="flex gap-3">
-            <button type="button" onClick={() => setStep(1)} className="btn-secondary flex-1 py-3">
-              ← Back
-            </button>
-            <button type="submit" disabled={loading} className="btn-primary flex-1 py-3 text-base">
-              {loading ? "Creating…" : "Launch token →"}
+            <button type="button" onClick={() => setStep(1)} className="op-btn-outline flex-1 py-3">&larr; Back</button>
+            <button type="submit" disabled={loading} className="op-btn-primary flex-1 py-3 text-base disabled:opacity-50">
+              {loading ? "Creating..." : "Launch Token \u2192"}
             </button>
           </div>
         </form>
@@ -349,36 +375,21 @@ export default function CreatePage() {
   );
 }
 
-// S10: Field group with label + optional inline error message
-function FieldGroup({
-  label,
-  error,
-  children,
-}: {
-  label: string;
-  error?: string;
-  children: React.ReactNode;
-}) {
+function FieldGroup({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) {
   return (
     <div>
       <label className="label">{label}</label>
       {children}
-      {error && (
-        <p className="mt-1 text-xs font-semibold text-red-400 flex items-center gap-1">
-          <span>⚠</span> {error}
-        </p>
-      )}
+      {error && <p className="mt-1 text-xs font-black text-opRed flex items-center gap-1">&#9888; {error}</p>}
     </div>
   );
 }
 
 function ReviewRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div className="rounded-lg border-2 border-zinc-800 bg-zinc-900 px-3 py-2">
-      <p className="text-[10px] uppercase tracking-wider text-zinc-600">{label}</p>
-      <p className={`mt-0.5 text-sm text-zinc-200 ${mono ? "font-mono" : "font-bold"}`}>
-        {value}
-      </p>
+    <div className="rounded-xl border-2 border-ink bg-[#FFF7E8] px-3 py-2.5">
+      <p className="text-[10px] uppercase tracking-wider font-bold text-ink/60">{label}</p>
+      <p className={`mt-0.5 text-sm text-ink ${mono ? "font-mono font-black" : "font-bold"}`}>{value}</p>
     </div>
   );
 }
@@ -386,13 +397,11 @@ function ReviewRow({ label, value, mono }: { label: string; value: string; mono?
 function LinkChip({ label, href }: { label: string; href: string }) {
   return (
     <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="rounded-lg border-2 border-zinc-700 px-2.5 py-1 text-xs font-bold text-zinc-400 hover:text-zinc-200 transition-colors"
+      href={href} target="_blank" rel="noopener noreferrer"
+      className="rounded-lg border-2 border-ink bg-[#FFF7E8] px-2.5 py-1 text-xs font-black text-ink hover:bg-opYellow transition-colors"
       onClick={(e) => e.stopPropagation()}
     >
-      {label} ↗
+      {label} &#8599;
     </a>
   );
 }

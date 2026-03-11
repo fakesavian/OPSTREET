@@ -23,12 +23,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <OpHeader />
             </div>
             <main
-              className="mx-auto w-full max-w-6xl flex-1 px-4 pb-24 sm:pb-0"
+              className="mx-auto w-full max-w-6xl flex-1 px-4 pb-24 sm:pb-16"
               style={{ paddingTop: "var(--layout-y-pad)" }}
             >
               {children}
             </main>
-            <footer className="mt-auto border-t-3 border-ink bg-[var(--panel-cream)] px-4 py-4">
+            <footer className="hidden sm:block sm:fixed sm:bottom-0 sm:left-0 sm:right-0 sm:z-40 border-t-3 border-ink bg-[var(--panel-cream)] px-4 py-3">
               <div className="mx-auto flex max-w-6xl items-center justify-between">
                 <span className="text-xs font-bold text-[var(--text-muted)]">
                   OpStreet &mdash; Powered by OP_NET

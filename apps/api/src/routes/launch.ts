@@ -18,8 +18,14 @@ import { z } from "zod";
 import { prisma } from "../db.js";
 import { verifyWalletToken } from "../middleware/verifyWalletToken.js";
 import { assertLaunchTransition } from "../launchMachine.js";
-import { deployContract } from "@opfun/opnet";
-import type { LaunchStatus } from "@opfun/shared";
+import {
+  RuntimeConfigError,
+  broadcastSignedInteraction,
+  deployContract,
+  getLiquidityTokenContractAddress,
+  preparePoolCreation,
+} from "@opfun/opnet";
+import type { LaunchStatus, LiquidityToken } from "@opfun/shared";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GENERATED_DIR = path.resolve(__dirname, "../../../../packages/opnet/generated");
@@ -41,9 +47,23 @@ const DeploySubmitSchema = z.object({
 });
 
 const PoolSubmitSchema = z.object({
-  poolTx: z.string().min(8, "poolTx must be at least 8 characters"),
+  poolTx: z.string().min(8, "poolTx must be at least 8 characters").optional(),
   poolAddress: z.string().min(10, "poolAddress must be at least 10 characters"),
   poolBaseToken: z.string().min(2).optional(),
+  signedFundingTxHex: z.string().min(10, "signedFundingTxHex must be at least 10 characters").optional(),
+  signedInteractionTxHex: z.string().min(10, "signedInteractionTxHex must be at least 10 characters").optional(),
+}).superRefine((value, ctx) => {
+  if (!value.poolTx && !value.signedInteractionTxHex) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["poolTx"],
+      message: "Provide poolTx or signedInteractionTxHex.",
+    });
+  }
+});
+
+const PoolCreateIntentSchema = z.object({
+  walletAddress: z.string().min(10).optional(),
 });
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -92,6 +112,30 @@ function serializeProject(p: any) {
     riskCard: (() => {
       try { return p.riskCardJson ? JSON.parse(p.riskCardJson as string) : null; } catch { return null; }
     })(),
+  };
+}
+
+function projectLiquidityToken(project: { liquidityToken: string | null }): LiquidityToken {
+  const value = project.liquidityToken ?? "MOTO";
+  if (value !== "TBTC" && value !== "MOTO" && value !== "PILL") {
+    throw new RuntimeConfigError(`Unsupported liquidity token '${value}'.`);
+  }
+  return value;
+}
+
+function resolvePoolPair(project: {
+  contractAddress: string | null;
+  liquidityToken: string | null;
+}) {
+  if (!project.contractAddress) {
+    throw new RuntimeConfigError("Contract not deployed yet.");
+  }
+
+  const poolBaseToken = projectLiquidityToken(project);
+  return {
+    poolBaseToken,
+    baseTokenAddress: getLiquidityTokenContractAddress(poolBaseToken),
+    quoteTokenAddress: project.contractAddress,
   };
 }
 
@@ -271,20 +315,84 @@ export async function launchRoutes(app: FastifyInstance) {
         return reply.status(503).send({ error: "MOTOSWAP_FACTORY_ADDRESS not configured." });
       }
 
-      return reply.send({
-        projectId: project.id,
-        ticker: project.ticker,
-        contractAddress: project.contractAddress,
-        factoryAddress,
-        routerAddress,
-        liquidityToken: project.liquidityToken ?? "MOTO",
-        liquidityAmount: project.liquidityAmount ?? "0",
-        instructions: [
-          "Use the Motoswap Factory contract to call createPair(tokenA, tokenB).",
-          "Then call addLiquidity on the Router with your desired amounts.",
-          "Submit the pool transaction ID and pool address via POST /projects/:id/pool-submit.",
-        ],
-      });
+      try {
+        const pair = resolvePoolPair(project);
+        return reply.send({
+          projectId: project.id,
+          ticker: project.ticker,
+          contractAddress: project.contractAddress,
+          factoryAddress,
+          routerAddress,
+          liquidityToken: pair.poolBaseToken,
+          liquidityAmount: project.liquidityAmount ?? "0",
+          baseTokenAddress: pair.baseTokenAddress,
+          quoteTokenAddress: pair.quoteTokenAddress,
+          instructions: [
+            "Create the pool directly in OPStreet with your OP_WALLET.",
+            "Sign the pool creation interaction when prompted.",
+            "After broadcast, OPStreet records the tx and waits for watcher confirmation before going LIVE.",
+          ],
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to resolve pool parameters.";
+        return reply.status(err instanceof RuntimeConfigError ? 503 : 400).send({ error: message });
+      }
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    "/projects/:id/pool-create-intent",
+    { preHandler: [verifyWalletToken] },
+    async (request, reply) => {
+      const sessionWallet = request.walletSession?.walletAddress;
+      if (!sessionWallet) return reply.status(401).send({ error: "Authentication required." });
+
+      const parsed = PoolCreateIntentSchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        return reply.status(400).send({ error: "Validation failed", details: parsed.error.flatten() });
+      }
+      if (parsed.data.walletAddress && parsed.data.walletAddress !== sessionWallet) {
+        return reply.status(400).send({ error: "walletAddress mismatch with authenticated session." });
+      }
+
+      const project = await prisma.project.findUnique({ where: { id: request.params.id } });
+      if (!project) return reply.status(404).send({ error: "Project not found" });
+
+      const current = currentLaunchStatus(project);
+      if (current !== "AWAITING_POOL_CREATE") {
+        return reply.status(409).send({
+          error: `Pool creation not available in launch status '${current}'.`,
+        });
+      }
+
+      try {
+        const pair = resolvePoolPair(project);
+        const intent = await preparePoolCreation(
+          sessionWallet,
+          pair.baseTokenAddress,
+          pair.quoteTokenAddress,
+        );
+
+        return reply.send({
+          status: "POOL_CREATE_INTENT",
+          projectId: project.id,
+          ticker: project.ticker,
+          poolBaseToken: pair.poolBaseToken,
+          baseTokenAddress: pair.baseTokenAddress,
+          quoteTokenAddress: pair.quoteTokenAddress,
+          poolAddress: intent.poolAddress,
+          factoryAddress: intent.factoryAddress,
+          interaction: intent.interaction,
+          instructions: [
+            "Sign the pool creation transaction with your OP_WALLET.",
+            "OPStreet will broadcast the signed interaction and record the pool tx automatically.",
+            "The watcher will confirm the pool on-chain before the project becomes LIVE.",
+          ],
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to prepare pool creation.";
+        return reply.status(err instanceof RuntimeConfigError ? 503 : 400).send({ error: message });
+      }
     },
   );
 
@@ -308,26 +416,20 @@ export async function launchRoutes(app: FastifyInstance) {
         });
       }
 
-      if (!project.contractAddress) {
-        return reply.status(409).send({ error: "Contract not deployed yet." });
-      }
-
-      const baseTokenAddress = process.env["WBTC_CONTRACT_ADDRESS"] ?? "";
-      if (!baseTokenAddress) {
-        return reply.status(503).send({ error: "WBTC_CONTRACT_ADDRESS not configured for pool base token." });
-      }
-
       try {
-        const { preparePoolCreation } = await import("@opfun/opnet");
+        const pair = resolvePoolPair(project);
         const intent = await preparePoolCreation(
           sessionWallet,
-          baseTokenAddress,
-          project.contractAddress,
+          pair.baseTokenAddress,
+          pair.quoteTokenAddress,
         );
 
         return reply.send({
           projectId: project.id,
           ticker: project.ticker,
+          poolBaseToken: pair.poolBaseToken,
+          baseTokenAddress: pair.baseTokenAddress,
+          quoteTokenAddress: pair.quoteTokenAddress,
           poolAddress: intent.poolAddress,
           factoryAddress: intent.factoryAddress,
           interaction: intent.interaction,
@@ -337,7 +439,7 @@ export async function launchRoutes(app: FastifyInstance) {
         if (message.includes("already exists")) {
           return reply.status(409).send({ error: message });
         }
-        return reply.status(502).send({
+        return reply.status(err instanceof RuntimeConfigError ? 503 : 502).send({
           error: "Pool creation simulation failed",
           detail: message,
         });
@@ -438,11 +540,28 @@ export async function launchRoutes(app: FastifyInstance) {
         });
       }
 
+      let poolTx = parsed.data.poolTx ?? "";
+      if (!poolTx && parsed.data.signedInteractionTxHex) {
+        const broadcast = await broadcastSignedInteraction({
+          fundingTransactionRaw: parsed.data.signedFundingTxHex ?? null,
+          interactionTransactionRaw: parsed.data.signedInteractionTxHex,
+        });
+
+        if (!broadcast.success || !broadcast.txId) {
+          return reply.status(502).send({
+            error: "Pool broadcast failed",
+            message: broadcast.error ?? "Signed pool interaction could not be broadcast.",
+          });
+        }
+
+        poolTx = broadcast.txId;
+      }
+
       try {
         await setLaunchStatus(project.id, "AWAITING_POOL_CREATE", "POOL_SUBMITTED", {
-          poolTx: parsed.data.poolTx,
+          poolTx,
           poolAddress: parsed.data.poolAddress,
-          poolBaseToken: parsed.data.poolBaseToken ?? project.liquidityToken ?? "MOTO",
+          poolBaseToken: parsed.data.poolBaseToken ?? projectLiquidityToken(project),
         });
       } catch (err) {
         return reply.status(409).send({

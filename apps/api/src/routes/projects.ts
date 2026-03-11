@@ -6,11 +6,17 @@ import { CreateProjectSchema } from "../schemas.js";
 import { slugify } from "@opfun/shared";
 import { scaffoldContract } from "@opfun/opnet";
 import { auditContract } from "@opfun/opnet";
-import { assertCanTransition, canTransition } from "../statusMachine.js";
+import { assertCanTransition } from "../statusMachine.js";
+import { onProjectCreated } from "./floor.js";
+import { verifyWalletToken } from "../middleware/verifyWalletToken.js";
+import { recordFoundationProgressFromProjectCreate } from "../services/foundation.js";
+import { queueDeployForProject } from "./deploy.js";
 
 // Resolve to packages/opnet/generated/
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GENERATED_DIR = path.resolve(__dirname, "../../../../packages/opnet/generated");
+const CREATE_PROJECT_DAILY_LIMIT = Number(process.env["CREATE_PROJECT_DAILY_LIMIT"] ?? 3);
+const CREATE_PROJECT_IP_DAILY_LIMIT = Number(process.env["CREATE_PROJECT_IP_DAILY_LIMIT"] ?? 20);
 
 // M10: Bob call timeout (30 s). Prevents indefinite hangs.
 const BOB_TIMEOUT_MS = 30_000;
@@ -23,14 +29,10 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   ]);
 }
 
-// M3: In-memory pledge rate-limit — 1 pledge per (projectId + IP) per 24 h.
-// Simple and dep-free for MVP; replace with Redis for production scale.
-const pledgeRecords = new Map<string, number>(); // key: `${projectId}:${ip}`, value: epoch ms
-const ONE_DAY_MS = 24 * 60 * 60 * 1_000;
 
 export async function projectRoutes(app: FastifyInstance) {
   // POST /projects
-  app.post("/projects", async (request, reply) => {
+  app.post("/projects", { preHandler: [verifyWalletToken] }, async (request, reply) => {
     const result = CreateProjectSchema.safeParse(request.body);
     if (!result.success) {
       return reply.status(400).send({
@@ -39,6 +41,60 @@ export async function projectRoutes(app: FastifyInstance) {
       });
     }
     const data = result.data;
+    const sessionWallet = request.walletSession?.walletAddress;
+    if (!sessionWallet) {
+      return reply.status(401).send({ error: "Authentication required." });
+    }
+
+    const now = new Date();
+    const windowStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+    const walletQuota = await prisma.walletQuota.upsert({
+      where: {
+        walletAddress_action_windowStart: {
+          walletAddress: sessionWallet,
+          action: "create_project",
+          windowStart,
+        },
+      },
+      create: {
+        walletAddress: sessionWallet,
+        action: "create_project",
+        windowStart,
+        count: 1,
+      },
+      update: { count: { increment: 1 } },
+    });
+    if (walletQuota.count > CREATE_PROJECT_DAILY_LIMIT) {
+      return reply.status(429).send({
+        error: `Daily limit reached: max ${CREATE_PROJECT_DAILY_LIMIT} project creates per wallet per day.`,
+        retryAfter: "tomorrow",
+      });
+    }
+
+    const ipKey = `ip:${request.ip}`;
+    const ipQuota = await prisma.walletQuota.upsert({
+      where: {
+        walletAddress_action_windowStart: {
+          walletAddress: ipKey,
+          action: "create_project_ip",
+          windowStart,
+        },
+      },
+      create: {
+        walletAddress: ipKey,
+        action: "create_project_ip",
+        windowStart,
+        count: 1,
+      },
+      update: { count: { increment: 1 } },
+    });
+    if (ipQuota.count > CREATE_PROJECT_IP_DAILY_LIMIT) {
+      return reply.status(429).send({
+        error: `Daily IP limit reached: max ${CREATE_PROJECT_IP_DAILY_LIMIT} project creates per IP per day.`,
+        retryAfter: "tomorrow",
+      });
+    }
 
     const baseSlug = slugify(`${data.name}-${data.ticker}`);
     let slug = baseSlug;
@@ -60,22 +116,63 @@ export async function projectRoutes(app: FastifyInstance) {
         sourceRepoUrl: data.sourceRepoUrl ?? null,
         status: "DRAFT",
         network: "testnet",
+        liquidityToken: data.liquidityToken,
+        liquidityAmount: data.liquidityAmount,
+        liquidityFundingTx: data.liquidityFundingTx,
       },
     });
 
-    return reply.status(201).send(serializeProject(project));
+    // Auto-pipeline: run checks first, then attempt deploy when READY.
+    const queuedProject = await prisma.project.update({
+      where: { id: project.id },
+      data: { status: "CHECKING" },
+    });
+    runChecksAndAutoDeploy(queuedProject, app).catch((err: unknown) => {
+      app.log.error(err, `auto deploy pipeline failed for project ${queuedProject.id}`);
+    });
+
+    // Achievement/progression hooks for authenticated creators
+    onProjectCreated(sessionWallet).catch(() => undefined);
+    recordFoundationProgressFromProjectCreate(sessionWallet, project.id).catch(() => undefined);
+
+    return reply.status(201).send(serializeProject(queuedProject));
   });
 
-  // GET /projects?sort=trending|new&status=LAUNCHED (status filter optional — S7)
-  app.get<{ Querystring: { sort?: string; status?: string } }>("/projects", async (request, reply) => {
-    const sort = request.query.sort === "trending" ? "pledgeCount" : "createdAt";
-    const { status } = request.query;
+  // GET /projects?sort=trending|new&status=LAUNCHED&cursor=xxx&limit=50&q=search
+  // "trending" is now backed by real user attention (viewCount), not legacy pledge volume.
+  app.get<{
+    Querystring: { sort?: string; status?: string; cursor?: string; limit?: string; q?: string }
+  }>("/projects", async (request, reply) => {
+    const sort = request.query.sort === "trending" ? "viewCount" : "createdAt";
+    const { status, cursor, q } = request.query;
+    const take = Math.min(Number(request.query.limit ?? 50), 100);
+
+    const where: any = {};
+    if (status) where.status = status;
+    if (q && q.trim().length > 0) {
+      where.OR = [
+        { name: { contains: q.trim() } },
+        { ticker: { contains: q.trim() } },
+        { description: { contains: q.trim() } },
+      ];
+    }
+
     const projects = await prisma.project.findMany({
-      where: status ? { status } : undefined,
+      where,
       orderBy: { [sort]: "desc" },
-      take: 50,
+      take: take + 1,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     });
-    return reply.send(projects.map(serializeProject));
+
+    const hasMore = projects.length > take;
+    const items = hasMore ? projects.slice(0, take) : projects;
+    const nextCursor = hasMore ? items[items.length - 1]?.id : null;
+
+    return reply.send({
+      items: items.map(serializeProject),
+      nextCursor,
+      hasMore,
+    });
   });
 
   // GET /projects/:slug
@@ -99,7 +196,28 @@ export async function projectRoutes(app: FastifyInstance) {
   });
 
   // POST /projects/:id/run-checks  — Milestone 2: real scaffold + audit
-  app.post<{ Params: { id: string } }>("/projects/:id/run-checks", async (request, reply) => {
+  app.post<{ Params: { id: string } }>("/projects/:id/run-checks",
+    { preHandler: [verifyWalletToken] },
+    async (request, reply) => {
+    // B1: Per-wallet daily quota
+    const MAX_CHECKS_PER_DAY = 5;
+    const wallet = request.walletSession!.walletAddress;
+    const now = new Date();
+    const windowStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+    const quota = await prisma.walletQuota.upsert({
+      where: { walletAddress_action_windowStart: { walletAddress: wallet, action: "run_checks", windowStart } },
+      create: { walletAddress: wallet, action: "run_checks", windowStart, count: 1 },
+      update: { count: { increment: 1 } },
+    });
+
+    if (quota.count > MAX_CHECKS_PER_DAY) {
+      return reply.status(429).send({
+        error: `Daily limit reached: max ${MAX_CHECKS_PER_DAY} check runs per wallet per day.`,
+        retryAfter: "tomorrow",
+      });
+    }
+
     const { id } = request.params;
     const project = await prisma.project.findUnique({ where: { id } });
     if (!project) {
@@ -140,54 +258,16 @@ export async function projectRoutes(app: FastifyInstance) {
     });
   });
 
-  // POST /projects/:id/pledge — increment pledge count; auto-graduate at threshold
+  // POST /projects/:id/pledge — retired after live migration.
+  // Keep the route so stale clients fail clearly instead of silently mutating legacy state.
   app.post<{ Params: { id: string }; Body: { walletAddress?: string } }>(
     "/projects/:id/pledge",
-    async (request, reply) => {
-    // Rate limit: prefer wallet address (more accurate) over IP
-    const walletAddress =
-      typeof (request.body as Record<string, unknown>)?.walletAddress === "string"
-        ? ((request.body as { walletAddress: string }).walletAddress).trim()
-        : null;
-
-    let rlKey: string;
-    if (walletAddress && walletAddress.length > 10) {
-      // Wallet-based rate limit — 1 pledge per address per project per 24 h
-      rlKey = `${request.params.id}:wallet:${walletAddress.toLowerCase()}`;
-    } else {
-      // M3: IP-based fallback
-      const ip = (request.headers["x-forwarded-for"] as string ?? request.ip ?? "unknown").split(",")[0]!.trim();
-      rlKey = `${request.params.id}:${ip}`;
-    }
-    const lastPledge = pledgeRecords.get(rlKey);
-    if (lastPledge !== undefined && Date.now() - lastPledge < ONE_DAY_MS) {
-      return reply.status(429).send({ error: "You have already pledged for this project today." });
-    }
-
-    const project = await prisma.project.findUnique({ where: { id: request.params.id } });
-    if (!project) return reply.status(404).send({ error: "Project not found" });
-
-    const GRADUATION_THRESHOLD = 100;
-    const newCount = (project.pledgeCount as number) + 1;
-    // S3: use state machine to check if graduation is valid from current status
-    const shouldGraduate =
-      newCount >= GRADUATION_THRESHOLD && canTransition(project.status as string, "GRADUATED");
-
-    const updated = await prisma.project.update({
-      where: { id: project.id },
-      data: {
-        pledgeCount: newCount,
-        ...(shouldGraduate ? { status: "GRADUATED" } : {}),
-      },
-    });
-
-    // Record after successful write to avoid blocking on DB errors
-    pledgeRecords.set(rlKey, Date.now());
-
-    return reply.send({
-      pledgeCount: updated.pledgeCount,
-      status: updated.status,
-      graduated: shouldGraduate,
+    { preHandler: [verifyWalletToken] },
+    async (_request, reply) => {
+    return reply.status(410).send({
+      error: "Legacy pledge flow retired",
+      message:
+        "Pledge-based discovery and launch progression have been disabled. Use live deploy, pool, and confirmed trade state instead.",
     });
   });
 
@@ -204,6 +284,20 @@ export async function projectRoutes(app: FastifyInstance) {
   app.get("/health", async (_req, reply) => {
     return reply.send({ status: "ok", timestamp: new Date().toISOString() });
   });
+}
+
+async function runChecksAndAutoDeploy(project: any, app: FastifyInstance): Promise<void> {
+  await runChecks(project);
+
+  const refreshed = await prisma.project.findUnique({ where: { id: project.id } });
+  if (!refreshed || refreshed.status !== "READY") return;
+
+  const queued = await queueDeployForProject(project.id, app);
+  if (!queued.ok) {
+    app.log.warn(
+      `[auto-pipeline] Deploy skipped for ${project.id}: ${queued.error ?? "unknown reason"}`,
+    );
+  }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -42,6 +42,8 @@ export interface DeployInput {
   maxSupply: string;
   iconUrl?: string;
   buildHash: string;
+  liquidityToken?: "TBTC" | "MOTO" | "PILL";
+  liquidityAmount?: string;
   generatedDir: string; // packages/opnet/generated/<projectId>
 }
 
@@ -105,6 +107,8 @@ async function scaffoldDeployPackage(input: DeployInput): Promise<void> {
     ticker: input.ticker,
     buildHash: input.buildHash,
     generatedAt: now,
+    liquidityToken: input.liquidityToken,
+    liquidityAmount: input.liquidityAmount,
   });
   await fs.writeFile(path.join(input.generatedDir, "deploy.ts"), deployTs, "utf8");
 
@@ -122,8 +126,38 @@ async function scaffoldDeployPackage(input: DeployInput): Promise<void> {
     buildHash: input.buildHash,
     generatedAt: now,
     projectId: input.projectId,
+    liquidityToken: input.liquidityToken,
+    liquidityAmount: input.liquidityAmount,
   });
   await fs.writeFile(path.join(input.generatedDir, "DEPLOY.md"), readme, "utf8");
+}
+
+function readAscVersion(ascCommand: string, cwd?: string): string | null {
+  try {
+    const raw = execSync(`${ascCommand} --version`, {
+      cwd,
+      timeout: 10_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    }).toString("utf8").trim();
+    return raw || null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveAscCommand(contractDir: string): string | null {
+  const fromEnv = process.env["ASC_BIN"]?.trim();
+  if (fromEnv) return fromEnv;
+
+  const localAsc = process.platform === "win32"
+    ? path.join(contractDir, "node_modules", ".bin", "asc.cmd")
+    : path.join(contractDir, "node_modules", ".bin", "asc");
+
+  if (existsSync(localAsc)) {
+    return `"${localAsc}"`;
+  }
+
+  return "npx asc";
 }
 
 /**
@@ -133,16 +167,10 @@ async function scaffoldDeployPackage(input: DeployInput): Promise<void> {
 function tryCompile(input: DeployInput): string | null {
   const contractDir = path.join(input.generatedDir, "contract");
   const wasmPath = path.join(contractDir, "build", `${input.ticker}.wasm`);
+  const requiredAscPrefix = process.env["ASC_VERSION_PREFIX"]?.trim() || "0.29";
 
   // Already compiled?
   if (existsSync(wasmPath)) return wasmPath;
-
-  try {
-    // Check if asc is available anywhere
-    execSync("npx asc --version", { timeout: 10_000, stdio: "ignore" });
-  } catch {
-    return null; // asc not available
-  }
 
   try {
     console.log("[deployer] Installing AS contract deps...");
@@ -152,8 +180,24 @@ function tryCompile(input: DeployInput): string | null {
       stdio: "inherit",
     });
 
-    console.log("[deployer] Compiling AssemblyScript contract...");
-    execSync("npm run build", {
+    const ascCommand = resolveAscCommand(contractDir);
+    if (!ascCommand) return null;
+
+    const ascVersion = readAscVersion(ascCommand, contractDir);
+    if (!ascVersion) {
+      console.warn("[deployer] asc not available. Set ASC_BIN or install @btc-vision/assemblyscript.");
+      return null;
+    }
+
+    if (!ascVersion.includes(requiredAscPrefix)) {
+      console.warn(
+        `[deployer] asc version mismatch. required~${requiredAscPrefix}, got="${ascVersion}". Set ASC_BIN to a compatible binary.`,
+      );
+      return null;
+    }
+
+    console.log(`[deployer] Compiling AssemblyScript contract with asc ${ascVersion}...`);
+    execSync(`${ascCommand} src/index.ts --config asconfig.json --target release`, {
       cwd: contractDir,
       timeout: 120_000,
       stdio: "inherit",
@@ -284,7 +328,10 @@ function buildInstructions(
       ``,
       `Next steps:`,
       `  1. Compile the contract:`,
-      `       cd ${dir}/contract && npm install && npm run build`,
+      `       cd ${dir}/contract && npm install`,
+      `       # optional: export ASC_BIN=/absolute/path/to/asc`,
+      `       # optional: export ASC_VERSION_PREFIX=0.29`,
+      `       npm run build`,
       `  2. Fund your testnet wallet (get Signet BTC from a faucet)`,
       `  3. Set your mnemonic: export OPNET_MNEMONIC="word1 ... word24"`,
       `  4. Run: cd ${dir} && npm install && npx ts-node deploy.ts`,

@@ -40,12 +40,12 @@ export const CONTRACT_PACKAGE_JSON_TEMPLATE = `{
   },
   "dependencies": {
     "@btc-vision/as-bignum": "0.1.2",
-    "@btc-vision/btc-runtime": "rc"
+    "@btc-vision/btc-runtime": "1.10.12"
   },
   "devDependencies": {
     "@btc-vision/assemblyscript": "^0.29.2",
-    "@btc-vision/opnet-transform": "1.1.0",
-    "@assemblyscript/loader": "latest"
+    "@btc-vision/opnet-transform": "1.2.0",
+    "@assemblyscript/loader": "^0.28.9"
   },
   "overrides": {
     "@noble/hashes": "2.0.1"

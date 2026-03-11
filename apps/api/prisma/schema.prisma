@@ -20,6 +20,9 @@ model Project {
   status         String    @default("DRAFT")
   contractAddress String?
   network        String    @default("testnet")
+  liquidityToken String?
+  liquidityAmount String?
+  liquidityFundingTx String?
   deployTx       String?
   buildHash      String?
   sourceRepoUrl  String?
@@ -30,11 +33,27 @@ model Project {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  checkRuns   CheckRun[]
-  watchEvents WatchEvent[]
+  checkRuns      CheckRun[]
+  watchEvents    WatchEvent[]
+  pledgeRecords  PledgeRecord[]
+  tradeSubmissions TradeSubmission[]
+  tradeFills     TradeFill[]
+  candleSnapshots CandleSnapshot[]
+  poolMetadata   PoolMetadata?
+  marketState    ProjectMarketState?
+  poolSnapshots  PoolSnapshot[]
+
+  // ── Live launch fields (added for live migration, nullable until active) ──
+  launchStatus   String?   // LaunchStatus enum stored as string
+  launchError    String?
+  poolAddress    String?
+  poolBaseToken  String?
+  poolTx         String?
+  liveAt         DateTime?
 
   @@index([status])
   @@index([pledgeCount])
+  @@index([launchStatus])
 }
 
 model CheckRun {
@@ -69,4 +88,406 @@ model WatchEvent {
 
   @@index([projectId, createdAt])
   @@index([projectId, dedupKey])
+}
+
+model PledgeRecord {
+  id            String   @id @default(cuid())
+  walletAddress String
+  projectId     String
+  pledgedAt     DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([walletAddress, projectId])
+  @@index([projectId])
+}
+
+// ── Trading Floor ────────────────────────────────────────────────────────────
+
+model UserProfile {
+  walletAddress  String    @id
+  displayName    String    @default("")
+  activeAvatarId String    @default("default-free-1")
+  muteUntil      DateTime?
+  lastChatAt     DateTime?
+  lastCalloutAt  DateTime?
+  chatSpamCount  Int       @default(0)
+  lastSpamAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  avatarOwnerships  UserAvatarOwnership[]
+  callouts          Callout[]
+  calloutReactions  CalloutReaction[]
+  chatMessages      ChatMessage[]
+  achievements      AchievementProgress?
+  calloutGrades     CalloutGrade[]
+  playerStats       PlayerStat[]
+  playerProgress    PlayerProgress?
+  playerReputation  PlayerReputation?
+  badgeAwards       BadgeAward[]
+  xpEvents          XpEvent[]
+}
+
+model RoomPresence {
+  id            String   @id @default(cuid())
+  walletAddress String   @unique
+  displayName   String   @default("")
+  avatarId      String   @default("default-free-1")
+  lastSeen      DateTime @default(now())
+
+  @@index([lastSeen])
+}
+
+model AvatarCatalog {
+  id              String  @id
+  name            String
+  emoji           String
+  bgColor         String
+  tier            String  @default("FREE")
+  pricePoints     Int     @default(0)
+  unlockCondition String?
+  description     String  @default("")
+  sortOrder       Int     @default(0)
+
+  ownerships UserAvatarOwnership[]
+}
+
+model UserAvatarOwnership {
+  id            String   @id @default(cuid())
+  walletAddress String
+  avatarId      String
+  unlockedAt    DateTime @default(now())
+
+  user   UserProfile   @relation(fields: [walletAddress], references: [walletAddress], onDelete: Cascade)
+  avatar AvatarCatalog @relation(fields: [avatarId], references: [id], onDelete: Cascade)
+
+  @@unique([walletAddress, avatarId])
+  @@index([walletAddress])
+}
+
+model Callout {
+  id            String   @id @default(cuid())
+  walletAddress String
+  projectId     String?
+  content       String
+  createdAt     DateTime @default(now())
+
+  user      UserProfile      @relation(fields: [walletAddress], references: [walletAddress], onDelete: Cascade)
+  reactions CalloutReaction[]
+  grade     CalloutGrade?
+
+  @@index([createdAt])
+  @@index([walletAddress])
+}
+
+model CalloutReaction {
+  id            String   @id @default(cuid())
+  calloutId     String
+  walletAddress String
+  reaction      String
+  createdAt     DateTime @default(now())
+
+  callout Callout     @relation(fields: [calloutId], references: [id], onDelete: Cascade)
+  user    UserProfile @relation(fields: [walletAddress], references: [walletAddress], onDelete: Cascade)
+
+  @@unique([calloutId, walletAddress])
+  @@index([calloutId])
+}
+
+model ChatMessage {
+  id            String   @id @default(cuid())
+  walletAddress String
+  content       String
+  messageHash   String
+  isSpam        Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  user UserProfile @relation(fields: [walletAddress], references: [walletAddress], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([walletAddress, createdAt])
+  @@index([walletAddress, messageHash])
+}
+
+model AchievementProgress {
+  walletAddress String  @id
+  calloutsCount Int     @default(0)
+  tokensCreated Int     @default(0)
+  updatedAt     DateTime @updatedAt
+
+  user UserProfile @relation(fields: [walletAddress], references: [walletAddress], onDelete: Cascade)
+}
+
+model Nonce {
+  id            String   @id @default(cuid())
+  walletAddress String   @unique
+  nonce         String
+  message       String
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+
+  @@index([expiresAt])
+}
+
+model WalletQuota {
+  id            String   @id @default(cuid())
+  walletAddress String
+  action        String   // e.g. "run_checks"
+  windowStart   DateTime // start of the current 24h window
+  count         Int      @default(1)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([walletAddress, action, windowStart])
+  @@index([walletAddress, action])
+}
+
+model CalloutGrade {
+  id             String   @id @default(cuid())
+  calloutId      String   @unique
+  walletAddress  String
+  multiple       Float
+  peakAt         DateTime
+  windowUsed     String   @default("7d")
+  gradingVersion Int      @default(1)
+  gradedAt       DateTime @default(now())
+
+  callout Callout     @relation(fields: [calloutId], references: [id], onDelete: Cascade)
+  user    UserProfile @relation(fields: [walletAddress], references: [walletAddress], onDelete: Cascade)
+
+  @@index([walletAddress, gradedAt])
+}
+
+model PlayerStat {
+  id                  String   @id @default(cuid())
+  walletAddress       String
+  rangeKey            String
+  realizedPnlSats     Int      @default(0)
+  totalTrades         Int      @default(0)
+  winningTrades       Int      @default(0)
+  winRate             Float    @default(0)
+  bestTradeMultiple   Float    @default(0)
+  calloutBestMultiple Float    @default(0)
+  calloutAvgMultiple  Float    @default(0)
+  calloutsGraded      Int      @default(0)
+  calloutHitRate      Float    @default(0)
+  hotScore            Float    @default(0)
+  updatedAt           DateTime @updatedAt
+
+  user UserProfile @relation(fields: [walletAddress], references: [walletAddress], onDelete: Cascade)
+
+  @@unique([walletAddress, rangeKey])
+  @@index([rangeKey, hotScore])
+  @@index([rangeKey, realizedPnlSats])
+}
+
+model BadgeDefinition {
+  id           String   @id
+  name         String
+  description  String
+  category     String
+  tier         String
+  iconKey      String
+  criteriaJson String
+  createdAt    DateTime @default(now())
+
+  awards BadgeAward[]
+}
+
+model BadgeAward {
+  id            String   @id @default(cuid())
+  walletAddress String
+  badgeId       String
+  sourceEventId String?
+  awardedAt     DateTime @default(now())
+
+  user  UserProfile     @relation(fields: [walletAddress], references: [walletAddress], onDelete: Cascade)
+  badge BadgeDefinition @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+
+  @@unique([walletAddress, badgeId])
+  @@index([walletAddress, awardedAt])
+}
+
+model PlayerProgress {
+  walletAddress String   @id
+  xp            Int      @default(0)
+  level         Int      @default(1)
+  titleKey      String   @default("Rookie")
+  updatedAt     DateTime @updatedAt
+
+  user UserProfile @relation(fields: [walletAddress], references: [walletAddress], onDelete: Cascade)
+}
+
+model XpEvent {
+  id            String   @id @default(cuid())
+  walletAddress String
+  type          String
+  amount        Int
+  sourceEventId String?
+  createdAt     DateTime @default(now())
+
+  user UserProfile @relation(fields: [walletAddress], references: [walletAddress], onDelete: Cascade)
+
+  @@index([walletAddress, createdAt])
+}
+
+model PlayerReputation {
+  walletAddress  String   @id
+  trustScore     Int      @default(50)
+  componentsJson String   @default("{}")
+  updatedAt      DateTime @updatedAt
+
+  user UserProfile @relation(fields: [walletAddress], references: [walletAddress], onDelete: Cascade)
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LIVE MIGRATION MODELS — schema placeholders for testnet→live transition.
+// These tables are created now so the migration path is clear; data will be
+// populated once on-chain integrations are wired up.
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// On-chain trade fill recorded by the watcher or RPC event listener.
+/// Replaces SimTrade for real trades once live.
+model TradeFill {
+  id            String   @id @default(cuid())
+  projectId     String
+  txId          String
+  walletAddress String
+  side          String   // "BUY" | "SELL"
+  amountSats    Int
+  tokenAmount   Float
+  priceSats     Int
+  blockHeight   Int
+  confirmedAt   DateTime
+  createdAt     DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, confirmedAt])
+  @@index([walletAddress, confirmedAt])
+  @@index([txId])
+}
+
+/// Submitted wallet trade awaiting watcher confirmation on-chain.
+/// This queue prevents unconfirmed txs from polluting player stats or candles.
+model TradeSubmission {
+  id            String   @id @default(cuid())
+  projectId     String
+  txId          String   @unique
+  walletAddress String
+  side          String   // "BUY" | "SELL"
+  paymentToken  String?
+  paymentAmount Float?
+  amountSats    Int
+  tokenAmount   Float
+  rawPayloadJson String?
+  status        String   @default("SUBMITTED") // SUBMITTED | CONFIRMED | FAILED
+  error         String?
+  submittedAt   DateTime @default(now())
+  confirmedAt   DateTime?
+  blockHeight   Int?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, status, submittedAt])
+  @@index([walletAddress, status, submittedAt])
+}
+
+/// OHLCV candle snapshot for charting (built from TradeFill aggregates).
+model CandleSnapshot {
+  id        String   @id @default(cuid())
+  projectId String
+  timeframe String   // "1m" | "5m" | "15m" | "1h" | "4h" | "1d"
+  time      Int      // unix epoch seconds
+  open      Float
+  high      Float
+  low       Float
+  close     Float
+  volume    Float    @default(0)
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, timeframe, time])
+  @@index([projectId, timeframe, time])
+}
+
+/// AMM pool metadata after bonding curve graduation.
+model PoolMetadata {
+  id          String   @id @default(cuid())
+  projectId   String   @unique
+  poolAddress String
+  baseToken   String
+  quoteToken  String
+  createdTx   String
+  createdAt   DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+/// Project market state — live price/volume/reserves derived from indexed pool activity.
+/// Updated by the market indexer each watcher cycle.
+model ProjectMarketState {
+  id              String   @id @default(cuid())
+  projectId       String   @unique
+  currentPriceSats Int     @default(0)
+  volume24hSats   Int      @default(0)
+  tradeCount24h   Int      @default(0)
+  reserveBase     Float    @default(0)   // base token reserve in pool
+  reserveQuote    Float    @default(0)   // quote token reserve in pool
+  lastTradeAt     DateTime?
+  updatedAt       DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+/// Pool reserve snapshot — point-in-time reserves recorded by indexer.
+model PoolSnapshot {
+  id          String   @id @default(cuid())
+  projectId   String
+  reserveBase Float
+  reserveQuote Float
+  priceSats   Int
+  blockHeight Int
+  recordedAt  DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, recordedAt])
+}
+
+/// Live OP721 shop mint — one shared collection, one tokenId per SKU per wallet.
+model ShopMint {
+  id                String   @id @default(cuid())
+  walletAddress     String
+  itemKey           String
+  entitlement       String
+  collectionAddress String   // OP721 collection contract address
+  tokenId           String   // OP721 token ID within the collection
+  mintTxId          String   @unique // on-chain transaction hash
+  status            String   @default("PENDING") // PENDING | CONFIRMED | FAILED
+  active            Boolean  @default(false)
+  mintedAt          DateTime @default(now())
+  confirmedAt       DateTime?
+  usedAt            DateTime?
+
+  @@unique([walletAddress, itemKey])
+  @@index([walletAddress])
+  @@index([mintTxId])
+}
+
+/// Wallet feature activation state — tracks which live features
+/// a wallet has opted into (e.g. live trading, pool creation).
+model WalletFeatureState {
+  id              String   @id @default(cuid())
+  walletAddress   String
+  featureKey      String   // e.g. "LIVE_TRADING", "POOL_CREATE", "SHOP_ONCHAIN"
+  enabled         Boolean  @default(false)
+  activatedAt     DateTime?
+  deactivatedAt   DateTime?
+  updatedAt       DateTime @updatedAt
+
+  @@unique([walletAddress, featureKey])
+  @@index([walletAddress])
 }

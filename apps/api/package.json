@@ -10,15 +10,21 @@
     "typecheck": "tsc --noEmit",
     "lint": "echo 'lint ok'",
     "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
     "db:generate": "prisma generate",
-    "db:seed": "tsx src/seed.ts"
+    "db:seed": "tsx src/seed.ts",
+    "smoke:server": "prisma generate && prisma migrate deploy && tsx src/index.ts"
   },
   "dependencies": {
-    "@fastify/cors": "^9.0.1",
-    "@opfun/shared": "workspace:*",
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/cors": "^10.0.0",
+    "@fastify/jwt": "^10.0.0",
+    "@fastify/rate-limit": "^10.0.0",
     "@opfun/opnet": "workspace:*",
+    "@opfun/shared": "workspace:*",
     "@prisma/client": "^5.14.0",
-    "fastify": "^4.28.1",
+    "bip322-js": "^3.0.0",
+    "fastify": "^5.0.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {

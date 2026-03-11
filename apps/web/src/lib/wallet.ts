@@ -540,21 +540,7 @@ export async function signOpnetInteractionWithWallet(
   await ensureOPNetTestnet(opnet);
 
   try {
-    const [{ CallResult }, { networks }] = await Promise.all([
-      import("opnet/browser"),
-      import("@btc-vision/bitcoin"),
-    ]);
-
-    const simulation = CallResult.fromOfflineBuffer(interaction.offlineBufferHex);
-    const signed = await simulation.signTransaction({
-      signer: null,
-      mldsaSigner: null,
-      refundTo: toOpnetTestnetAddress(interaction.refundTo),
-      maximumAllowedSatToSpend: BigInt(interaction.maximumAllowedSatToSpend),
-      feeRate: interaction.feeRate,
-      network: networks.testnet,
-    });
-
+    const signed = await signInteractionBuffer(interaction.offlineBufferHex);
     return {
       signedFundingTxHex: signed.fundingTransactionRaw ?? null,
       signedInteractionTxHex: signed.interactionTransactionRaw,

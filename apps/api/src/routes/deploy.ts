@@ -17,6 +17,64 @@ const ConfirmDeploySchema = z.object({
   buildHash: z.string().optional(),
 });
 
+interface QueueDeployResult {
+  ok: boolean;
+  statusCode?: number;
+  error?: string;
+  hint?: string;
+  projectId?: string;
+}
+
+export async function queueDeployForProject(
+  projectId: string,
+  app: FastifyInstance,
+): Promise<QueueDeployResult> {
+  const project = await prisma.project.findUnique({ where: { id: projectId } });
+  if (!project) return { ok: false, statusCode: 404, error: "Project not found" };
+
+  const liquidityToken = (project as Record<string, unknown>)["liquidityToken"];
+  const liquidityAmountRaw = (project as Record<string, unknown>)["liquidityAmount"];
+  const liquidityFundingTx = (project as Record<string, unknown>)["liquidityFundingTx"];
+  const liquidityAmount = typeof liquidityAmountRaw === "string" ? Number(liquidityAmountRaw) : 0;
+  if (
+    typeof liquidityToken !== "string" ||
+    !["TBTC", "MOTO", "PILL"].includes(liquidityToken) ||
+    !Number.isFinite(liquidityAmount) ||
+    liquidityAmount <= 0 ||
+    typeof liquidityFundingTx !== "string" ||
+    liquidityFundingTx.length < 8
+  ) {
+    return {
+      ok: false,
+      statusCode: 409,
+      error: "Initial liquidity is required before deployment.",
+      hint: "Create with liquidity token (TBTC/MOTO/PILL), positive amount, and a valid wallet funding tx.",
+    };
+  }
+
+  try {
+    assertCanTransition(project.status as string, "CHECKING");
+  } catch {
+    return {
+      ok: false,
+      statusCode: 409,
+      error: `Cannot deploy from status '${project.status}'. Project must be READY.`,
+      hint: project.status === "DRAFT" ? "Run /run-checks first to generate a Risk Card." : undefined,
+    };
+  }
+
+  await prisma.project.update({ where: { id: project.id }, data: { status: "CHECKING" } });
+  const checkRun = await prisma.checkRun.create({
+    data: { projectId: project.id, type: "DEPLOY", status: "PENDING" },
+  });
+
+  runDeploy(project, checkRun.id, app).catch((err: unknown) => {
+    app.log.error(err, `deploy failed for project ${project.id}`);
+  });
+
+  return { ok: true, projectId: project.id };
+}
+
 export async function deployRoutes(app: FastifyInstance) {
   // POST /projects/:id/deploy  — scaffold + attempt auto-deploy (admin-gated)
   app.post<{ Params: { id: string } }>("/projects/:id/deploy", async (request, reply) => {
@@ -24,35 +82,15 @@ export async function deployRoutes(app: FastifyInstance) {
       return reply.status(401).send({ error: "Unauthorized: invalid X-Admin-Secret header" });
     }
 
-    const project = await prisma.project.findUnique({ where: { id: request.params.id } });
-    if (!project) return reply.status(404).send({ error: "Project not found" });
-
-    // S3: validate READY → CHECKING via state machine
-    try {
-      assertCanTransition(project.status as string, "CHECKING");
-    } catch {
-      return reply.status(409).send({
-        error: `Cannot deploy from status '${project.status}'. Project must be READY.`,
-        hint: project.status === "DRAFT" ? "Run /run-checks first to generate a Risk Card." : undefined,
+    const queued = await queueDeployForProject(request.params.id, app);
+    if (!queued.ok) {
+      return reply.status(queued.statusCode ?? 409).send({
+        error: queued.error ?? "Unable to start deploy",
+        hint: queued.hint,
       });
     }
 
-    // M6: Guard against concurrent deploys — update status to CHECKING atomically.
-    // SQLite serializes writes, so a second concurrent call will read CHECKING (not READY)
-    // and hit the 409 above before it can start another runDeploy task.
-    await prisma.project.update({ where: { id: project.id }, data: { status: "CHECKING" } });
-
-    // Create a deploy CheckRun
-    const checkRun = await prisma.checkRun.create({
-      data: { projectId: project.id, type: "DEPLOY", status: "PENDING" },
-    });
-
-    reply.status(202).send({ message: "Deploy started", projectId: project.id, status: "CHECKING" });
-
-    // Run in background
-    runDeploy(project, checkRun.id, app).catch((err: unknown) => {
-      app.log.error(err, `deploy failed for project ${project.id}`);
-    });
+    reply.status(202).send({ message: "Deploy started", projectId: queued.projectId, status: "CHECKING" });
   });
 
   // POST /projects/:id/confirm-deploy  — manual: record address after user ran deploy.ts
@@ -68,6 +106,16 @@ export async function deployRoutes(app: FastifyInstance) {
 
     const project = await prisma.project.findUnique({ where: { id: request.params.id } });
     if (!project) return reply.status(404).send({ error: "Project not found" });
+
+    // STATE MACHINE GUARD: only READY / DEPLOY_PACKAGE_READY / CHECKING → LAUNCHED (per ALLOWED_TRANSITIONS)
+    try {
+      assertCanTransition(project.status as string, "LAUNCHED");
+    } catch {
+      return reply.status(409).send({
+        error: `Cannot confirm deploy from status '${project.status}'.`,
+        hint: project.status === "GRADUATED" ? "Project is already graduated." : undefined,
+      });
+    }
 
     const finalBuildHash = result.data.buildHash ?? (project.buildHash as string | null) ?? undefined;
 
@@ -165,6 +213,12 @@ async function runDeploy(project: any, checkRunId: string, app: FastifyInstance)
       maxSupply: project.maxSupply as string,
       iconUrl: project.iconUrl as string | undefined,
       buildHash: project.buildHash as string ?? "",
+      liquidityToken: (project as Record<string, unknown>)["liquidityToken"] as
+        | "TBTC"
+        | "MOTO"
+        | "PILL"
+        | undefined,
+      liquidityAmount: (project as Record<string, unknown>)["liquidityAmount"] as string | undefined,
       generatedDir: path.join(GENERATED_DIR, projectId),
     });
 
@@ -190,6 +244,24 @@ async function runDeploy(project: any, checkRunId: string, app: FastifyInstance)
       },
     });
 
+    // STATE MACHINE GUARD: re-fetch current status before writing to prevent
+    // bypassing the state machine in this async path (e.g. manual confirm-deploy
+    // may have already transitioned the project while deployContract was running).
+    const freshForSuccess = await prisma.project.findUnique({ where: { id: projectId } });
+    if (!freshForSuccess) {
+      app.log.warn(`[runDeploy] Project ${projectId} was deleted while deploy was running`);
+      return;
+    }
+    try {
+      assertCanTransition(freshForSuccess.status as string, newStatus);
+    } catch (transitionErr) {
+      app.log.error(
+        transitionErr,
+        `[runDeploy] Invalid transition ${freshForSuccess.status} → ${newStatus} for ${projectId} — skipping DB write`,
+      );
+      return;
+    }
+
     await prisma.project.update({
       where: { id: projectId },
       data: {
@@ -208,6 +280,19 @@ async function runDeploy(project: any, checkRunId: string, app: FastifyInstance)
         outputJson: JSON.stringify({ error: err instanceof Error ? err.message : String(err) }),
       },
     });
+
+    // STATE MACHINE GUARD: validate FLAGGED transition before writing in error path too.
+    const freshForError = await prisma.project.findUnique({ where: { id: projectId } });
+    if (!freshForError) return;
+    try {
+      assertCanTransition(freshForError.status as string, "FLAGGED");
+    } catch (transitionErr) {
+      app.log.error(
+        transitionErr,
+        `[runDeploy] Invalid transition ${freshForError.status} → FLAGGED for ${projectId} — skipping DB write`,
+      );
+      return;
+    }
     await prisma.project.update({ where: { id: projectId }, data: { status: "FLAGGED" } });
   }
 }

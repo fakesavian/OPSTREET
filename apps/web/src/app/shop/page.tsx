@@ -10,7 +10,7 @@ import {
   type ShopCatalogItemState,
   type ShopItemKey,
 } from "@/lib/api";
-import { signInteractionBuffer } from "@/lib/wallet";
+import { signOpnetInteractionWithWallet } from "@/lib/wallet";
 
 function formatPrice(item: ShopCatalogItemState): string {
   if (item.pricing.freeMint) return "Free mint";
@@ -61,6 +61,10 @@ export default function ShopPage() {
       setError("Connect and verify wallet first.");
       return;
     }
+    if (wallet?.provider !== "opnet") {
+      setError("Use OP_WALLET on OP_NET testnet to mint shop items.");
+      return;
+    }
 
     setBusyItem(itemKey);
     setMintStep("preparing");
@@ -76,16 +80,16 @@ export default function ShopPage() {
         );
       }
 
-      // Step 2: Wallet signs the interaction buffer
+      // Step 2: Wallet signs the prepared interaction
       setMintStep("signing");
-      const signed = await signInteractionBuffer(intent.interaction.offlineBufferHex);
+      const signed = await signOpnetInteractionWithWallet(wallet.provider, intent.interaction);
 
       // Step 3: Backend broadcasts the signed transaction
       setMintStep("broadcasting");
       await shopMintBroadcast(
         itemKey,
-        signed.interactionTransactionRaw,
-        signed.fundingTransactionRaw,
+        signed.signedInteractionTxHex,
+        signed.signedFundingTxHex ?? undefined,
       );
 
       setMintStep("done");
@@ -122,6 +126,7 @@ export default function ShopPage() {
 
   function mintButtonLabel(item: ShopCatalogItemState): string {
     if (item.owned) return "Owned";
+    if (item.mintStatus === "PENDING") return "Pending";
     if (busyItem !== item.itemKey) return "Mint";
     if (mintStep === "preparing") return "Preparing...";
     if (mintStep === "signing") return "Sign in wallet...";
@@ -181,6 +186,16 @@ export default function ShopPage() {
                     <p className="text-[10px] text-[var(--text-muted)]">Confirmed: {new Date(item.confirmedAt).toLocaleString()}</p>
                   )}
                 </div>
+              ) : item.mintStatus === "PENDING" ? (
+                <div className="rounded-lg border-2 border-opYellow/40 bg-opYellow/10 px-3 py-2 text-xs text-ink space-y-1">
+                  <p className="font-black text-ink">Mint Pending</p>
+                  {item.mintTxId && (
+                    <p className="font-mono text-[10px] break-all">Tx: {item.mintTxId}</p>
+                  )}
+                  <p className="text-[10px] text-[var(--text-muted)]">
+                    Ownership unlocks only after watcher confirmation.
+                  </p>
+                </div>
               ) : (
                 <div className="rounded-lg border-2 border-ink/20 bg-[var(--cream)] px-3 py-2 text-xs text-[var(--text-secondary)]">
                   One-time mint per wallet.
@@ -190,7 +205,7 @@ export default function ShopPage() {
               <div className="mt-auto flex gap-2">
                 <button
                   onClick={() => void handleMint(item.itemKey)}
-                  disabled={!walletAddress || item.owned || busyItem === item.itemKey}
+                  disabled={!walletAddress || item.owned || item.mintStatus === "PENDING" || busyItem === item.itemKey}
                   className="op-btn-primary flex-1 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {mintButtonLabel(item)}

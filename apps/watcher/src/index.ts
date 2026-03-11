@@ -1,106 +1,425 @@
-/**
- * OPFun Watchtower — Milestone 4: Real OP_NET contract monitoring.
- *
- * For every LAUNCHED project with a contractAddress, this worker:
- *  1. Converts the P2TR/bech32m address to the 0x-prefixed hex key OPNet RPC expects.
- *  2. Calls Bob MCP → opnet_rpc → getCode to verify the contract still exists.
- *  3. Calls opnet_rpc → getStorageAt (slot 0x00) to read the owner storage slot.
- *  4. Detects anomalies and posts WatchEvent records to the API.
- *  5. The API auto-flags projects that receive CRITICAL events.
- *
- * SAFETY:
- *  - Read-only checks only. No keys, no signing, no transactions.
- *  - Targets OPNet testnet only.
- *  - Admin secret used only for internal API auth (not for any blockchain operation).
- */
+import { config } from "dotenv";
+config();
 
-import { BobClient } from "@opfun/opnet";
-import type { ProjectDTO, WatchSeverity } from "@opfun/shared";
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Config
-// ──────────────────────────────────────────────────────────────────────────────
+import {
+  checkContractCode,
+  checkProviderHealth,
+  fetchLivePoolState,
+  fetchTransactionReceipt as fetchOpnetTransactionReceipt,
+  getLiquidityTokenContractAddress,
+  readStorageSlot,
+} from "@opfun/opnet";
+import type { LaunchStatus, LiquidityToken, ProjectDTO, WatchSeverity } from "@opfun/shared";
 
 const API_URL = process.env["API_URL"] ?? "http://localhost:3001";
 const ADMIN_SECRET = process.env["ADMIN_SECRET"] ?? "dev-secret-change-me";
-const POLL_INTERVAL_MS = Number(process.env["WATCH_INTERVAL_MS"] ?? 5 * 60 * 1000); // 5 min default
+const POLL_INTERVAL_MS = Number(process.env["WATCH_INTERVAL_MS"] ?? 5 * 60 * 1000);
 const OPNET_NETWORK = "testnet";
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Bech32m → hex conversion (P2TR: bcrt1p… / tb1p… / bc1p…)
-// Converts the 32-byte witness program to a 0x-prefixed hex string, which is
-// the address format OPNet RPC expects.
-// ──────────────────────────────────────────────────────────────────────────────
+const OPNET_RPC_URL = process.env["OPNET_RPC_URL"] ?? "";
+const OPNET_RPC_KEY = process.env["OPNET_RPC_KEY"] ?? "";
+const RPC_TIMEOUT_MS = Number(process.env["WATCH_RPC_TIMEOUT_MS"] ?? 8_000);
+const TRADE_SUBMISSION_BATCH = Number(process.env["WATCH_TRADE_SUBMISSION_BATCH"] ?? 100);
 
 const BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 const CHAR_MAP: Record<string, number> = {};
 for (let i = 0; i < BECH32_CHARSET.length; i++) CHAR_MAP[BECH32_CHARSET[i]!] = i;
-
-function convertBits(data: number[], from: number, to: number): number[] | null {
-  let acc = 0, bits = 0;
-  const ret: number[] = [];
-  const maxv = (1 << to) - 1;
-  for (const value of data) {
-    acc = (acc << from) | value;
-    bits += from;
-    while (bits >= to) {
-      bits -= to;
-      ret.push((acc >> bits) & maxv);
-    }
-  }
-  // P2TR: 32 bytes → 256 bits, encoded as 52 × 5-bit groups (last group has 4 padding bits)
-  // On decode we must NOT output a final partial group that's all padding
-  if (bits >= from || ((acc << (to - bits)) & maxv)) return null;
-  return ret;
-}
-
-/**
- * Convert a bech32m P2TR address (bcrt1p…, tb1p…, bc1p…) to a 0x-prefixed
- * 32-byte hex string.  Returns null if the address cannot be decoded.
- */
-function p2trToHex(addr: string): string | null {
-  const lower = addr.toLowerCase();
-  const sep = lower.lastIndexOf("1");
-  if (sep < 1) return null;
-
-  const dataStr = lower.slice(sep + 1); // includes 6-char checksum
-  if (dataStr.length < 8) return null;  // too short to be valid
-
-  // Strip checksum (last 6 chars)
-  const payload = dataStr.slice(0, -6);
-
-  const fivebit: number[] = [];
-  for (const ch of payload) {
-    const v = CHAR_MAP[ch];
-    if (v === undefined) return null;
-    fivebit.push(v);
-  }
-  if (fivebit.length === 0) return null;
-
-  const witnessVersion = fivebit[0]; // must be 1 for P2TR
-  if (witnessVersion !== 1) return null;
-
-  const decoded = convertBits(fivebit.slice(1), 5, 8);
-  if (!decoded || decoded.length !== 32) return null;
-
-  return "0x" + decoded.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// API helpers
-// ──────────────────────────────────────────────────────────────────────────────
 
 interface FullProject extends ProjectDTO {
   checkRuns: unknown[];
   watchEvents: unknown[];
 }
 
+interface LaunchProject {
+  id: string;
+  ticker: string;
+  launchStatus: LaunchStatus | null;
+  contractAddress: string | null;
+  deployTx: string | null;
+  poolTx: string | null;
+  poolAddress: string | null;
+}
+
+interface PendingTradeSubmission {
+  projectId: string;
+  ticker: string;
+  launchStatus: string | null;
+  poolAddress: string | null;
+  txId: string;
+  walletAddress: string;
+  side: "BUY" | "SELL";
+  amountSats: number;
+  tokenAmount: number;
+  paymentToken: string | null;
+  paymentAmount: number | null;
+  submittedAt: string;
+}
+
+interface PendingShopMint {
+  id: string;
+  walletAddress: string;
+  itemKey: string;
+  entitlement: string;
+  collectionAddress: string;
+  tokenId: string;
+  mintTxId: string;
+  status: string;
+  active: boolean;
+  mintedAt: string;
+  confirmedAt: string | null;
+  usedAt: string | null;
+}
+
+interface ParsedConfirmedTrade {
+  walletAddress: string;
+  side: "BUY" | "SELL";
+  amountSats: number;
+  tokenAmount: number;
+  blockHeight: number;
+  confirmedAt: Date;
+}
+
+type JsonRecord = Record<string, unknown>;
+
+function normalizeAddress(address: string | null | undefined): string {
+  return (address ?? "").trim().toLowerCase();
+}
+
+function resolvePoolBaseToken(project: { poolBaseToken?: string | null; liquidityToken?: string | null }): LiquidityToken {
+  const value = project.poolBaseToken ?? project.liquidityToken ?? "MOTO";
+  if (value !== "TBTC" && value !== "MOTO" && value !== "PILL") {
+    throw new Error(`Unsupported pool base token '${value}'.`);
+  }
+  return value;
+}
+
+function mapLiveReservesToBaseQuote(
+  liveState: {
+    token0: string;
+    token1: string;
+    reserve0: bigint;
+    reserve1: bigint;
+  },
+  baseTokenAddress: string,
+  quoteTokenAddress: string,
+): { reserveBase: number; reserveQuote: number } | null {
+  const token0 = normalizeAddress(liveState.token0);
+  const token1 = normalizeAddress(liveState.token1);
+  const base = normalizeAddress(baseTokenAddress);
+  const quote = normalizeAddress(quoteTokenAddress);
+
+  if (!token0 || !token1 || !base || !quote) return null;
+  if (token0 === base && token1 === quote) {
+    return {
+      reserveBase: Number(liveState.reserve0),
+      reserveQuote: Number(liveState.reserve1),
+    };
+  }
+  if (token0 === quote && token1 === base) {
+    return {
+      reserveBase: Number(liveState.reserve1),
+      reserveQuote: Number(liveState.reserve0),
+    };
+  }
+  return null;
+}
+
+function convertBits(data: number[], from: number, to: number): number[] | null {
+  let acc = 0;
+  let bits = 0;
+  const result: number[] = [];
+  const maxv = (1 << to) - 1;
+
+  for (const value of data) {
+    acc = (acc << from) | value;
+    bits += from;
+    while (bits >= to) {
+      bits -= to;
+      result.push((acc >> bits) & maxv);
+    }
+  }
+
+  if (bits >= from || ((acc << (to - bits)) & maxv)) return null;
+  return result;
+}
+
+function p2trToHex(address: string): string | null {
+  const lower = address.toLowerCase();
+  const sep = lower.lastIndexOf("1");
+  if (sep < 1) return null;
+
+  const dataStr = lower.slice(sep + 1);
+  if (dataStr.length < 8) return null;
+
+  const payload = dataStr.slice(0, -6);
+  const fiveBit: number[] = [];
+  for (const char of payload) {
+    const value = CHAR_MAP[char];
+    if (value === undefined) return null;
+    fiveBit.push(value);
+  }
+
+  if (fiveBit.length === 0) return null;
+  if (fiveBit[0] !== 1) return null;
+
+  const decoded = convertBits(fiveBit.slice(1), 5, 8);
+  if (!decoded || decoded.length !== 32) return null;
+  return `0x${decoded.map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseStorageValue(text: string): number {
+  const trimmed = text.trim();
+  const hexMatch = /0x([0-9a-fA-F]+)/.exec(trimmed);
+  if (hexMatch) return Number.parseInt(hexMatch[1]!, 16);
+
+  const numberMatch = /^(\d+(?:\.\d+)?)$/.exec(trimmed);
+  if (numberMatch) return Number(numberMatch[1]);
+
+  try {
+    const parsed = JSON.parse(trimmed) as { value?: string | number; result?: string | number };
+    const value = parsed.value ?? parsed.result;
+    return toNumber(value) ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+function toNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    if (!value) return null;
+    if (value.startsWith("0x")) {
+      const parsed = Number.parseInt(value.slice(2), 16);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (typeof value === "bigint") return Number(value);
+  if (isRecord(value)) {
+    return toNumber(value.value ?? value.amount ?? value.result);
+  }
+  return null;
+}
+
+function toDate(value: unknown): Date | null {
+  if (value instanceof Date) return value;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const millis = value > 1_000_000_000_000 ? value : value * 1000;
+    const date = new Date(millis);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  if (typeof value === "string") {
+    if (!value) return null;
+    if (/^\d+$/.test(value) || /^0x[0-9a-f]+$/i.test(value)) {
+      const numeric = toNumber(value);
+      return numeric === null ? null : toDate(numeric);
+    }
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  return null;
+}
+
+function collectRecords(value: unknown, depth = 0, seen = new Set<unknown>()): JsonRecord[] {
+  if (depth > 6 || value === null || value === undefined || seen.has(value)) return [];
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => collectRecords(entry, depth + 1, seen));
+  }
+
+  if (!isRecord(value)) return [];
+
+  const nested = Object.values(value).flatMap((entry) => collectRecords(entry, depth + 1, seen));
+  return [value, ...nested];
+}
+
+function firstValue(records: JsonRecord[], keys: string[]): unknown {
+  for (const record of records) {
+    for (const key of keys) {
+      if (key in record && record[key] !== undefined && record[key] !== null) {
+        return record[key];
+      }
+    }
+  }
+  return undefined;
+}
+
+function firstString(records: JsonRecord[], keys: string[]): string | null {
+  const value = firstValue(records, keys);
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function firstNumber(records: JsonRecord[], keys: string[]): number | null {
+  return toNumber(firstValue(records, keys));
+}
+
+function swapContext(receipt: unknown): JsonRecord[] {
+  const records = collectRecords(receipt);
+  const matched = records.filter((record) => {
+    const label = [
+      record.event,
+      record.eventName,
+      record.name,
+      record.type,
+      record.kind,
+      record.action,
+    ]
+      .filter((value): value is string => typeof value === "string")
+      .join(" ")
+      .toLowerCase();
+
+    return label.includes("swap") || label.includes("buy") || label.includes("sell");
+  });
+
+  return matched.length > 0 ? matched : records;
+}
+
+function receiptStatus(receipt: unknown): "pending" | "confirmed" | "failed" {
+  const records = collectRecords(receipt);
+  const statusValue = firstValue(records, ["status", "success", "ok", "confirmed"]);
+  const blockHeight = firstNumber(records, ["blockHeight", "blockNumber", "height"]);
+
+  if (typeof statusValue === "boolean") {
+    return statusValue ? "confirmed" : "failed";
+  }
+  if (typeof statusValue === "string") {
+    const normalized = statusValue.toLowerCase();
+    if (normalized === "failed" || normalized === "reverted" || normalized === "error" || normalized === "0x0") {
+      return "failed";
+    }
+    if (normalized === "confirmed" || normalized === "success" || normalized === "ok" || normalized === "0x1") {
+      return "confirmed";
+    }
+  }
+  if (typeof statusValue === "number") {
+    if (statusValue === 0) return "failed";
+    if (statusValue > 0) return "confirmed";
+  }
+  if ((blockHeight ?? 0) > 0) return "confirmed";
+  return "pending";
+}
+
+function parseConfirmedTrade(
+  receipt: unknown,
+  submission: PendingTradeSubmission,
+): ParsedConfirmedTrade | null {
+  const records = swapContext(receipt);
+  const label = [
+    firstString(records, ["side", "direction"]),
+    records
+      .map((record) => [record.event, record.eventName, record.name, record.type].find((value) => typeof value === "string"))
+      .filter((value): value is string => typeof value === "string")
+      .join(" "),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  let side: "BUY" | "SELL" = submission.side;
+  if (label.includes("sell")) side = "SELL";
+  if (label.includes("buy")) side = "BUY";
+
+  const walletAddress =
+    firstString(records, ["walletAddress", "from", "sender", "owner", "trader", "user"]) ?? submission.walletAddress;
+  const blockHeight = firstNumber(records, ["blockHeight", "blockNumber", "height"]) ?? 0;
+  const confirmedAt =
+    toDate(firstValue(records, ["confirmedAt", "blockTime", "timestamp", "time", "blockTimestamp"])) ?? new Date();
+
+  const buyBaseKeys = ["amountSats", "baseAmount", "amountInSats", "baseIn", "spentSats", "satsIn", "amountIn", "inputAmount"];
+  const buyTokenKeys = ["tokenAmount", "quoteAmount", "amountOutQuote", "quoteOut", "tokensOut", "amountOut", "outputAmount", "receivedTokens"];
+  const sellBaseKeys = ["amountSats", "baseAmount", "amountOutSats", "baseOut", "receivedSats", "satsOut", "amountOut", "outputAmount"];
+  const sellTokenKeys = ["tokenAmount", "quoteAmount", "amountInQuote", "quoteIn", "tokensIn", "amountIn", "inputAmount", "soldTokens"];
+
+  const amountSats = side === "BUY"
+    ? firstNumber(records, buyBaseKeys)
+    : firstNumber(records, sellBaseKeys);
+  const tokenAmount = side === "BUY"
+    ? firstNumber(records, buyTokenKeys)
+    : firstNumber(records, sellTokenKeys);
+
+  if (!walletAddress || (amountSats ?? 0) <= 0 || (tokenAmount ?? 0) <= 0) {
+    return null;
+  }
+
+  return {
+    walletAddress,
+    side,
+    amountSats: amountSats!,
+    tokenAmount: tokenAmount!,
+    blockHeight,
+    confirmedAt,
+  };
+}
+
+async function apiGet<T>(path: string): Promise<T> {
+  const response = await fetch(`${API_URL}${path}`);
+  if (!response.ok) throw new Error(`API ${path} returned ${response.status}`);
+  return response.json() as Promise<T>;
+}
+
+async function apiPost<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const response = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Secret": ADMIN_SECRET,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const error = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new Error(error.error ?? `API ${path} returned ${response.status}`);
+  }
+
+  return response.json() as Promise<T>;
+}
+
 async function fetchLaunchedProjects(): Promise<FullProject[]> {
-  // S7: filter server-side — avoids loading all projects into the watcher
-  const res = await fetch(`${API_URL}/projects?status=LAUNCHED`);
-  if (!res.ok) throw new Error(`API /projects returned ${res.status}`);
-  const all = (await res.json()) as FullProject[];
-  return all.filter((p) => p.contractAddress);
+  const body = await apiGet<FullProject[] | { items: FullProject[] }>("/projects?status=LAUNCHED");
+  const items = Array.isArray(body) ? body : body.items;
+  return items.filter((project) => project.contractAddress);
+}
+
+async function fetchPendingLaunchProjects(): Promise<LaunchProject[]> {
+  const body = await apiGet<LaunchProject[] | { items: LaunchProject[] }>("/projects?status=LAUNCHED&includeAll=true");
+  const items = Array.isArray(body) ? body : body.items;
+  return items.filter((project) => project.launchStatus === "DEPLOY_SUBMITTED" || project.launchStatus === "POOL_SUBMITTED");
+}
+
+async function fetchPendingTradeSubmissions(): Promise<PendingTradeSubmission[]> {
+  const response = await fetch(`${API_URL}/trade-submissions/pending?limit=${TRADE_SUBMISSION_BATCH}`, {
+    headers: {
+      "X-Admin-Secret": ADMIN_SECRET,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`API /trade-submissions/pending returned ${response.status}`);
+  }
+
+  const body = (await response.json()) as { items?: PendingTradeSubmission[] };
+  return body.items ?? [];
+}
+
+async function fetchPendingShopMints(): Promise<PendingShopMint[]> {
+  const response = await fetch(`${API_URL}/shop/mints/pending?limit=100`, {
+    headers: {
+      "X-Admin-Secret": ADMIN_SECRET,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`API /shop/mints/pending returned ${response.status}`);
+  }
+
+  const body = (await response.json()) as { items?: PendingShopMint[] };
+  return body.items ?? [];
 }
 
 async function postWatchEvent(
@@ -111,187 +430,370 @@ async function postWatchEvent(
   dedupKey?: string,
 ): Promise<void> {
   try {
-    const res = await fetch(`${API_URL}/projects/${projectId}/watch-events`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Admin-Secret": ADMIN_SECRET,
-      },
-      body: JSON.stringify({ severity, title, detailsJson, dedupKey }),
+    await apiPost(`/projects/${projectId}/watch-events`, {
+      severity,
+      title,
+      detailsJson,
+      dedupKey,
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({})) as { error?: string };
-      console.error(`[watcher] Failed to post event for ${projectId}: ${err.error ?? res.status}`);
-    }
-  } catch (err) {
-    console.error(`[watcher] postWatchEvent error:`, err);
+  } catch (error) {
+    console.error("[watcher] Failed to post watch event:", error);
   }
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// In-memory state: track last-known code hash to detect changes
-// ──────────────────────────────────────────────────────────────────────────────
+async function confirmLaunchOnChain(project: LaunchProject): Promise<void> {
+  if (project.launchStatus === "DEPLOY_SUBMITTED" && project.contractAddress) {
+    try {
+      const result = await checkContractCode(project.contractAddress);
+      if (result.exists) {
+        await apiPost(`/projects/${project.id}/confirm-deploy-onchain`, {
+          contractAddress: project.contractAddress,
+        });
+      }
+    } catch (error) {
+      console.error(`[watcher] ${project.ticker}: deploy confirmation check failed`, error);
+    }
+  }
 
-const lastCodeHash: Map<string, string> = new Map();
-const lastOwnerSlot: Map<string, string> = new Map();
-const pollCycleCount: Map<string, number> = new Map();
+  if (project.launchStatus === "POOL_SUBMITTED" && project.poolAddress) {
+    try {
+      const result = await checkContractCode(project.poolAddress);
+      if (result.exists) {
+        await apiPost(`/projects/${project.id}/confirm-pool-onchain`, {
+          poolAddress: project.poolAddress,
+        });
+      }
+    } catch (error) {
+      console.error(`[watcher] ${project.ticker}: pool confirmation check failed`, error);
+    }
+  }
+}
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Core monitor function
-// ──────────────────────────────────────────────────────────────────────────────
+async function indexPoolReserves(project: FullProject): Promise<void> {
+  const poolAddress = project.poolAddress;
+  if (!poolAddress || !project.contractAddress) return;
 
-async function monitorProject(bob: BobClient, project: FullProject): Promise<void> {
+  try {
+    const baseToken = resolvePoolBaseToken(project);
+    const baseTokenAddress = getLiquidityTokenContractAddress(baseToken);
+    const liveState = await fetchLivePoolState(poolAddress);
+    if (!liveState) return;
+
+    const reserves = mapLiveReservesToBaseQuote(liveState, baseTokenAddress, project.contractAddress);
+    if (!reserves || reserves.reserveBase <= 0 || reserves.reserveQuote <= 0) return;
+
+    await apiPost(`/projects/${project.id}/pool-snapshot`, {
+      reserveBase: reserves.reserveBase,
+      reserveQuote: reserves.reserveQuote,
+      blockHeight: 0,
+    });
+  } catch (error) {
+    console.error(`[indexer] ${project.ticker}: reserve indexing failed`, error);
+  }
+}
+
+async function fetchTransactionReceipt(txId: string): Promise<unknown | null> {
+  try {
+    const result = await fetchOpnetTransactionReceipt(txId);
+    if (result.found) return result;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function confirmTradeSubmission(
+  submission: PendingTradeSubmission,
+  trade: ParsedConfirmedTrade,
+): Promise<void> {
+  await apiPost(`/projects/${submission.projectId}/trade-submissions/${submission.txId}/confirm`, {
+    walletAddress: trade.walletAddress,
+    side: trade.side,
+    amountSats: trade.amountSats,
+    tokenAmount: trade.tokenAmount,
+    blockHeight: trade.blockHeight,
+    confirmedAt: trade.confirmedAt.toISOString(),
+  });
+}
+
+async function failTradeSubmission(submission: PendingTradeSubmission, error: string): Promise<void> {
+  await apiPost(`/projects/${submission.projectId}/trade-submissions/${submission.txId}/fail`, {
+    error,
+  });
+}
+
+async function confirmShopMint(mintTxId: string): Promise<void> {
+  await apiPost(`/shop/mints/${mintTxId}/confirm`, {});
+}
+
+async function failShopMint(mintTxId: string, error: string): Promise<void> {
+  await apiPost(`/shop/mints/${mintTxId}/fail`, { error });
+}
+
+async function indexPendingTrades(): Promise<{ checked: number; confirmed: number; failed: number }> {
+  if (!OPNET_RPC_URL) {
+    return { checked: 0, confirmed: 0, failed: 0 };
+  }
+
+  const submissions = await fetchPendingTradeSubmissions();
+  let checked = 0;
+  let confirmed = 0;
+  let failed = 0;
+
+  for (const submission of submissions) {
+    checked++;
+
+    try {
+      const receipt = await fetchTransactionReceipt(submission.txId);
+      if (!receipt) continue;
+
+      const status = receiptStatus(receipt);
+      if (status === "failed") {
+        await failTradeSubmission(submission, "Transaction failed on-chain");
+        failed++;
+        continue;
+      }
+      if (status !== "confirmed") continue;
+
+      const parsed = parseConfirmedTrade(receipt, submission);
+      if (!parsed) {
+        console.log(`[indexer] ${submission.ticker}: ${submission.txId} confirmed but swap fields are not indexed yet`);
+        continue;
+      }
+
+      await confirmTradeSubmission(submission, parsed);
+      confirmed++;
+    } catch (error) {
+      console.error(`[indexer] ${submission.ticker}: trade confirmation failed`, error);
+    }
+  }
+
+  return { checked, confirmed, failed };
+}
+
+async function indexPendingShopMints(): Promise<{ checked: number; confirmed: number; failed: number }> {
+  if (!OPNET_RPC_URL) {
+    return { checked: 0, confirmed: 0, failed: 0 };
+  }
+
+  const mints = await fetchPendingShopMints();
+  let checked = 0;
+  let confirmed = 0;
+  let failed = 0;
+
+  for (const mint of mints) {
+    checked++;
+
+    try {
+      const receipt = await fetchTransactionReceipt(mint.mintTxId);
+      if (!receipt) continue;
+
+      const status = receiptStatus(receipt);
+      if (status === "failed") {
+        await failShopMint(mint.mintTxId, "Mint transaction failed on-chain");
+        failed++;
+        continue;
+      }
+      if (status !== "confirmed") continue;
+
+      try {
+        await confirmShopMint(mint.mintTxId);
+        confirmed++;
+      } catch (error) {
+        console.warn(`[shop] ${mint.itemKey}: mint confirmed but ownership revalidation is still pending`, error);
+      }
+    } catch (error) {
+      console.error(`[shop] ${mint.itemKey}: mint confirmation failed`, error);
+    }
+  }
+
+  return { checked, confirmed, failed };
+}
+
+const lastCodeHash = new Map<string, string>();
+const lastOwnerSlot = new Map<string, string>();
+const pollCycleCount = new Map<string, number>();
+
+async function monitorProject(project: FullProject): Promise<void> {
   const { id, ticker, contractAddress } = project;
   if (!contractAddress) return;
 
-  const hexAddr = p2trToHex(contractAddress);
-  if (!hexAddr) {
-    // Address may already be hex, or in an unexpected format — skip silently
-    console.warn(`[watcher] ${ticker}: cannot convert address '${contractAddress}' to hex — skipping RPC checks`);
-    return;
-  }
-
-  console.log(`[watcher] Checking ${ticker} (${contractAddress} → ${hexAddr})`);
-
-  // ── getCode ────────────────────────────────────────────────────────────────
   let codePresent = false;
   let codeSummary = "";
   try {
-    const result = await bob.callTool("opnet_rpc", {
-      action: "getCode",
-      network: OPNET_NETWORK,
-      address: hexAddr,
-      onlyBytecode: false,
-    });
-    const text = BobClient.text(result);
-    // Bob returns an error string if the call fails, or code data if successful
-    if (text.toLowerCase().includes("error") || text.toLowerCase().includes("not found")) {
-      codePresent = false;
-      codeSummary = text.slice(0, 200);
-    } else {
-      codePresent = true;
-      codeSummary = text.slice(0, 200);
-    }
-  } catch (err) {
-    console.error(`[watcher] ${ticker}: getCode error:`, err);
+    const result = await checkContractCode(contractAddress);
+    codePresent = result.exists;
+    codeSummary = result.codeFingerprint ?? "";
+  } catch (error) {
     await postWatchEvent(
-      id, "WARN", `getCode RPC error — cannot verify contract`,
-      { error: err instanceof Error ? err.message : String(err) },
-      `RPC_ERROR:${id}`,  // M9: dedup — only one RPC-error event per 24 h per project
+      id,
+      "WARN",
+      "Provider error - cannot verify contract",
+      { error: error instanceof Error ? error.message : String(error) },
+      `RPC_ERROR:${id}`,
     );
     return;
   }
 
   if (!codePresent) {
-    console.error(`[watcher] CRITICAL: ${ticker} contract code missing!`);
     await postWatchEvent(
-      id, "CRITICAL", `Contract code missing — possible rug or self-destruct`,
-      { address: contractAddress, hexAddress: hexAddr, rpcResponse: codeSummary },
-      `CODE_MISSING:${id}`,  // M9: dedup
+      id,
+      "CRITICAL",
+      "Contract code missing - possible rug or self-destruct",
+      { address: contractAddress, rpcResponse: codeSummary },
+      `CODE_MISSING:${id}`,
     );
     return;
   }
 
-  // Detect code-hash changes between polls (potential upgrade/replacement)
-  const prevCode = lastCodeHash.get(id);
-  const codeFingerprint = codeSummary.slice(0, 64); // rough fingerprint
-  if (prevCode !== undefined && prevCode !== codeFingerprint) {
+  const previousCode = lastCodeHash.get(id);
+  const fingerprint = codeSummary.slice(0, 64);
+  if (previousCode !== undefined && previousCode !== fingerprint) {
     await postWatchEvent(
-      id, "CRITICAL", `Contract bytecode changed since last check — unexpected upgrade`,
-      { address: contractAddress, prevFingerprint: prevCode, currFingerprint: codeFingerprint },
-      `CODE_CHANGE:${id}:${codeFingerprint.slice(0, 8)}`,  // M9: unique per changed fingerprint
+      id,
+      "CRITICAL",
+      "Contract bytecode changed since last check",
+      { address: contractAddress, prevFingerprint: previousCode, currFingerprint: fingerprint },
+      `CODE_CHANGE:${id}:${fingerprint.slice(0, 8)}`,
     );
   }
-  lastCodeHash.set(id, codeFingerprint);
+  lastCodeHash.set(id, fingerprint);
 
-  // ── getStorageAt slot 0 (owner / admin storage) ───────────────────────────
   try {
-    const slotResult = await bob.callTool("opnet_rpc", {
-      action: "getStorageAt",
-      network: OPNET_NETWORK,
-      address: hexAddr,
-      pointer: "0x00",
-    });
-    const slotText = BobClient.text(slotResult);
-
-    if (!slotText.toLowerCase().includes("error")) {
-      const prevOwner = lastOwnerSlot.get(id);
-      const ownerFingerprint = slotText.slice(0, 128);
-      if (prevOwner !== undefined && prevOwner !== ownerFingerprint) {
+    const slotValue = await readStorageSlot(contractAddress, "0x00");
+    if (slotValue !== null) {
+      const previousOwner = lastOwnerSlot.get(id);
+      const ownerFingerprint = slotValue.toString(16).padStart(64, "0").slice(0, 128);
+      if (previousOwner !== undefined && previousOwner !== ownerFingerprint) {
         await postWatchEvent(
-          id, "WARN", `Storage slot 0 (possible owner) changed since last check`,
-          { prevValue: prevOwner, currValue: ownerFingerprint },
-          `OWNER_CHANGE:${id}:${ownerFingerprint.slice(0, 8)}`,  // M9: unique per new owner value
+          id,
+          "WARN",
+          "Storage slot 0 changed since last check",
+          { prevValue: previousOwner, currValue: ownerFingerprint },
+          `OWNER_CHANGE:${id}:${ownerFingerprint.slice(0, 8)}`,
         );
       }
       lastOwnerSlot.set(id, ownerFingerprint);
     }
   } catch {
-    // Storage slot read failure is non-critical — contract still exists
+    // Non-fatal.
   }
 
-  // All checks passed — record a heartbeat INFO event every 3rd cycle to avoid flooding
   const cycles = (pollCycleCount.get(id) ?? 0) + 1;
   pollCycleCount.set(id, cycles);
   if (cycles % 3 === 0) {
-    // Heartbeat INFO — no dedupKey so each heartbeat is always recorded (low spam by design)
-    await postWatchEvent(id, "INFO", `Contract alive — code and storage verified`, {
-      address: contractAddress, network: OPNET_NETWORK, cycle: cycles,
+    await postWatchEvent(id, "INFO", "Contract alive - code and storage verified", {
+      address: contractAddress,
+      network: OPNET_NETWORK,
+      cycle: cycles,
     });
   }
-
-  console.log(`[watcher] ${ticker}: OK`);
 }
 
-async function runWatchCycle(bob: BobClient): Promise<void> {
-  console.log(`[watcher] ── Watch cycle starting at ${new Date().toISOString()} ──`);
+let cycleCount = 0;
+
+async function runWatchCycle(): Promise<void> {
+  cycleCount++;
+  const startedAt = Date.now();
+  console.log(`[watcher] Cycle #${cycleCount} starting at ${new Date().toISOString()}`);
 
   let projects: FullProject[];
   try {
     projects = await fetchLaunchedProjects();
-  } catch (err) {
-    console.error(`[watcher] Cannot fetch projects:`, err);
+  } catch (error) {
+    console.error("[watcher] Failed to fetch launched projects", error);
     return;
   }
 
-  if (projects.length === 0) {
-    console.log(`[watcher] No LAUNCHED projects to monitor.`);
-    return;
-  }
-
-  console.log(`[watcher] Monitoring ${projects.length} LAUNCHED project(s)…`);
   for (const project of projects) {
     try {
-      await monitorProject(bob, project);
-    } catch (err) {
-      console.error(`[watcher] Unhandled error for ${project.ticker}:`, err);
+      await monitorProject(project);
+    } catch (error) {
+      console.error(`[watcher] ${project.ticker}: monitor failure`, error);
     }
   }
-  console.log(`[watcher] ── Cycle complete ──`);
+
+  let launchChecked = 0;
+  try {
+    const pendingLaunch = await fetchPendingLaunchProjects();
+    for (const project of pendingLaunch) {
+      await confirmLaunchOnChain(project);
+      launchChecked++;
+    }
+  } catch (error) {
+    console.error("[watcher] Failed to confirm launch pipeline", error);
+  }
+
+  let poolsIndexed = 0;
+  const liveProjects = projects.filter((project) => project.launchStatus === "LIVE" && project.poolAddress);
+  for (const project of liveProjects) {
+    try {
+      await indexPoolReserves(project);
+      poolsIndexed++;
+    } catch (error) {
+      console.error(`[indexer] ${project.ticker}: pool indexing failure`, error);
+    }
+  }
+
+  let tradesChecked = 0;
+  let tradesConfirmed = 0;
+  let tradesFailed = 0;
+  try {
+    const tradeStats = await indexPendingTrades();
+    tradesChecked = tradeStats.checked;
+    tradesConfirmed = tradeStats.confirmed;
+    tradesFailed = tradeStats.failed;
+  } catch (error) {
+    console.error("[indexer] Pending trade indexing failed", error);
+  }
+
+  let mintsChecked = 0;
+  let mintsConfirmed = 0;
+  let mintsFailed = 0;
+  try {
+    const mintStats = await indexPendingShopMints();
+    mintsChecked = mintStats.checked;
+    mintsConfirmed = mintStats.confirmed;
+    mintsFailed = mintStats.failed;
+  } catch (error) {
+    console.error("[shop] Pending mint indexing failed", error);
+  }
+
+  console.log(JSON.stringify({
+    event: "watcher_cycle",
+    cycle: cycleCount,
+    projectsScanned: projects.length,
+    launchChecked,
+    poolsIndexed,
+    tradesChecked,
+    tradesConfirmed,
+    tradesFailed,
+    mintsChecked,
+    mintsConfirmed,
+    mintsFailed,
+    elapsedMs: Date.now() - startedAt,
+    timestamp: new Date().toISOString(),
+  }));
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Entry point
-// ──────────────────────────────────────────────────────────────────────────────
+console.log("[watcher] OPFun watcher starting");
+console.log(`[watcher] API: ${API_URL}`);
+console.log(`[watcher] Network: ${OPNET_NETWORK}`);
+console.log(`[watcher] Interval: ${POLL_INTERVAL_MS / 1000}s`);
+console.log(`[watcher] Trade RPC: ${OPNET_RPC_URL ? "configured" : "disabled"}`);
 
-console.log(`[watcher] OPFun Watchtower starting`);
-console.log(`[watcher]   API:      ${API_URL}`);
-console.log(`[watcher]   Network:  ${OPNET_NETWORK}`);
-console.log(`[watcher]   Interval: ${POLL_INTERVAL_MS / 1000}s`);
-
-// Init Bob MCP session
-const bob = new BobClient();
-try {
-  await bob.init();
-  console.log(`[watcher] Bob MCP session initialized`);
-} catch (err) {
-  console.error(`[watcher] Warning: Bob MCP init failed — will retry on first call`, err);
+const providerHealth = await checkProviderHealth();
+if (!providerHealth.healthy) {
+  console.error("[watcher] FATAL: OPNet provider health check failed.", providerHealth);
+  process.exit(1);
 }
+console.log(
+  `[watcher] OPNet provider healthy at block ${providerHealth.blockHeight ?? "unknown"} (${providerHealth.latencyMs ?? 0}ms)`,
+);
 
-// First cycle immediately
-await runWatchCycle(bob);
-
-// Then repeat on interval
+await runWatchCycle();
 setInterval(() => {
-  runWatchCycle(bob).catch(console.error);
+  runWatchCycle().catch((error) => {
+    console.error("[watcher] Unhandled cycle error", error);
+  });
 }, POLL_INTERVAL_MS);

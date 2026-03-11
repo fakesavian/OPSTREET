@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "@opfun/shared": "workspace:*",
-    "@opfun/opnet": "workspace:*"
+    "@opfun/opnet": "workspace:*",
+    "dotenv": "^16.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.14.2",

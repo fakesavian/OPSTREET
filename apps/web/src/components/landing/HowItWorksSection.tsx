@@ -22,7 +22,7 @@ const STEPS = [
 export function HowItWorksSection() {
   return (
     <section id="how-it-works" className="scroll-mt-20">
-      <h2 className="text-xs font-black uppercase tracking-widest text-[var(--text-muted)] mb-4">
+      <h2 className="text-sm font-black uppercase tracking-widest text-ink mb-4">
         How it works
       </h2>
 
@@ -39,7 +39,7 @@ export function HowItWorksSection() {
               {step.num}
             </div>
             <p className="font-black text-base text-ink">{step.title}</p>
-            <p className="text-xs text-[var(--text-muted)] leading-relaxed">
+            <p className="text-xs font-bold text-ink leading-relaxed">
               {step.desc}
             </p>
           </div>
@@ -60,7 +60,7 @@ export function HowItWorksSection() {
             </div>
             <div>
               <p className="font-black text-base text-ink">{step.title}</p>
-              <p className="text-xs text-[var(--text-muted)] leading-relaxed mt-1.5">
+              <p className="text-xs font-bold text-ink leading-relaxed mt-1.5">
                 {step.desc}
               </p>
             </div>

@@ -5,6 +5,8 @@
  * confirmed live testnet data only. No placeholder trade paths remain here.
  */
 
+import { fetchLivePoolState, getLiquidityTokenContractAddress } from "@opfun/opnet";
+import type { LiquidityToken } from "@opfun/shared";
 import { prisma } from "../db.js";
 
 export interface PoolReserves {
@@ -435,6 +437,55 @@ const MARKET_INDEX_MAX_STALENESS_MS = Number(
   process.env["MARKET_INDEX_MAX_STALENESS_MS"] ?? 10 * 60 * 1000, // default: 10 minutes
 );
 
+function normalizeAddress(address: string | null | undefined): string {
+  return (address ?? "").trim().toLowerCase();
+}
+
+function resolvePoolBaseToken(project: {
+  poolBaseToken: string | null;
+  liquidityToken: string | null;
+}): LiquidityToken {
+  const value = project.poolBaseToken ?? project.liquidityToken ?? "MOTO";
+  if (value !== "TBTC" && value !== "MOTO" && value !== "PILL") {
+    throw new Error(`Unsupported pool base token '${value}'.`);
+  }
+  return value;
+}
+
+function mapLiveReservesToBaseQuote(
+  liveState: {
+    token0: string;
+    token1: string;
+    reserve0: bigint;
+    reserve1: bigint;
+  },
+  baseTokenAddress: string,
+  quoteTokenAddress: string,
+): { reserveBase: number; reserveQuote: number } | null {
+  const token0 = normalizeAddress(liveState.token0);
+  const token1 = normalizeAddress(liveState.token1);
+  const base = normalizeAddress(baseTokenAddress);
+  const quote = normalizeAddress(quoteTokenAddress);
+
+  if (!token0 || !token1 || !base || !quote) return null;
+
+  if (token0 === base && token1 === quote) {
+    return {
+      reserveBase: Number(liveState.reserve0),
+      reserveQuote: Number(liveState.reserve1),
+    };
+  }
+
+  if (token0 === quote && token1 === base) {
+    return {
+      reserveBase: Number(liveState.reserve1),
+      reserveQuote: Number(liveState.reserve0),
+    };
+  }
+
+  return null;
+}
+
 export async function getLiveQuote(
   projectId: string,
   side: "BUY" | "SELL",
@@ -453,26 +504,44 @@ export async function getLiveQuote(
   // Try live on-chain reserves first
   const project = await prisma.project.findUnique({
     where: { id: projectId },
-    select: { poolAddress: true },
+    select: {
+      poolAddress: true,
+      contractAddress: true,
+      liquidityToken: true,
+      poolBaseToken: true,
+      marketState: {
+        select: {
+          reserveBase: true,
+          reserveQuote: true,
+          updatedAt: true,
+        },
+      },
+    },
   });
+
+  if (!project?.poolAddress || !project.contractAddress) {
+    return null;
+  }
 
   let reserveBase = 0;
   let reserveQuote = 0;
   let source: "live" | "indexed" = "indexed";
   let snapshotAgeMs: number | undefined;
 
-  if (project?.poolAddress) {
-    try {
-      const { fetchLivePoolReserves } = await import("@opfun/opnet");
-      const liveReserves = await fetchLivePoolReserves(project.poolAddress);
-      if (liveReserves && liveReserves.reserve0 > 0n && liveReserves.reserve1 > 0n) {
-        reserveBase = Number(liveReserves.reserve0);
-        reserveQuote = Number(liveReserves.reserve1);
+  try {
+    const baseToken = resolvePoolBaseToken(project);
+    const baseTokenAddress = getLiquidityTokenContractAddress(baseToken);
+    const liveState = await fetchLivePoolState(project.poolAddress);
+    if (liveState) {
+      const mapped = mapLiveReservesToBaseQuote(liveState, baseTokenAddress, project.contractAddress);
+      if (mapped && mapped.reserveBase > 0 && mapped.reserveQuote > 0) {
+        reserveBase = mapped.reserveBase;
+        reserveQuote = mapped.reserveQuote;
         source = "live";
       }
-    } catch {
-      // Fall through to indexed reserves
     }
+  } catch {
+    // Fall through to indexed reserves if live RPC or runtime config is unavailable.
   }
 
   // Fall back to indexed reserves with freshness enforcement
@@ -481,11 +550,38 @@ export async function getLiveQuote(
       where: { projectId },
       orderBy: { recordedAt: "desc" },
     });
+    const marketState = project.marketState ?? await prisma.projectMarketState.findUnique({
+      where: { projectId },
+      select: {
+        reserveBase: true,
+        reserveQuote: true,
+        updatedAt: true,
+      },
+    });
 
-    if (!snapshot || snapshot.reserveBase <= 0 || snapshot.reserveQuote <= 0) {
+    if ((!snapshot || snapshot.reserveBase <= 0 || snapshot.reserveQuote <= 0) && marketState) {
+      snapshotAgeMs = Date.now() - marketState.updatedAt.getTime();
+      if (
+        snapshotAgeMs <= MARKET_INDEX_MAX_STALENESS_MS &&
+        marketState.reserveBase > 0 &&
+        marketState.reserveQuote > 0
+      ) {
+        reserveBase = marketState.reserveBase;
+        reserveQuote = marketState.reserveQuote;
+        source = "indexed";
+      }
+    }
+
+    if ((reserveBase <= 0 || reserveQuote <= 0) && (!snapshot || snapshot.reserveBase <= 0 || snapshot.reserveQuote <= 0)) {
       return null;
     }
 
+    if (reserveBase > 0 && reserveQuote > 0) {
+      // A recent indexed market-state fallback is already available.
+    } else {
+    if (!snapshot) {
+      return null;
+    }
     snapshotAgeMs = Date.now() - snapshot.recordedAt.getTime();
     if (snapshotAgeMs > MARKET_INDEX_MAX_STALENESS_MS) {
       return null; // Indexed reserves are stale — refuse to quote
@@ -494,6 +590,7 @@ export async function getLiveQuote(
     reserveBase = snapshot.reserveBase;
     reserveQuote = snapshot.reserveQuote;
     source = "indexed";
+    }
   }
 
   const quote = getSwapQuote(reserveBase, reserveQuote, side, inputAmount);

@@ -5,6 +5,7 @@
  * No JSON files, no placeholder tx refs. Entitlements require confirmed mint status.
  */
 
+import { createHash } from "node:crypto";
 import { prisma } from "../db.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -44,9 +45,6 @@ export interface ShopMintRecord {
 // ── OP721 Collection Config ──────────────────────────────────────────────────
 
 const COLLECTION_ADDRESS = process.env["SHOP_OP721_COLLECTION"] ?? "";
-
-const OPNET_RPC_URL = process.env["OPNET_RPC_URL"] ?? "";
-const OPNET_RPC_KEY = process.env["OPNET_RPC_KEY"] ?? "";
 
 // ── Catalog ──────────────────────────────────────────────────────────────────
 
@@ -130,9 +128,22 @@ function toMintRecord(row: {
  * Format: `{skuIndex}-{walletAddressSuffix}` — deterministic and unique.
  */
 function deriveTokenId(itemKey: ShopItemKey, walletAddress: string): string {
-  const skuIdx = SKU_TOKEN_INDEX[itemKey];
-  const suffix = walletAddress.slice(-8);
-  return `${skuIdx}-${suffix}`;
+  const skuIdx = BigInt(SKU_TOKEN_INDEX[itemKey]);
+  const digest = createHash("sha256")
+    .update(`${itemKey}:${walletAddress.trim().toLowerCase()}`)
+    .digest("hex");
+  const walletComponent = BigInt(`0x${digest.slice(0, 30)}`);
+  return ((skuIdx << 120n) | walletComponent).toString(10);
+}
+
+function parseNumericTokenId(tokenId: string): bigint {
+  const trimmed = tokenId.trim();
+  if (/^\d+$/.test(trimmed)) return BigInt(trimmed);
+
+  const legacyPrefix = trimmed.split("-")[0] ?? "";
+  if (/^\d+$/.test(legacyPrefix)) return BigInt(legacyPrefix);
+
+  return 0n;
 }
 
 // ── Read operations ──────────────────────────────────────────────────────────
@@ -145,12 +156,17 @@ export function getCollectionAddress(): string {
   return COLLECTION_ADDRESS;
 }
 
-export async function getWalletInventory(walletAddress: string): Promise<ShopMintRecord[]> {
+export async function getWalletMintRecords(walletAddress: string): Promise<ShopMintRecord[]> {
   const rows = await prisma.shopMint.findMany({
-    where: { walletAddress, status: "CONFIRMED" },
+    where: { walletAddress },
     orderBy: { mintedAt: "desc" },
   });
   return rows.map(toMintRecord);
+}
+
+export async function getWalletInventory(walletAddress: string): Promise<ShopMintRecord[]> {
+  const rows = await getWalletMintRecords(walletAddress);
+  return rows.filter((row) => row.status === "CONFIRMED");
 }
 
 export async function hasEntitlement(walletAddress: string, entitlement: EntitlementKey): Promise<boolean> {
@@ -317,6 +333,15 @@ export async function confirmMintOnchain(
 
   if (!row || row.status === "CONFIRMED") return row ? toMintRecord(row) : null;
 
+  const ownership = await checkOnchainOwnership(
+    row.collectionAddress,
+    row.tokenId,
+    row.walletAddress,
+  );
+  if (ownership !== "owned") {
+    return null;
+  }
+
   const updated = await prisma.shopMint.update({
     where: { id: row.id },
     data: {
@@ -350,9 +375,6 @@ export async function failMint(
 
 export type OwnershipStatus = "owned" | "not_owned" | "verification_unavailable";
 
-// Max age of a confirmed DB record before chain re-verification is required.
-const OWNERSHIP_CACHE_MAX_AGE_MS = Number(process.env["OWNERSHIP_CACHE_MAX_AGE_MS"] ?? 5 * 60 * 1000);
-
 export async function revalidateOwnership(
   walletAddress: string,
   itemKey: ShopItemKey,
@@ -383,9 +405,9 @@ export async function revalidateOwnership(
     }
 
     // Chain check failed — only trust cached ownership if recently confirmed
-    if (row.confirmedAt) {
-      const age = Date.now() - row.confirmedAt.getTime();
-      if (age <= OWNERSHIP_CACHE_MAX_AGE_MS) {
+    if (false) {
+      void 0;
+      if (false) {
         return "owned"; // Recently confirmed — trust cache briefly
       }
     }
@@ -406,7 +428,7 @@ async function checkOnchainOwnership(
     const { checkOp721Ownership } = await import("@opfun/opnet");
     const owned = await checkOp721Ownership(
       collectionAddress,
-      BigInt(tokenId.split("-")[0] ?? "0"),
+      parseNumericTokenId(tokenId),
       expectedOwner,
     );
     return owned ? "owned" : "not_owned";

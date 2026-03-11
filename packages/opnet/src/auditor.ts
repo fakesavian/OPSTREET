@@ -1,4 +1,4 @@
-import { getBob, BobClient } from "./bob-client.js";
+﻿import { getBob, BobClient } from "./bob-client.js";
 import type { RiskCard } from "@opfun/shared";
 
 export interface AuditIssue {
@@ -18,7 +18,7 @@ export interface AuditOutput {
 
 /**
  * Detect risk flags by static analysis of the contract source.
- * Fast, no network call — just regex on the generated code.
+ * Fast, no network call â€” just regex on the generated code.
  */
 function staticAnalyze(source: string): {
   canMint: boolean;
@@ -31,7 +31,7 @@ function staticAnalyze(source: string): {
 } {
   const issues: AuditIssue[] = [];
 
-  // OPNet audit checklist — critical patterns
+  // OPNet audit checklist â€” critical patterns
   const checks: Array<{
     pattern: RegExp;
     severity: AuditIssue["severity"];
@@ -45,7 +45,7 @@ function staticAnalyze(source: string): {
       severity: "WARN",
       code: "OA-001",
       flag: "canMint",
-      message: "Public mint() function found — can inflate supply after deployment",
+      message: "Public mint() function found â€” can inflate supply after deployment",
       present: true,
     },
     {
@@ -53,7 +53,7 @@ function staticAnalyze(source: string): {
       severity: "WARN",
       code: "OA-002",
       flag: "canPause",
-      message: "pause() function found — transfers can be frozen by admin",
+      message: "pause() function found â€” transfers can be frozen by admin",
       present: true,
     },
     {
@@ -61,7 +61,7 @@ function staticAnalyze(source: string): {
       severity: "INFO",
       code: "OA-003",
       flag: "hasAdminKey",
-      message: "Admin/owner check found — privileged address controls this contract",
+      message: "Admin/owner check found â€” privileged address controls this contract",
       present: true,
     },
     {
@@ -69,7 +69,7 @@ function staticAnalyze(source: string): {
       severity: "FAIL",
       code: "OA-004",
       flag: "canUpgrade",
-      message: "Upgrade mechanism detected — contract logic can be replaced",
+      message: "Upgrade mechanism detected â€” contract logic can be replaced",
       present: true,
     },
     // OPNet-specific safety checks
@@ -78,7 +78,7 @@ function staticAnalyze(source: string): {
       severity: "FAIL",
       code: "OA-005",
       flag: "",
-      message: "Raw arithmetic on u256 detected — use SafeMath to prevent overflow/underflow",
+      message: "Raw arithmetic on u256 detected â€” use SafeMath to prevent overflow/underflow",
       present: true,
     },
     {
@@ -86,7 +86,7 @@ function staticAnalyze(source: string): {
       severity: "FAIL",
       code: "OA-006",
       flag: "",
-      message: "while() loop found in contract — FORBIDDEN on OPNet (gas exhaustion risk)",
+      message: "while() loop found in contract â€” FORBIDDEN on OPNet (gas exhaustion risk)",
       present: true,
     },
     {
@@ -94,7 +94,7 @@ function staticAnalyze(source: string): {
       severity: "INFO",
       code: "OA-007",
       flag: "",
-      message: "Low-level buffer use detected — ensure correct sizes to prevent overflows",
+      message: "Low-level buffer use detected â€” ensure correct sizes to prevent overflows",
       present: true,
     },
     {
@@ -102,7 +102,7 @@ function staticAnalyze(source: string): {
       severity: "FAIL",
       code: "OA-008",
       flag: "",
-      message: "Self-destruct pattern detected — contract can be permanently destroyed",
+      message: "Self-destruct pattern detected â€” contract can be permanently destroyed",
       present: true,
     },
     {
@@ -110,7 +110,7 @@ function staticAnalyze(source: string): {
       severity: "FAIL",
       code: "OA-009",
       flag: "",
-      message: "delegatecall detected — external code can be executed in this contract's context",
+      message: "delegatecall detected â€” external code can be executed in this contract's context",
       present: true,
     },
     {
@@ -118,7 +118,7 @@ function staticAnalyze(source: string): {
       severity: "WARN",
       code: "OA-010",
       flag: "",
-      message: "Raw storage write detected — verify critical state slots cannot be overwritten",
+      message: "Raw storage write detected â€” verify critical state slots cannot be overwritten",
       present: true,
     },
   ];
@@ -157,7 +157,7 @@ function staticAnalyze(source: string): {
   };
 }
 
-/** Compute numeric risk score 0–100 from risk card */
+/** Compute numeric risk score 0â€“100 from risk card */
 function scoreRiskCard(card: RiskCard): number {
   let score = 0;
   if (card.permissions.hasOwnerKey) score += 10;
@@ -202,26 +202,55 @@ export async function auditContract(
     });
     rawBobOutput = BobClient.text(result).slice(0, 5000);
 
-    // Parse Bob output for PASS/WARN/FAIL markers
-    const failPattern = /\[[ xX✗✘]\]\s*(.*)/g;
-    const passPattern = /\[(?:✓|✔|x|X)\]\s*(.*)/g;
-    let m: RegExpExecArray | null;
-
-    while ((m = failPattern.exec(rawBobOutput)) !== null) {
-      if (m[1]) {
+    // Parse Bob output for PASS/WARN/FAIL markers with format-flexible matching.
+    const lines = rawBobOutput.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    for (const line of lines) {
+      const failMarker = line.match(/^\[(?:✗|✘|X)\]\s*(.+)$/);
+      if (failMarker?.[1]) {
         bobIssues.push({
           severity: "WARN",
           code: "BOB-AUDIT",
-          message: m[1].trim().slice(0, 120),
+          message: failMarker[1].trim().slice(0, 120),
         });
+        continue;
       }
-    }
-    while ((m = passPattern.exec(rawBobOutput)) !== null) {
-      if (m[1]) {
+
+      const passMarker = line.match(/^\[(?:✓|✔)\]\s*(.+)$/);
+      if (passMarker?.[1]) {
         bobIssues.push({
           severity: "PASS",
           code: "BOB-AUDIT",
-          message: m[1].trim().slice(0, 120),
+          message: passMarker[1].trim().slice(0, 120),
+        });
+        continue;
+      }
+
+      const failKeyword = line.match(/^(?:FAIL|CRITICAL)\s*[:\-]\s*(.+)$/i);
+      if (failKeyword?.[1]) {
+        bobIssues.push({
+          severity: "WARN",
+          code: "BOB-AUDIT",
+          message: failKeyword[1].trim().slice(0, 120),
+        });
+        continue;
+      }
+
+      const warnKeyword = line.match(/^WARN(?:ING)?\s*[:\-]\s*(.+)$/i);
+      if (warnKeyword?.[1]) {
+        bobIssues.push({
+          severity: "WARN",
+          code: "BOB-AUDIT",
+          message: warnKeyword[1].trim().slice(0, 120),
+        });
+        continue;
+      }
+
+      const passKeyword = line.match(/^PASS\s*[:\-]\s*(.+)$/i);
+      if (passKeyword?.[1]) {
+        bobIssues.push({
+          severity: "PASS",
+          code: "BOB-AUDIT",
+          message: passKeyword[1].trim().slice(0, 120),
         });
       }
     }
@@ -230,7 +259,7 @@ export async function auditContract(
     bobIssues.push({
       severity: "INFO",
       code: "BOB-OFFLINE",
-      message: "Bob audit service unavailable — static analysis only",
+      message: "Bob audit service unavailable â€” static analysis only",
     });
   }
 
@@ -252,10 +281,10 @@ export async function auditContract(
       maxSupply: opts.maxSupply,
       decimals: opts.decimals,
       transferRestrictions: staticFlags.hasTransferRestrictions
-        ? "Transfer restrictions detected — see audit issues"
+        ? "Transfer restrictions detected â€” see audit issues"
         : null,
       initialDistributionNotes:
-        "100% of supply minted to deployer at launch. Fixed supply — no further minting.",
+        "100% of supply minted to deployer at launch. Fixed supply â€” no further minting.",
     },
     releaseIntegrity: {
       buildHashRecorded: true,

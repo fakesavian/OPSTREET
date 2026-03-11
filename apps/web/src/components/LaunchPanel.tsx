@@ -3,9 +3,15 @@
 import { useState, useEffect, useCallback } from "react";
 import type { ProjectDTO } from "@opfun/shared";
 import type { LaunchStatusResponse } from "@/lib/api";
-import { launchBuild, fetchLaunchStatus, submitDeploy, poolCreate, poolBroadcast } from "@/lib/api";
+import {
+  launchBuild,
+  fetchLaunchStatus,
+  fetchPoolCreateIntent,
+  submitDeploy,
+  submitPool,
+} from "@/lib/api";
 import { useWallet } from "./WalletProvider";
-import { signInteractionBuffer } from "@/lib/wallet";
+import { signOpnetInteractionWithWallet } from "@/lib/wallet";
 
 const EXPLORER = "https://testnet.opnet.org";
 
@@ -150,21 +156,21 @@ export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
       setError("Connect your wallet first.");
       return;
     }
+    if (wallet.provider !== "opnet") {
+      setError("Use OP_WALLET to create the pool in-app.");
+      return;
+    }
     setPoolCreating(true);
     setLoading(true);
     setError("");
     try {
-      // Step 1: Backend prepares pool creation interaction buffer
-      const intent = await poolCreate(project.id);
-
-      // Step 2: Wallet signs the interaction buffer
-      const signed = await signInteractionBuffer(intent.interaction.offlineBufferHex);
-
-      // Step 3: Backend broadcasts the signed transaction
-      await poolBroadcast(project.id, {
-        interactionTransactionRaw: signed.interactionTransactionRaw,
-        fundingTransactionRaw: signed.fundingTransactionRaw,
+      const intent = await fetchPoolCreateIntent(project.id);
+      const signed = await signOpnetInteractionWithWallet(wallet.provider, intent.interaction);
+      await submitPool(project.id, {
         poolAddress: intent.poolAddress,
+        poolBaseToken: intent.poolBaseToken,
+        signedFundingTxHex: signed.signedFundingTxHex ?? undefined,
+        signedInteractionTxHex: signed.signedInteractionTxHex,
       });
 
       await refreshLaunchStatus();
@@ -329,7 +335,7 @@ export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
 
             <button
               onClick={handleCreatePool}
-              disabled={loading || !wallet?.address}
+              disabled={loading || !wallet?.address || wallet.provider !== "opnet"}
               className="w-full py-3 font-black text-sm rounded-xl border-3 border-ink bg-opGreen text-white shadow-hard-sm hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[3px_3px_0_#111] active:translate-x-[3px] active:translate-y-[3px] active:shadow-none transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {poolCreating ? "Creating pool..." : loading ? "Preparing..." : "Create Liquidity Pool"}
@@ -337,6 +343,11 @@ export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
             {!wallet?.address && (
               <p className="text-[10px] text-[var(--text-muted)] text-center">
                 Connect your wallet to create the pool.
+              </p>
+            )}
+            {wallet?.address && wallet.provider !== "opnet" && (
+              <p className="text-[10px] text-[var(--text-muted)] text-center">
+                OP_WALLET is required for the pool creation transaction.
               </p>
             )}
           </div>

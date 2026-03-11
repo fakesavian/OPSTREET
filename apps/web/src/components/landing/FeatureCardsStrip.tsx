@@ -59,7 +59,7 @@ const FEATURES = [
 export function FeatureCardsStrip() {
   return (
     <section>
-      <h2 className="text-xs font-black uppercase tracking-widest text-[var(--text-muted)] mb-4">
+      <h2 className="text-sm font-black uppercase tracking-widest text-ink mb-4">
         Key Features
       </h2>
 
@@ -76,7 +76,7 @@ export function FeatureCardsStrip() {
               {feat.icon}
             </div>
             <p className="font-black text-sm text-ink">{feat.title}</p>
-            <p className="text-[11px] text-[var(--text-muted)] leading-relaxed">
+            <p className="text-[11px] font-bold text-ink leading-relaxed">
               {feat.desc}
             </p>
           </div>
@@ -96,7 +96,7 @@ export function FeatureCardsStrip() {
               {feat.icon}
             </div>
             <p className="font-black text-xs text-ink">{feat.title}</p>
-            <p className="text-[10px] text-[var(--text-muted)] leading-snug">
+            <p className="text-[10px] font-bold text-ink leading-snug">
               {feat.desc}
             </p>
           </div>

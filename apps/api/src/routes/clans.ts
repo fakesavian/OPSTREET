@@ -2,15 +2,19 @@ import type { FastifyInstance } from "fastify";
 import { promises as fs } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
+import { RuntimeConfigError, broadcastSignedInteraction, prepareShopMint } from "@opfun/opnet";
 import { verifyWalletToken } from "../middleware/verifyWalletToken.js";
 import {
   confirmMint,
+  confirmMintOnchain,
   createMintIntent,
+  failMint,
   getCollectionAddress,
   getItemOwnership,
   getShopCatalog,
-  getWalletInventory,
+  getWalletMintRecords,
   hasEntitlement,
+  listPendingMints,
   useShopItem,
   type ShopItemKey,
 } from "../services/shopStore.js";
@@ -41,7 +45,8 @@ const MintIntentSchema = z.object({
 const MintConfirmSchema = z.object({
   walletAddress: z.string().min(10).optional(),
   itemKey: z.enum(["PAINT_SET", "CLAN_FORMATION_LICENSE", "GALLERY_TICKET"]),
-  mintTxId: z.string().min(8),
+  signedInteractionTxHex: z.string().min(10),
+  signedFundingTxHex: z.string().min(10).optional(),
 });
 
 const UseItemSchema = z.object({
@@ -127,8 +132,8 @@ export async function clanAndShopRoutes(app: FastifyInstance) {
     const requestedWallet = request.query.wallet?.trim() ?? null;
     const walletAddress = sessionWallet ?? requestedWallet;
 
-    const owned = walletAddress ? await getWalletInventory(walletAddress) : [];
-    const ownershipByItem = new Map(owned.map((row) => [row.itemKey, row]));
+    const records = walletAddress ? await getWalletMintRecords(walletAddress) : [];
+    const ownershipByItem = new Map(records.map((row) => [row.itemKey, row]));
 
     return reply.send({
       walletAddress,
@@ -147,9 +152,10 @@ export async function clanAndShopRoutes(app: FastifyInstance) {
             displayToken: item.displayToken,
             freeMint: item.paymentToken === "FREE",
           },
-          owned: Boolean(mine),
+          owned: mine?.status === "CONFIRMED",
+          mintStatus: mine?.status ?? null,
           mintedAt: mine?.mintedAt ?? null,
-          active: mine?.active ?? false,
+          active: mine?.status === "CONFIRMED" ? mine.active : false,
           collectionAddress: mine?.collectionAddress ?? null,
           tokenId: mine?.tokenId ?? null,
           mintTxId: mine?.mintTxId ?? null,
@@ -180,14 +186,15 @@ export async function clanAndShopRoutes(app: FastifyInstance) {
           record: intent.existingRecord,
         });
       }
+      if (intent.existingRecord?.status === "PENDING") {
+        return reply.status(409).send({
+          error: "Mint already submitted and awaiting on-chain confirmation.",
+          record: intent.existingRecord,
+        });
+      }
 
-      // Prepare the on-chain interaction buffer for wallet signing
-      let interaction: { offlineBufferHex: string; refundTo: string; maximumAllowedSatToSpend: string; feeRate: number } | null = null;
-      try {
-        const { prepareShopMint } = await import("@opfun/opnet");
-        const mintIntent = await prepareShopMint(sessionWallet, intent.tokenId);
-        interaction = mintIntent.interaction;
-      } catch {
+      const mintIntent = await prepareShopMint(sessionWallet, intent.tokenId);
+      if (false) {
         // Interaction preparation failed — will be reported to frontend
       }
 
@@ -201,11 +208,11 @@ export async function clanAndShopRoutes(app: FastifyInstance) {
         priceAmount: intent.priceAmount,
         paymentToken: intent.paymentToken,
         pendingRecord: intent.existingRecord,
-        interaction,
+        interaction: mintIntent.interaction,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to create mint intent.";
-      return reply.status(400).send({ error: message });
+      return reply.status(err instanceof RuntimeConfigError ? 503 : 400).send({ error: message });
     }
   });
 
@@ -223,8 +230,33 @@ export async function clanAndShopRoutes(app: FastifyInstance) {
     }
 
     try {
-      const result = await confirmMint(sessionWallet, parsed.data.itemKey, parsed.data.mintTxId);
-      return reply.status(result.alreadyConfirmed ? 200 : 201).send({
+      const intent = await createMintIntent(sessionWallet, parsed.data.itemKey);
+      if (intent.alreadyOwned) {
+        return reply.status(409).send({
+          error: "Already owned.",
+          record: intent.existingRecord,
+        });
+      }
+      if (intent.existingRecord?.status === "PENDING") {
+        return reply.status(409).send({
+          error: "Mint already submitted and awaiting on-chain confirmation.",
+          record: intent.existingRecord,
+        });
+      }
+
+      const broadcast = await broadcastSignedInteraction({
+        interactionTransactionRaw: parsed.data.signedInteractionTxHex,
+        fundingTransactionRaw: parsed.data.signedFundingTxHex ?? null,
+      });
+      if (!broadcast.success || !broadcast.txId) {
+        return reply.status(502).send({
+          error: "Mint broadcast failed",
+          detail: broadcast.error ?? "No transaction ID returned.",
+        });
+      }
+
+      const result = await confirmMint(sessionWallet, parsed.data.itemKey, broadcast.txId);
+      return reply.status(201).send({
         status: result.alreadyConfirmed ? "ALREADY_CONFIRMED" : "MINT_SUBMITTED",
         walletAddress: sessionWallet,
         itemKey: result.record.itemKey,
@@ -232,6 +264,7 @@ export async function clanAndShopRoutes(app: FastifyInstance) {
         collectionAddress: result.record.collectionAddress,
         tokenId: result.record.tokenId,
         mintTxId: result.record.mintTxId,
+        fundingTxId: broadcast.fundingTxId ?? null,
         confirmedAt: result.record.confirmedAt,
         active: result.record.active,
       });
@@ -240,7 +273,7 @@ export async function clanAndShopRoutes(app: FastifyInstance) {
       if (message.includes("Already")) {
         return reply.status(409).send({ error: message });
       }
-      return reply.status(400).send({ error: message });
+      return reply.status(err instanceof RuntimeConfigError ? 503 : 400).send({ error: message });
     }
   });
 
@@ -265,7 +298,23 @@ export async function clanAndShopRoutes(app: FastifyInstance) {
     }
 
     try {
-      const { broadcastSignedInteraction } = await import("@opfun/opnet");
+      const intent = await createMintIntent(
+        sessionWallet,
+        body.itemKey as "PAINT_SET" | "CLAN_FORMATION_LICENSE" | "GALLERY_TICKET",
+      );
+      if (intent.alreadyOwned) {
+        return reply.status(409).send({
+          error: "Already owned.",
+          record: intent.existingRecord,
+        });
+      }
+      if (intent.existingRecord?.status === "PENDING") {
+        return reply.status(409).send({
+          error: "Mint already submitted and awaiting on-chain confirmation.",
+          record: intent.existingRecord,
+        });
+      }
+
       const result = await broadcastSignedInteraction({
         interactionTransactionRaw: body.interactionTransactionRaw,
         fundingTransactionRaw: body.fundingTransactionRaw ?? null,
@@ -306,6 +355,56 @@ export async function clanAndShopRoutes(app: FastifyInstance) {
   });
 
   // ── POST /shop/use — toggle app-state, revalidates ownership first ─────────
+  app.get("/shop/mints/pending", async (request, reply) => {
+    const adminSecret = request.headers["x-admin-secret"];
+    const expected = process.env["ADMIN_SECRET"] ?? "dev-secret-change-me";
+    if (adminSecret !== expected) {
+      return reply.status(401).send({ error: "Unauthorized" });
+    }
+
+    const limit = Math.min(Math.max(Number((request.query as { limit?: string }).limit ?? 50), 1), 200);
+    const items = await listPendingMints(limit);
+    return reply.send({ items });
+  });
+
+  app.post<{ Params: { mintTxId: string } }>("/shop/mints/:mintTxId/confirm", async (request, reply) => {
+    const adminSecret = request.headers["x-admin-secret"];
+    const expected = process.env["ADMIN_SECRET"] ?? "dev-secret-change-me";
+    if (adminSecret !== expected) {
+      return reply.status(401).send({ error: "Unauthorized" });
+    }
+
+    const record = await confirmMintOnchain(request.params.mintTxId);
+    if (!record) {
+      return reply.status(409).send({ error: "Mint confirmation failed ownership revalidation." });
+    }
+
+    return reply.send({
+      ok: true,
+      status: "CONFIRMED",
+      mintTxId: record.mintTxId,
+      collectionAddress: record.collectionAddress,
+      tokenId: record.tokenId,
+      confirmedAt: record.confirmedAt,
+    });
+  });
+
+  app.post<{ Params: { mintTxId: string } }>("/shop/mints/:mintTxId/fail", async (request, reply) => {
+    const adminSecret = request.headers["x-admin-secret"];
+    const expected = process.env["ADMIN_SECRET"] ?? "dev-secret-change-me";
+    if (adminSecret !== expected) {
+      return reply.status(401).send({ error: "Unauthorized" });
+    }
+
+    const body = request.body as { error?: string } | undefined;
+    const record = await failMint(request.params.mintTxId, body?.error);
+    if (!record) {
+      return reply.status(404).send({ error: "Mint not found" });
+    }
+
+    return reply.send({ ok: true, status: "FAILED", mintTxId: record.mintTxId });
+  });
+
   app.post("/shop/use", { preHandler: [verifyWalletToken] }, async (request, reply) => {
     const parsed = UseItemSchema.safeParse(request.body ?? {});
     if (!parsed.success) {

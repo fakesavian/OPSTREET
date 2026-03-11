@@ -10,6 +10,7 @@ export const DEPLOY_SCRIPT_TEMPLATE = `#!/usr/bin/env ts-node
  * Deploy {{NAME}} ({{TICKER}}) to OPNet Testnet
  * Generated: {{GENERATED_AT}}
  * Build Hash: {{BUILD_HASH}}
+ * Required Liquidity: {{LIQUIDITY_AMOUNT}} {{LIQUIDITY_TOKEN}}
  *
  * Prerequisites:
  *   1. Install deps:  npm install
@@ -63,12 +64,12 @@ async function deploy(): Promise<void> {
 
     const provider = new OPNetLimitedProvider(RPC_URL);
 
-    // Fetch UTXOs (need at least 100,000 sat)
+    // Fetch UTXOs — deployments typically need 5,000,000–10,000,000 sat
     console.log('Fetching UTXOs...');
     const utxos: UTXO[] = await provider.fetchUTXO({
         address: wallet.p2tr,
-        minAmount: 100_000n,
-        requestedAmount: 600_000n,
+        minAmount: 1_000_000n,
+        requestedAmount: 10_000_000n,
     });
 
     if (utxos.length === 0) {
@@ -77,7 +78,19 @@ async function deploy(): Promise<void> {
         console.error('  Faucet:  https://faucet.opnet.org (or any Signet faucet)');
         process.exit(1);
     }
-    console.log('UTXOs found:', utxos.length);
+
+    const totalBalance = utxos.reduce((sum, u) => sum + BigInt(u.value), 0n);
+    const MINIMUM_DEPLOY_SATS = 10_000_000n;
+    console.log('UTXOs found:', utxos.length, '— total balance:', totalBalance.toString(), 'sats');
+    if (totalBalance < MINIMUM_DEPLOY_SATS) {
+        console.error('\\n⚠ Insufficient funds for deployment.');
+        console.error('  Have:', totalBalance.toString(), 'sats');
+        console.error('  Need: ~' + MINIMUM_DEPLOY_SATS.toString(), 'sats (deployment + fees)');
+        console.error('  Short by:', (MINIMUM_DEPLOY_SATS - totalBalance).toString(), 'sats');
+        console.error('\\n  Fund your wallet at: https://faucet.opnet.org');
+        console.error('  Address:', wallet.p2tr);
+        process.exit(1);
+    }
 
     // Get challenge from node
     console.log('Fetching epoch challenge...');
@@ -174,16 +187,16 @@ export const DEPLOY_PACKAGE_JSON = `{
     "deploy": "npx ts-node deploy.ts"
   },
   "dependencies": {
-    "@btc-vision/bitcoin": "rc",
-    "@btc-vision/bip32": "latest",
-    "@btc-vision/ecpair": "latest",
-    "@btc-vision/transaction": "rc",
-    "opnet": "rc"
+    "@btc-vision/bitcoin": "6.5.6",
+    "@btc-vision/bip32": "7.1.2",
+    "@btc-vision/ecpair": "4.0.5",
+    "@btc-vision/transaction": "1.7.31",
+    "opnet": "1.8.0"
   },
   "devDependencies": {
-    "@types/node": "latest",
-    "ts-node": "latest",
-    "typescript": "latest"
+    "@types/node": "^25.3.3",
+    "ts-node": "10.9.2",
+    "typescript": "^5.9.3"
   },
   "overrides": {
     "@noble/hashes": "2.0.1"
@@ -195,6 +208,7 @@ export const DEPLOY_README_TEMPLATE = `# Deploy {{NAME}} ({{TICKER}}) to OPNet T
 
 **Generated:** {{GENERATED_AT}}
 **Build hash:** \`{{BUILD_HASH}}\`
+**Required initial liquidity:** \`{{LIQUIDITY_AMOUNT}} {{LIQUIDITY_TOKEN}}\`
 
 ---
 
@@ -294,12 +308,18 @@ export function generateDeployScript(vars: {
   ticker: string;
   buildHash: string;
   generatedAt: string;
+  liquidityToken?: "TBTC" | "MOTO" | "PILL";
+  liquidityAmount?: string;
 }): string {
+  const liquidityToken = vars.liquidityToken ?? "MOTO";
+  const liquidityAmount = vars.liquidityAmount ?? "100";
   return DEPLOY_SCRIPT_TEMPLATE
     .replace(/\{\{NAME\}\}/g, vars.name)
     .replace(/\{\{TICKER\}\}/g, vars.ticker)
     .replace(/\{\{BUILD_HASH\}\}/g, vars.buildHash)
-    .replace(/\{\{GENERATED_AT\}\}/g, vars.generatedAt);
+    .replace(/\{\{GENERATED_AT\}\}/g, vars.generatedAt)
+    .replace(/\{\{LIQUIDITY_TOKEN\}\}/g, liquidityToken)
+    .replace(/\{\{LIQUIDITY_AMOUNT\}\}/g, liquidityAmount);
 }
 
 export function generateDeployPackageJson(vars: { slug: string; name: string; ticker: string }): string {
@@ -316,11 +336,17 @@ export function generateDeployReadme(vars: {
   buildHash: string;
   generatedAt: string;
   projectId: string;
+  liquidityToken?: "TBTC" | "MOTO" | "PILL";
+  liquidityAmount?: string;
 }): string {
+  const liquidityToken = vars.liquidityToken ?? "MOTO";
+  const liquidityAmount = vars.liquidityAmount ?? "100";
   return DEPLOY_README_TEMPLATE
     .replace(/\{\{NAME\}\}/g, vars.name)
     .replace(/\{\{TICKER\}\}/g, vars.ticker)
     .replace(/\{\{BUILD_HASH\}\}/g, vars.buildHash)
     .replace(/\{\{GENERATED_AT\}\}/g, vars.generatedAt)
-    .replace(/\{\{PROJECT_ID\}\}/g, vars.projectId);
+    .replace(/\{\{PROJECT_ID\}\}/g, vars.projectId)
+    .replace(/\{\{LIQUIDITY_TOKEN\}\}/g, liquidityToken)
+    .replace(/\{\{LIQUIDITY_AMOUNT\}\}/g, liquidityAmount);
 }

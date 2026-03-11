@@ -24,6 +24,7 @@ export {
   closeProvider,
   assertRuntimeConfig,
   getRuntimeContractConfig,
+  getLiquidityTokenContractAddress,
   checkProviderHealth,
   fetchLivePoolState,
   fetchLivePoolReserves,

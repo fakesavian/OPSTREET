@@ -1,4 +1,5 @@
 import { networks } from "@btc-vision/bitcoin";
+import { GAME_PAYMENT_TOKENS, type LiquidityToken } from "@opfun/shared";
 import {
   ABIDataTypes,
   BitcoinAbiTypes,
@@ -16,7 +17,7 @@ import type {
   IOP721Contract,
 } from "opnet";
 
-const OPNET_RPC_URL = process.env["OPNET_RPC_URL"] ?? "";
+const OPNET_RPC_URL = (process.env["OPNET_RPC_URL"] ?? "").trim() || "https://testnet.opnet.org";
 const OPNET_PROVIDER_TIMEOUT_MS = Number(process.env["OPNET_PROVIDER_TIMEOUT_MS"] ?? 15_000);
 const OPNET_NETWORK = networks.testnet;
 const DEFAULT_INTERACTION_FEE_RATE = Number(process.env["OPNET_INTERACTION_FEE_RATE"] ?? 5);
@@ -25,6 +26,7 @@ const DEFAULT_INTERACTION_MAX_SPEND = BigInt(process.env["OPNET_INTERACTION_MAX_
 export const MOTOSWAP_FACTORY_ADDRESS = process.env["MOTOSWAP_FACTORY_ADDRESS"] ?? "";
 export const MOTOSWAP_ROUTER_ADDRESS = process.env["MOTOSWAP_ROUTER_ADDRESS"] ?? "";
 export const SHOP_OP721_COLLECTION_ADDRESS = process.env["SHOP_OP721_COLLECTION"] ?? "";
+const TBTC_CONTRACT_ADDRESS = process.env["OPNET_TBTC_CONTRACT_ADDRESS"] ?? "";
 
 const SHOP_OP721_MINT_ABI: BitcoinInterfaceAbi = [
   {
@@ -69,6 +71,7 @@ export interface RuntimeContractConfig {
   factoryAddress: string;
   routerAddress: string;
   shopCollectionAddress: string;
+  tbtcContractAddress: string;
 }
 
 export interface LivePoolState {
@@ -328,7 +331,20 @@ export function getRuntimeContractConfig(): RuntimeContractConfig {
     factoryAddress: MOTOSWAP_FACTORY_ADDRESS,
     routerAddress: MOTOSWAP_ROUTER_ADDRESS,
     shopCollectionAddress: SHOP_OP721_COLLECTION_ADDRESS,
+    tbtcContractAddress: TBTC_CONTRACT_ADDRESS,
   };
+}
+
+export function getLiquidityTokenContractAddress(symbol: LiquidityToken): string {
+  if (symbol === "TBTC") {
+    return ensureConfigured(
+      "OPNET_TBTC_CONTRACT_ADDRESS",
+      TBTC_CONTRACT_ADDRESS,
+      "OPNET_TBTC_CONTRACT_ADDRESS is required for TBTC pool creation and reserve mapping.",
+    );
+  }
+
+  return GAME_PAYMENT_TOKENS[symbol].contractAddress;
 }
 
 export function assertRuntimeConfig(requirements?: RuntimeConfigRequirements): RuntimeContractConfig {
@@ -590,7 +606,10 @@ export async function fetchTransactionReceipt(txId: string): Promise<Transaction
       status: revert ? "failed" : "confirmed",
       blockHeight,
       revert,
-      raw: receipt,
+      raw: {
+        receipt,
+        transaction,
+      },
     };
   } catch {
     return { found: false, status: "pending" };

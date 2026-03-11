@@ -1,0 +1,17 @@
+{
+  "wallets": {
+    "opt1p0stmw7lmsndpskd4zk6u0skn3lsjrkl0anwyk2t2e906cjsua7ys8wk5nu": [
+      {
+        "itemKey": "CLAN_FORMATION_LICENSE",
+        "entitlement": "CLAN_FORMATION_LICENSE",
+        "mintedAt": "2026-03-08T14:43:42.989Z",
+        "paymentToken": "MOTO",
+        "displayToken": "MOTO",
+        "priceAmount": 100,
+        "txRef": "sim-clan_formation_license-mmhv4gsu-jvt6ribv",
+        "active": true,
+        "usedAt": "2026-03-08T14:43:42.989Z"
+      }
+    ]
+  }
+}
