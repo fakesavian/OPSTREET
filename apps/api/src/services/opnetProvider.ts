@@ -16,6 +16,7 @@ const OPNET_VM_URL = process.env["OPNET_VM_URL"] || "";
 const UPSTREAM_TIMEOUT_MS = 8_000;
 const RETRY_COUNT = 1;
 const RETRY_DELAY_MS = 500;
+const TARGET_BLOCK_INTERVAL_MS = 10 * 60 * 1000;
 
 export interface BlockStatusData {
   network: string;
@@ -131,10 +132,46 @@ function extractBlockHeight(payload: unknown): number | null {
 }
 
 function extractNextBlockEstimateMs(payload: unknown): number {
-  if (!payload || typeof payload !== "object") return 0;
+  if (!payload || typeof payload !== "object") return -1;
   const source = payload as Record<string, unknown>;
   const candidate = parseNumeric(source["nextBlockMs"] ?? source["nextBlockEstimateMs"]);
-  return candidate !== null && candidate >= 0 ? candidate : 0;
+  if (candidate !== null && candidate > 0) return candidate;
+
+  const blockTimestampMs = extractBlockTimestampMs(source);
+  if (blockTimestampMs === null) return -1;
+
+  const ageMs = Date.now() - blockTimestampMs;
+  if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs >= TARGET_BLOCK_INTERVAL_MS) return -1;
+
+  return Math.max(1, TARGET_BLOCK_INTERVAL_MS - ageMs);
+}
+
+function extractBlockTimestampMs(payload: Record<string, unknown>): number | null {
+  const candidate = [
+    payload["timestamp"],
+    payload["time"],
+    payload["blockTime"],
+    payload["blockTimestamp"],
+    payload["latestBlockTime"],
+    payload["date"],
+    payload["createdAt"],
+  ].find((value) => value !== undefined && value !== null);
+
+  return parseTimestampMs(candidate);
+}
+
+function parseTimestampMs(value: unknown): number | null {
+  if (value instanceof Date && Number.isFinite(value.getTime())) return value.getTime();
+
+  const numeric = parseNumeric(value);
+  if (numeric !== null) {
+    if (numeric <= 0) return null;
+    return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
+  }
+
+  if (typeof value !== "string") return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 export async function fetchBlockStatus(): Promise<BlockStatusData> {

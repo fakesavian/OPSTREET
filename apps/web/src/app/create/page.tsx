@@ -20,6 +20,35 @@ const LIQUIDITY_TOKEN_TO_SATS: Record<"TBTC" | "MOTO" | "PILL", number> = {
   MOTO: 65_000,
   PILL: 70_000,
 };
+const SATS_PER_TBTC = 100_000_000;
+
+function getLiquidityFundingPreview(
+  liquidityToken: "TBTC" | "MOTO" | "PILL",
+  liquidityAmount: string,
+) {
+  const liquidityUnits = Number(liquidityAmount);
+  const satsRate = LIQUIDITY_TOKEN_TO_SATS[liquidityToken];
+  const valid = Number.isFinite(liquidityUnits) && liquidityUnits > 0;
+  const totalSats = valid
+    ? Math.max(1, Math.round(liquidityUnits * satsRate))
+    : 0;
+
+  return {
+    liquidityUnits,
+    satsRate,
+    totalSats,
+    totalTbtc: totalSats / SATS_PER_TBTC,
+    valid,
+  };
+}
+
+function formatSats(value: number): string {
+  return value.toLocaleString();
+}
+
+function formatTbtc(value: number): string {
+  return value.toFixed(8);
+}
 
 function validateStep0(form: {
   name: string;
@@ -64,6 +93,7 @@ export default function CreatePage() {
   const [submitAttempted, setSubmitAttempted] = useState(false);
 
   const step0Errors = validateStep0(form);
+  const fundingPreview = getLiquidityFundingPreview(form.liquidityToken, form.liquidityAmount);
   const showError = (field: string) => (touched[field] || submitAttempted) ? step0Errors[field] : undefined;
   function blur(field: string) { setTouched((t) => ({ ...t, [field]: true })); }
   function set(field: string, value: string | number) { setForm((prev) => ({ ...prev, [field]: value })); }
@@ -84,19 +114,13 @@ export default function CreatePage() {
     try {
       if (!wallet) throw new Error("Connect an OP_WALLET first.");
       if (wallet.provider !== "opnet") throw new Error("OP_WALLET is required to fund initial liquidity.");
-      const liquidityUnits = Number(form.liquidityAmount);
-      if (!Number.isFinite(liquidityUnits) || liquidityUnits <= 0) {
+      if (!fundingPreview.valid) {
         throw new Error("Liquidity amount must be greater than zero.");
       }
 
-      const amountSats = Math.max(
-        1,
-        Math.round(liquidityUnits * LIQUIDITY_TOKEN_TO_SATS[form.liquidityToken]),
-      );
-
       const funding = await submitOpnetLiquidityFundingWithWallet(wallet.provider, {
         toAddress: LIQUIDITY_VAULT_ADDRESS,
-        amountSats,
+        amountSats: fundingPreview.totalSats,
         memo: `OpStreet liquidity ${form.ticker}`,
       });
       if (!funding?.txId) {
@@ -118,7 +142,11 @@ export default function CreatePage() {
       router.push(`/p/${project.slug}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Something went wrong";
-      if (/invalid.*address|invalid.*recipient|network/i.test(msg)) {
+      if (/insufficient funds/i.test(msg)) {
+        setError(
+          `${msg} Need at least ${formatSats(fundingPreview.totalSats)} sats (${formatTbtc(fundingPreview.totalTbtc)} tBTC) plus network fees.`,
+        );
+      } else if (/invalid.*address|invalid.*recipient|network/i.test(msg)) {
         setError(`${msg} Open OP_WALLET and verify you are on "OP_NET Testnet" (Signet).`);
       } else {
         setError(msg);
@@ -343,6 +371,17 @@ export default function CreatePage() {
                 {form.github && <LinkChip label="GitHub" href={form.github} />}
               </div>
             )}
+          </div>
+
+          <div className="rounded-xl border-2 border-ink bg-[#FFF2B8] px-4 py-3">
+            <p className="font-black text-ink mb-2 text-sm uppercase tracking-wider">Initial Funding Summary</p>
+            <ul className="space-y-1 text-xs font-bold text-ink">
+              <li>
+                {form.liquidityAmount} {form.liquidityToken} × {formatSats(fundingPreview.satsRate)} sats = {formatSats(fundingPreview.totalSats)} sats
+              </li>
+              <li>{formatTbtc(fundingPreview.totalTbtc)} tBTC will be sent from OP_WALLET to the liquidity vault.</li>
+              <li>Your OP_WALLET needs at least {formatSats(fundingPreview.totalSats)} sats + network fees.</li>
+            </ul>
           </div>
 
           {/* Safe defaults */}

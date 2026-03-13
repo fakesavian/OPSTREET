@@ -5,8 +5,8 @@ import { fetchBlockStatus, type BlockStatus } from "@/lib/api";
 
 export function BlockTimerBar() {
   const [status, setStatus] = useState<BlockStatus | null>(null);
-  const [countdown, setCountdown] = useState(0);
-  const [unavailable, setUnavailable] = useState(false);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const [lastPollOk, setLastPollOk] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -16,12 +16,15 @@ export function BlockTimerBar() {
         .then((data) => {
           if (mounted) {
             setStatus(data);
-            setCountdown(Math.max(0, Math.floor(data.nextBlockEstimateMs / 1000)));
-            setUnavailable(false);
+            setCountdown(data.nextBlockEstimateMs > 0 ? Math.floor(data.nextBlockEstimateMs / 1000) : null);
+            setLastPollOk(true);
           }
         })
         .catch(() => {
-          if (mounted) setUnavailable(true);
+          if (mounted) {
+            setCountdown(null);
+            setLastPollOk(false);
+          }
         });
     };
 
@@ -34,23 +37,37 @@ export function BlockTimerBar() {
   }, []);
 
   useEffect(() => {
-    if (countdown <= 0) return;
+    if (countdown === null || countdown <= 0) return;
     const id = setInterval(() => {
-      setCountdown((c) => Math.max(0, c - 1));
+      setCountdown((c) => {
+        if (c === null || c <= 1) return null;
+        return c - 1;
+      });
     }, 1000);
     return () => clearInterval(id);
   }, [countdown]);
 
-  const mm = String(Math.floor(countdown / 60)).padStart(2, "0");
-  const ss = String(countdown % 60).padStart(2, "0");
+  const timerLabel =
+    countdown === null
+      ? "--:--"
+      : `${String(Math.floor(countdown / 60)).padStart(2, "0")}:${String(countdown % 60).padStart(2, "0")}`;
+  const networkTitle = lastPollOk
+    ? "OPNET testnet reachable. Badge reflects the latest successful poll."
+    : status
+      ? "Latest OPNET status poll failed. Showing the last known block height."
+      : "OPNET status is currently unavailable.";
+  const timerTitle =
+    countdown === null
+      ? "Next block estimate is unavailable from upstream."
+      : "Estimated time until the next OPNET block.";
 
   return (
     <div className="block-timer-bar flex h-9 items-center justify-between px-4">
       <div className="mx-auto flex max-w-6xl w-full items-center justify-between">
         {/* Left: network indicator */}
-        <div className="flex items-center gap-2">
-          <span className={`inline-flex h-5 w-5 items-center justify-center rounded-md border-2 border-ink ${unavailable && !status ? "bg-gray-400" : "bg-opGreen"}`}>
-            <span className={`inline-block h-1.5 w-1.5 rounded-full ${unavailable && !status ? "bg-gray-200" : "bg-white animate-pulse-dot"}`} />
+        <div className="flex items-center gap-2" title={networkTitle}>
+          <span className={`inline-flex h-5 w-5 items-center justify-center rounded-md border-2 border-ink ${lastPollOk ? "bg-opGreen" : "bg-gray-400"}`}>
+            <span className={`inline-block h-1.5 w-1.5 rounded-full ${lastPollOk ? "bg-white animate-pulse-dot" : "bg-gray-200"}`} />
           </span>
           <span className="hidden sm:inline font-black tracking-widest uppercase text-[10px] text-ink">
             OPNET TESTNET
@@ -71,14 +88,14 @@ export function BlockTimerBar() {
         </div>
 
         {/* Right: countdown timer */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5" title={timerTitle}>
           <span className="inline-flex h-5 items-center gap-1.5 rounded-md border-2 border-ink bg-white px-2">
             <svg viewBox="0 0 16 16" className="h-3 w-3 text-ink" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="8" cy="8" r="5.5" />
               <path d="M8 4.5v3.5l2 1.5" strokeLinecap="round" />
             </svg>
             <span className="font-mono text-[11px] font-black text-ink">
-              {mm}:{ss}
+              {timerLabel}
             </span>
           </span>
         </div>
