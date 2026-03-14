@@ -1,0 +1,201 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import type { ProjectDTO } from "@opfun/shared";
+import { fetchProjects } from "@/lib/api";
+import { LeaderboardsClient } from "@/app/leaderboards/LeaderboardsClient";
+import { TokenCard } from "./TokenCard";
+import { OpPanel } from "./OpPanel";
+import { OpPill } from "./OpPill";
+
+const SORT_FILTERS = ["Live Now", "Newest", "Most Viewed", "Ready", "Launching"] as const;
+type SortFilter = (typeof SORT_FILTERS)[number];
+type MarketHubSection = "trending" | "leaders";
+
+function isLive(project: ProjectDTO): boolean {
+  return project.launchStatus === "LIVE" || project.status === "LAUNCHED";
+}
+
+function isReady(project: ProjectDTO): boolean {
+  return project.status === "READY" || project.status === "DEPLOY_PACKAGE_READY";
+}
+
+function isLaunching(project: ProjectDTO): boolean {
+  return Boolean(project.launchStatus) && project.launchStatus !== "LIVE";
+}
+
+function sortProjects(projects: ProjectDTO[], filter: SortFilter): ProjectDTO[] {
+  switch (filter) {
+    case "Live Now":
+      return [...projects].sort((a, b) => {
+        const liveRank = Number(isLive(b)) - Number(isLive(a));
+        if (liveRank !== 0) return liveRank;
+        return new Date(b.liveAt ?? 0).getTime() - new Date(a.liveAt ?? 0).getTime();
+      });
+    case "Most Viewed":
+      return [...projects].sort((a, b) => b.viewCount - a.viewCount);
+    case "Ready":
+      return [...projects].sort((a, b) => {
+        const readyRank = Number(isReady(b)) - Number(isReady(a));
+        if (readyRank !== 0) return readyRank;
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
+    case "Launching":
+      return [...projects].sort((a, b) => {
+        const launchRank = Number(isLaunching(b)) - Number(isLaunching(a));
+        if (launchRank !== 0) return launchRank;
+        return new Date(b.updatedAt ?? b.createdAt).getTime() - new Date(a.updatedAt ?? a.createdAt).getTime();
+      });
+    case "Newest":
+    default:
+      return [...projects].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+}
+
+function topRailProjects(projects: ProjectDTO[]): ProjectDTO[] {
+  return [...projects]
+    .sort((a, b) => {
+      const liveRank = Number(isLive(b)) - Number(isLive(a));
+      if (liveRank !== 0) return liveRank;
+      const viewedRank = b.viewCount - a.viewCount;
+      if (viewedRank !== 0) return viewedRank;
+      return new Date(b.updatedAt ?? b.createdAt).getTime() - new Date(a.updatedAt ?? a.createdAt).getTime();
+    })
+    .slice(0, 5);
+}
+
+function rightRailCopy(project: ProjectDTO): string {
+  if (isLive(project)) return "Confirmed pool live";
+  if (project.launchStatus) return project.launchStatus.replace(/_/g, " ");
+  if (isReady(project)) return "Ready for wallet deploy";
+  return "Awaiting build";
+}
+
+export function MarketHubClient({
+  initialProjects,
+  initialSection = "trending",
+}: {
+  initialProjects: ProjectDTO[];
+  initialSection?: MarketHubSection;
+}) {
+  const [activeFilter, setActiveFilter] = useState<SortFilter>("Live Now");
+  const [projects, setProjects] = useState<ProjectDTO[]>(initialProjects);
+  const [loading, setLoading] = useState(initialProjects.length === 0);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (initialProjects.length > 0) {
+      setProjects(initialProjects);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    fetchProjects("trending")
+      .then((payload) => {
+        if (!cancelled) setProjects(payload.items);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load trending projects.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [initialProjects]);
+
+  const sortedProjects = useMemo(() => sortProjects(projects, activeFilter), [projects, activeFilter]);
+  const featured = useMemo(() => topRailProjects(projects), [projects]);
+
+  const trendingSection = (
+    <section key="trending" className="space-y-4" id="trending">
+      <div className="op-panel p-5">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-[var(--text-muted)]">Market Board</p>
+            <h1 className="mt-2 text-3xl font-black text-ink">Trending + Leaders</h1>
+            <p className="mt-2 max-w-2xl text-sm font-semibold text-[var(--text-secondary)]">
+              Live token discovery and player leaderboards now sit in one market hub.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Link href="#trending" className="op-btn-outline text-xs">Tokens</Link>
+            <Link href="#leaders" className="op-btn-primary text-xs">Leaders</Link>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {SORT_FILTERS.map((filter) => (
+          <OpPill
+            key={filter}
+            label={filter}
+            active={activeFilter === filter}
+            onClick={() => setActiveFilter(filter)}
+          />
+        ))}
+      </div>
+
+      {error && (
+        <div className="rounded-xl border-2 border-[#EF4444] bg-[#FEE2E2] px-4 py-3 text-sm font-bold text-[#B91C1C]">
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="op-panel p-12 text-center text-sm font-semibold text-[var(--text-muted)]">Loading market board...</div>
+      ) : sortedProjects.length === 0 ? (
+        <div className="op-panel p-12 text-center">
+          <p className="text-[var(--text-muted)]">No projects yet.</p>
+        </div>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_17rem]">
+          <div className="grid gap-4 sm:grid-cols-2">
+            {sortedProjects.map((project) => (
+              <TokenCard key={project.id} project={project} />
+            ))}
+          </div>
+
+          <aside className="space-y-4">
+            <OpPanel title="Most Watched">
+              <div className="space-y-2">
+                {featured.map((project, index) => (
+                  <Link
+                    key={project.id}
+                    href={`/p/${project.slug}`}
+                    className="flex items-center gap-2 rounded-lg border-2 border-transparent p-2 transition-all hover:border-ink hover:bg-opYellow"
+                  >
+                    <span className="w-5 text-center text-sm font-black text-ink">{index + 1}</span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-black text-ink">{project.name}</p>
+                      <p className="text-[10px] text-[var(--text-muted)]">{rightRailCopy(project)}</p>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </OpPanel>
+          </aside>
+        </div>
+      )}
+    </section>
+  );
+
+  const leadersSection = (
+    <section key="leaders" id="leaders" className="space-y-4">
+      <LeaderboardsClient initial={{ range: "7d", items: [] }} embedded />
+    </section>
+  );
+
+  const sections = initialSection === "leaders"
+    ? [leadersSection, trendingSection]
+    : [trendingSection, leadersSection];
+
+  return <div className="space-y-6 pb-20 sm:pb-0">{sections}</div>;
+}

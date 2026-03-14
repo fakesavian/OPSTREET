@@ -57,7 +57,7 @@ export function OpBottomNav() {
   }
 
   return (
-    <div className="fixed bottom-4 left-3 right-3 z-50 flex items-end gap-3 sm:hidden">
+    <div className="fixed bottom-4 left-3 right-3 z-40 flex items-end gap-3 sm:hidden">
       <nav className="flex flex-1 items-center justify-around rounded-[28px] border-3 border-ink bg-opYellow px-4 py-2.5 shadow-[4px_4px_0_#111111]">
         {tabs.map((tab) => (
           <Link key={`${tab.href}-${tab.label}`} href={tab.href} className="flex min-w-0 flex-col items-center gap-0.5">

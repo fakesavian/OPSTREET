@@ -14,7 +14,7 @@ function Section({ id, title, children }: { id: string; title: string; children:
     <section id={id} className="scroll-mt-24">
       <div className="op-panel p-6 space-y-4">
         <h2 className="text-xl font-black text-ink border-b-3 border-ink pb-3">{title}</h2>
-        <div className="space-y-3 text-sm text-[var(--text-secondary)] leading-relaxed">
+        <div className="space-y-3 rounded-[18px] border-2 border-ink/10 bg-[#fff8e8] p-4 text-sm font-semibold leading-relaxed text-[#4b2a12]">
           {children}
         </div>
       </div>
@@ -26,7 +26,7 @@ function Sub({ title, children }: { title: string; children: React.ReactNode }) 
   return (
     <div>
       <h3 className="font-black text-ink mb-1.5">{title}</h3>
-      <div className="text-[var(--text-secondary)] space-y-1">{children}</div>
+      <div className="space-y-1 text-[#4b2a12]">{children}</div>
     </div>
   );
 }
@@ -80,12 +80,12 @@ const SECTIONS = [
 export default function DocsPage() {
   return (
     <div className="mx-auto max-w-6xl py-6">
-      <div className="mb-8">
+      <div className="op-panel mb-8 p-6">
         <Link href="/" className="text-xs font-bold text-[var(--text-muted)] hover:text-ink transition-colors">
           ← Back to Feed
         </Link>
         <h1 className="mt-3 text-4xl font-black text-ink">Documentation</h1>
-        <p className="mt-2 text-sm text-[var(--text-secondary)] max-w-xl">
+        <p className="mt-3 max-w-2xl rounded-[18px] border-2 border-ink/10 bg-[#fff8e8] px-4 py-3 text-sm font-semibold leading-relaxed text-[#4b2a12]">
           Everything you need to know about launching tokens, reading Risk Cards, and using the Trading Floor on OpStreet — powered by OP_NET testnet.
         </p>
       </div>

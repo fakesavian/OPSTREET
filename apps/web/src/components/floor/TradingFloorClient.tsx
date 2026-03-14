@@ -1,182 +1,140 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useWallet } from "@/components/WalletProvider";
 import {
   floorJoin,
   floorLeave,
-  fetchFloorPresence,
-  fetchFloorStats,
   fetchFloorCallouts,
   fetchFloorChat,
+  fetchFloorPresence,
+  fetchFloorStats,
   fetchFloorTicker,
   type FloorProfile,
 } from "@/lib/api";
 import type {
-  FloorPresenceDTO,
   FloorCalloutDTO,
   FloorChatDTO,
-  FloorTickerDTO,
+  FloorPresenceDTO,
   FloorStatsDTO,
+  FloorTickerDTO,
 } from "@opfun/shared";
-
-import { TickerTape } from "./TickerTape";
 import { AvatarCrowd } from "./AvatarCrowd";
+import { AvatarFigure } from "./AvatarFigure";
 import { CalloutFeed } from "./CalloutFeed";
 import { ChartPanel } from "./ChartPanel";
-import { NewsPanel } from "./NewsPanel";
 import { ChatBox } from "./ChatBox";
-import { JoinFloorModal } from "./JoinFloorModal";
 import { FloorStats } from "./FloorStats";
-import { MonitorPanel } from "./MonitorPanel";
+import { FloatingFloorPanel } from "./FloatingFloorPanel";
+import { JoinFloorModal } from "./JoinFloorModal";
+import { TickerTape } from "./TickerTape";
 
-// ── Polling intervals (ms) ────────────────────────────────────────────────
-const PRESENCE_INTERVAL  = 5_000;
-const CALLOUT_INTERVAL   = 3_000;
-const CHAT_INTERVAL      = 2_000;
-const TICKER_INTERVAL    = 30_000;
-const STATS_INTERVAL     = 10_000;
+const PRESENCE_INTERVAL = 5_000;
+const CALLOUT_INTERVAL = 3_000;
+const CHAT_INTERVAL = 2_000;
+const TICKER_INTERVAL = 30_000;
+const STATS_INTERVAL = 10_000;
 const HEARTBEAT_INTERVAL = 30_000;
 
-// ── Mobile tab type ───────────────────────────────────────────────────────
-type MobileTab = "room" | "callouts" | "chat";
+const DESKTOP_BACKGROUND_SRC = "/opstreet/floor/trading-floor-backdrop-square-v1.png";
 
-// ── TowerMonitor — scrolling stock-ticker display inside a TV frame ───────
+type MobilePanelKey = "chart" | "callouts" | "chat";
 
-interface TowerMonitorProps {
-  ticker: FloorTickerDTO[];
-  index: number;
-  tokenOffset: number;
+function hashStr(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index++) {
+    hash = (hash * 31 + value.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash);
 }
 
-function TowerMonitor({ ticker, index, tokenOffset }: TowerMonitorProps) {
-  const [displayIdx, setDisplayIdx] = useState((index + tokenOffset) % Math.max(ticker.length, 1));
-
-  useEffect(() => {
-    if (ticker.length === 0) return;
-    // Stagger interval per monitor index so they cycle independently
-    const delay = index * 1200;
-    const id = setTimeout(() => {
-      const interval = setInterval(() => {
-        setDisplayIdx((prev) => (prev + 1) % ticker.length);
-      }, 3500 + index * 400);
-      return () => clearInterval(interval);
-    }, delay);
-    return () => clearTimeout(id);
-  }, [ticker.length, index]);
-
-  const item = ticker.length > 0 ? ticker[displayIdx % ticker.length] : null;
-  const priceDelta = item?.priceDelta24h ?? "";
-  const isPos = priceDelta.startsWith("+");
-
-  return (
-    <div
-      className="flex-1 min-h-0 m-1.5 rounded-sm border border-ink bg-[var(--panel-cream)] overflow-hidden flex flex-col items-center justify-center gap-0.5 px-1"
-      style={{
-        boxShadow: "inset 0 0 8px rgba(17,17,17,0.05)",
-      }}
-    >
-      {item ? (
-        <>
-          <span className="text-[7px] font-mono font-black text-ink leading-none truncate w-full text-center">
-            ${item.ticker}
-          </span>
-          <span
-            className={`text-[7px] font-mono font-bold leading-none ${isPos ? "text-opGreen" : "text-opRed"}`}
-          >
-            {priceDelta || "0.0%"}
-          </span>
-          <span className="text-[6px] font-mono text-[var(--text-muted)] leading-none">
-            R:{item.riskScore ?? "—"}
-          </span>
-        </>
-      ) : (
-        <span className="text-[7px] text-[var(--text-muted)] font-mono">—</span>
-      )}
-    </div>
-  );
+function seededRand(seed: number, offset: number): number {
+  const value = Math.sin(seed + offset) * 10_000;
+  return value - Math.floor(value);
 }
 
-// ── Tower column (3 monitor frames) ──────────────────────────────────────
-
-interface TowerColumnProps {
-  ticker: FloorTickerDTO[];
-  side: "left" | "right";
+function getDesktopCalloutFrequency(callouts: FloorCalloutDTO[]): "low" | "medium" | "high" {
+  const recentCallouts = callouts.filter((callout) => Date.now() - new Date(callout.createdAt).getTime() < 60_000);
+  if (recentCallouts.length > 8) return "high";
+  if (recentCallouts.length > 3) return "medium";
+  return "low";
 }
-
-function TowerColumn({ ticker, side }: TowerColumnProps) {
-  return (
-    <div
-      className="flex w-20 shrink-0 flex-col py-2"
-      style={{
-        background:
-          side === "left"
-            ? "linear-gradient(90deg, #FFF7E8 0%, #FFFBEB 50%, #FFF7E8 100%)"
-            : "linear-gradient(270deg, #FFF7E8 0%, #FFFBEB 50%, #FFF7E8 100%)",
-        borderRight: side === "left" ? "1px solid #111111" : undefined,
-        borderLeft:  side === "right" ? "1px solid #111111" : undefined,
-      }}
-    >
-      {[0, 1, 2].map((i) => (
-        <TowerMonitor key={i} ticker={ticker} index={i} tokenOffset={side === "right" ? 3 : 0} />
-      ))}
-    </div>
-  );
-}
-
-// ── Main component ────────────────────────────────────────────────────────
 
 export function TradingFloorClient() {
   const { wallet } = useWallet();
   const walletAddress = wallet?.address ?? null;
 
-  const [profile, setProfile]         = useState<FloorProfile | null>(null);
+  const [profile, setProfile] = useState<FloorProfile | null>(null);
   const [showJoinModal, setShowJoinModal] = useState(false);
-  const [hasJoined, setHasJoined]     = useState(false);
+  const [hasJoined, setHasJoined] = useState(false);
 
-  const [presence, setPresence]       = useState<FloorPresenceDTO[]>([]);
-  const [callouts, setCallouts]       = useState<FloorCalloutDTO[]>([]);
-  const [chat, setChat]               = useState<FloorChatDTO[]>([]);
-  const [ticker, setTicker]           = useState<FloorTickerDTO[]>([]);
-  const [stats, setStats]             = useState<FloorStatsDTO>({ activeUsers: 0, totalCallouts: 0, totalMessages: 0 });
+  const [presence, setPresence] = useState<FloorPresenceDTO[]>([]);
+  const [callouts, setCallouts] = useState<FloorCalloutDTO[]>([]);
+  const [chat, setChat] = useState<FloorChatDTO[]>([]);
+  const [ticker, setTicker] = useState<FloorTickerDTO[]>([]);
+  const [stats, setStats] = useState<FloorStatsDTO>({
+    activeUsers: 0,
+    totalCallouts: 0,
+    totalMessages: 0,
+  });
+  const [openMobilePanels, setOpenMobilePanels] = useState<Record<MobilePanelKey, boolean>>({
+    chart: false,
+    callouts: false,
+    chat: false,
+  });
 
-  const [mobileTab, setMobileTab]     = useState<MobileTab>("room");
-  const lastChatTs                    = useRef<string | undefined>(undefined);
-
-  // ── Fetch helpers ──────────────────────────────────────────────────────
+  const lastChatTs = useRef<string | undefined>(undefined);
+  const leftDockRef = useRef<HTMLDivElement>(null);
+  const rightDockRef = useRef<HTMLDivElement>(null);
 
   const fetchPresence = useCallback(async () => {
-    try { setPresence(await fetchFloorPresence()); } catch { /* ignore */ }
+    try {
+      setPresence(await fetchFloorPresence());
+    } catch {
+      // ignore
+    }
   }, []);
 
   const fetchCalloutData = useCallback(async () => {
-    try { setCallouts(await fetchFloorCallouts(50, walletAddress ?? undefined)); } catch { /* ignore */ }
+    try {
+      setCallouts(await fetchFloorCallouts(50, walletAddress ?? undefined));
+    } catch {
+      // ignore
+    }
   }, [walletAddress]);
 
   const fetchChatData = useCallback(async () => {
     try {
-      const newMsgs = await fetchFloorChat(lastChatTs.current);
-      if (newMsgs.length > 0) {
-        setChat((prev) => {
-          if (!lastChatTs.current) return newMsgs;
-          const existingIds = new Set(prev.map((m) => m.id));
-          const fresh = newMsgs.filter((m) => !existingIds.has(m.id));
-          return [...prev, ...fresh].slice(-200);
+      const newMessages = await fetchFloorChat(lastChatTs.current);
+      if (newMessages.length > 0) {
+        setChat((previous) => {
+          if (!lastChatTs.current) return newMessages;
+          const existingIds = new Set(previous.map((message) => message.id));
+          const fresh = newMessages.filter((message) => !existingIds.has(message.id));
+          return [...previous, ...fresh].slice(-200);
         });
-        lastChatTs.current = newMsgs[newMsgs.length - 1]!.createdAt;
+        lastChatTs.current = newMessages[newMessages.length - 1]!.createdAt;
       }
-    } catch { /* ignore */ }
+    } catch {
+      // ignore
+    }
   }, []);
 
   const fetchTickerData = useCallback(async () => {
-    try { setTicker(await fetchFloorTicker()); } catch { /* ignore */ }
+    try {
+      setTicker(await fetchFloorTicker());
+    } catch {
+      // ignore
+    }
   }, []);
 
   const fetchStatsData = useCallback(async () => {
-    try { setStats(await fetchFloorStats()); } catch { /* ignore */ }
+    try {
+      setStats(await fetchFloorStats());
+    } catch {
+      // ignore
+    }
   }, []);
-
-  // ── Initial load ───────────────────────────────────────────────────────
 
   useEffect(() => {
     fetchPresence();
@@ -186,8 +144,6 @@ export function TradingFloorClient() {
     fetchStatsData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // ── Polling ────────────────────────────────────────────────────────────
 
   useEffect(() => {
     const intervals = [
@@ -200,35 +156,31 @@ export function TradingFloorClient() {
     return () => intervals.forEach(clearInterval);
   }, [fetchPresence, fetchCalloutData, fetchChatData, fetchTickerData, fetchStatsData]);
 
-  // ── Heartbeat ──────────────────────────────────────────────────────────
-
   useEffect(() => {
     if (!walletAddress || !hasJoined) return;
-    const id = setInterval(() => {
+    const intervalId = setInterval(() => {
       floorJoin({ walletAddress }).catch(() => undefined);
     }, HEARTBEAT_INTERVAL);
-    return () => clearInterval(id);
+    return () => clearInterval(intervalId);
   }, [walletAddress, hasJoined]);
 
-  // ── Leave on unmount ───────────────────────────────────────────────────
-
   useEffect(() => {
-    return () => { if (walletAddress) floorLeave(walletAddress); };
+    return () => {
+      if (walletAddress) floorLeave(walletAddress);
+    };
   }, [walletAddress]);
 
-  // ── Show join modal ────────────────────────────────────────────────────
-
   useEffect(() => {
-    if (walletAddress && !hasJoined && !profile) setShowJoinModal(true);
+    if (walletAddress && !hasJoined && !profile) {
+      setShowJoinModal(true);
+    }
   }, [walletAddress, hasJoined, profile]);
-
-  // ── Join handler ───────────────────────────────────────────────────────
 
   const handleJoin = useCallback(
     async (displayName: string) => {
       if (!walletAddress) return;
-      const p = await floorJoin({ walletAddress, displayName });
-      setProfile(p);
+      const nextProfile = await floorJoin({ walletAddress, displayName });
+      setProfile(nextProfile);
       setHasJoined(true);
       setShowJoinModal(false);
       await fetchPresence();
@@ -236,116 +188,143 @@ export function TradingFloorClient() {
     [walletAddress, fetchPresence],
   );
 
-  const latestCallout    = callouts[0] ?? null;
-  const handleJoinClick  = useCallback(() => { if (walletAddress) setShowJoinModal(true); }, [walletAddress]);
+  const handleJoinClick = useCallback(() => {
+    if (walletAddress) setShowJoinModal(true);
+  }, [walletAddress]);
 
-  // ── Render ─────────────────────────────────────────────────────────────
+  const latestCallout = callouts[0] ?? null;
+  const desktopParticipants = presence.slice(0, 30);
+  const desktopOverflow = Math.max(0, presence.length - desktopParticipants.length);
+  const desktopCalloutFrequency = getDesktopCalloutFrequency(callouts);
 
   return (
-    <div>
-      {/* ══════════════════════════════════════════════════════════════
-          DESKTOP — full-viewport command center (≥ md)
-         ══════════════════════════════════════════════════════════════ */}
-      <div
-        className="hidden md:flex h-[calc(100vh-57px)] w-full flex-row overflow-hidden"
-        style={{
-          background: "linear-gradient(180deg, #FFF7E8 0%, #FFFBEB 55%, #FFF7E8 100%)",
-        }}
-      >
-        {/* ── Left TV tower ──────────────────────────────────────── */}
-        <TowerColumn ticker={ticker} side="left" />
-
-        {/* ── Center: monitor wall + crowd ────────────────────────── */}
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-
-          {/* Monitor wall — top 52% */}
-          <div className="flex flex-col overflow-hidden" style={{ height: "52%" }}>
-            <TickerTape items={ticker} />
-
-            <div className="flex min-h-0 flex-1 flex-row gap-2 overflow-hidden p-2">
-              <MonitorPanel label="CALLOUTS" className="flex-[2] min-w-0">
-                <CalloutFeed
-                  callouts={callouts}
-                  walletAddress={walletAddress}
-                  ticker={ticker}
-                  onCalloutPosted={fetchCalloutData}
-                  onReacted={fetchCalloutData}
-                  className="h-full overflow-hidden"
-                />
-              </MonitorPanel>
-
-              <MonitorPanel
-                label="CHART + TRADE"
-                className="flex-[3] min-w-0"
-              >
+    <div className="bg-[linear-gradient(180deg,#fff7e8_0%,#fffbeb_55%,#fff7e8_100%)]">
+      <div className="hidden md:block">
+        <div
+          className="grid h-[calc(100vh-57px)] gap-4 overflow-hidden p-4 lg:p-5"
+          style={{ gridTemplateColumns: "clamp(280px,24vw,400px) minmax(0,1fr) clamp(280px,24vw,400px)" }}
+        >
+          <div ref={leftDockRef} className="relative min-h-0 overflow-hidden rounded-[28px] border-[3px] border-ink bg-[rgba(255,247,232,0.72)]">
+            <FloatingFloorPanel
+              title="Chart"
+              containerRef={leftDockRef}
+              initialRect={{ x: 10, y: 10, width: 340, height: 440 }}
+              minWidth={250}
+              minHeight={280}
+            >
+              <div className="min-h-0 flex-1">
                 <ChartPanel ticker={ticker} walletAddress={walletAddress} />
-              </MonitorPanel>
+              </div>
+            </FloatingFloorPanel>
+          </div>
 
-              <MonitorPanel label="TROLLBOX" className="flex-[2] min-w-0">
-                <ChatBox
-                  messages={chat}
-                  walletAddress={walletAddress}
-                  muteUntil={profile?.muteUntil ?? null}
-                  onMessageSent={fetchChatData}
-                  className="h-full"
-                />
-              </MonitorPanel>
+          <div className="flex min-w-0 items-center justify-center overflow-hidden">
+            <div
+              className="relative aspect-square overflow-hidden rounded-[34px] border-[3px] border-ink bg-[#FFF7E8] shadow-[8px_8px_0_#111]"
+              style={{ width: "min(100%, calc(100vh - 132px))" }}
+            >
+              <img
+                src={DESKTOP_BACKGROUND_SRC}
+                alt=""
+                aria-hidden="true"
+                className="absolute inset-0 h-full w-full object-cover"
+              />
+              <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(255,247,232,0.08)_0%,rgba(255,247,232,0)_22%,rgba(17,17,17,0.08)_100%)]" />
 
-              <MonitorPanel label="NEWS" className="flex-[1] min-w-0">
-                <NewsPanel />
-              </MonitorPanel>
+              <div className="absolute left-[4%] right-[4%] top-[3%] z-10 overflow-hidden rounded-xl border-[3px] border-ink shadow-[4px_4px_0_rgba(17,17,17,0.28)]">
+                <TickerTape items={ticker} />
+              </div>
+
+              <div className="absolute left-[4.5%] bottom-[5.5%] z-10">
+                <FloorStats stats={stats} />
+              </div>
+
+              <div className="absolute inset-x-[8%] bottom-[4.5%] top-[16%] z-10 overflow-hidden">
+                {desktopParticipants.length === 0 && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center">
+                    <p className="rounded-full bg-black/65 px-4 py-2 text-sm font-semibold text-[var(--panel-cream)] shadow-lg">
+                      The floor is quiet...
+                    </p>
+                    {!walletAddress && (
+                      <p className="text-xs font-semibold text-black/70">Connect your wallet to join.</p>
+                    )}
+                    {walletAddress && (
+                      <button onClick={handleJoinClick} className="btn-primary px-4 py-2 text-xs">
+                        Enter the Floor
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {desktopParticipants.map((entry) => {
+                  const seed = hashStr(entry.walletAddress);
+                  const posX = 0.12 + seededRand(seed, 0) * 0.96;
+                  const posY = 0.14 + seededRand(seed, 1) * 0.86;
+
+                  return (
+                    <AvatarFigure
+                      key={entry.walletAddress}
+                      entry={entry}
+                      latestCallout={latestCallout}
+                      size="md"
+                      posX={posX}
+                      posY={posY}
+                      calloutFrequency={desktopCalloutFrequency}
+                    />
+                  );
+                })}
+
+                {desktopOverflow > 0 && (
+                  <div className="absolute bottom-2 right-2 rounded-full border border-amber-900/60 bg-amber-950/85 px-2 py-0.5 text-[10px] font-mono text-amber-200">
+                    +{desktopOverflow} more
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
-          {/* Stage platform edge */}
-          <div className="h-[3px] shrink-0 bg-ink" />
+          <div ref={rightDockRef} className="relative min-h-0 overflow-hidden rounded-[28px] border-[3px] border-ink bg-[rgba(255,247,232,0.72)]">
+            <FloatingFloorPanel
+              title="Alpha Callouts"
+              containerRef={rightDockRef}
+              initialRect={{ x: 10, y: 10, width: 340, height: 310 }}
+              minWidth={250}
+              minHeight={240}
+            >
+              <CalloutFeed
+                callouts={callouts}
+                walletAddress={walletAddress}
+                ticker={ticker}
+                onCalloutPosted={fetchCalloutData}
+                onReacted={fetchCalloutData}
+                className="h-full"
+              />
+            </FloatingFloorPanel>
 
-          {/* Crowd area — bottom ~48% */}
-          <div className="relative flex-1 overflow-hidden">
-            <AvatarCrowd
-              crowdOnly
-              presence={presence}
-              walletAddress={walletAddress}
-              latestCallout={latestCallout}
-              callouts={callouts}
-              ticker={ticker}
-              onJoinClick={handleJoinClick}
-            />
-            <div className="absolute bottom-2 left-3 z-10">
-              <FloorStats stats={stats} />
-            </div>
+            <FloatingFloorPanel
+              title="Trollbox"
+              containerRef={rightDockRef}
+              initialRect={{ x: 10, y: 332, width: 340, height: 340 }}
+              minWidth={250}
+              minHeight={240}
+            >
+              <ChatBox
+                messages={chat}
+                walletAddress={walletAddress}
+                muteUntil={profile?.muteUntil ?? null}
+                onMessageSent={fetchChatData}
+                className="h-full"
+              />
+            </FloatingFloorPanel>
           </div>
         </div>
-
-        {/* ── Right TV tower ──────────────────────────────────────── */}
-        <TowerColumn ticker={ticker} side="right" />
       </div>
 
-      {/* ══════════════════════════════════════════════════════════════
-          MOBILE — tab-based card layout (< md)
-         ══════════════════════════════════════════════════════════════ */}
-      <div className="md:hidden bg-[var(--panel-cream)]">
+      <div className="pb-24 md:hidden">
         <TickerTape items={ticker} />
-        <div className="px-4 pt-2 pb-1">
-          <FloorStats stats={stats} />
-        </div>
-        <div className="flex gap-1 px-4 pb-2 pt-1">
-          {(["room", "callouts", "chat"] as MobileTab[]).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setMobileTab(tab)}
-              className={`flex-1 rounded-lg py-2 text-xs font-bold capitalize transition-colors ${
-                mobileTab === tab
-                  ? "bg-opYellow text-ink border-2 border-ink"
-                  : "bg-[var(--cream)] text-[var(--text-muted)] border-2 border-ink hover:bg-opYellow/20"
-              }`}
-            >
-              {tab === "room" ? "Room" : tab === "callouts" ? "Callouts" : "Chat"}
-            </button>
-          ))}
-        </div>
-        <div className="px-4 pb-24 bg-[var(--panel-cream)]">
-          {mobileTab === "room" && (
+
+        <div className="px-4 pt-3">
+          <div className="overflow-hidden rounded-[28px] border-[3px] border-ink bg-[var(--panel-cream)] shadow-[6px_6px_0_#111]">
             <AvatarCrowd
               presence={presence}
               walletAddress={walletAddress}
@@ -355,28 +334,85 @@ export function TradingFloorClient() {
               onJoinClick={handleJoinClick}
               mobile
             />
-          )}
-          {mobileTab === "callouts" && (
+          </div>
+        </div>
+
+        <div className="px-4 pt-3">
+          <FloorStats stats={stats} />
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 px-4 py-3">
+          {([
+            { key: "chart", label: "Chart" },
+            { key: "callouts", label: "Callouts" },
+            { key: "chat", label: "Trollbox" },
+          ] as Array<{ key: MobilePanelKey; label: string }>).map((panel) => (
+            <button
+              key={panel.key}
+              type="button"
+              onClick={() => setOpenMobilePanels((current) => ({ ...current, [panel.key]: true }))}
+              className="rounded-[18px] border-[3px] border-ink bg-opYellow px-3 py-3 text-sm font-black text-ink shadow-[4px_4px_0_#111]"
+            >
+              {panel.label}
+            </button>
+          ))}
+        </div>
+
+        {openMobilePanels.chart && (
+          <FloatingFloorPanel
+            fixed
+            title="Chart"
+            initialRect={{ x: 12, y: 124, width: Math.min(360, typeof window === "undefined" ? 320 : window.innerWidth - 24), height: 360 }}
+            minWidth={250}
+            minHeight={260}
+            onClose={() => setOpenMobilePanels((current) => ({ ...current, chart: false }))}
+          >
+            <div className="min-h-0 flex-1">
+              <ChartPanel ticker={ticker} walletAddress={walletAddress} />
+            </div>
+          </FloatingFloorPanel>
+        )}
+
+        {openMobilePanels.callouts && (
+          <FloatingFloorPanel
+            fixed
+            title="Alpha Callouts"
+            initialRect={{ x: 12, y: 144, width: Math.min(360, typeof window === "undefined" ? 320 : window.innerWidth - 24), height: 380 }}
+            minWidth={250}
+            minHeight={260}
+            onClose={() => setOpenMobilePanels((current) => ({ ...current, callouts: false }))}
+          >
             <CalloutFeed
               callouts={callouts}
               walletAddress={walletAddress}
               ticker={ticker}
               onCalloutPosted={fetchCalloutData}
               onReacted={fetchCalloutData}
+              className="h-full"
             />
-          )}
-          {mobileTab === "chat" && (
+          </FloatingFloorPanel>
+        )}
+
+        {openMobilePanels.chat && (
+          <FloatingFloorPanel
+            fixed
+            title="Trollbox"
+            initialRect={{ x: 12, y: 164, width: Math.min(360, typeof window === "undefined" ? 320 : window.innerWidth - 24), height: 380 }}
+            minWidth={250}
+            minHeight={260}
+            onClose={() => setOpenMobilePanels((current) => ({ ...current, chat: false }))}
+          >
             <ChatBox
               messages={chat}
               walletAddress={walletAddress}
               muteUntil={profile?.muteUntil ?? null}
               onMessageSent={fetchChatData}
+              className="h-full"
             />
-          )}
-        </div>
+          </FloatingFloorPanel>
+        )}
       </div>
 
-      {/* Join Floor Modal */}
       {showJoinModal && walletAddress && (
         <JoinFloorModal
           walletAddress={walletAddress}

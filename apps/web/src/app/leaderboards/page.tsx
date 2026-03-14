@@ -1,10 +1,9 @@
-﻿import { fetchLeaderboard } from "@/lib/api";
-import { LeaderboardsClient } from "./LeaderboardsClient";
+import type { ProjectDTO } from "@opfun/shared";
+import { MarketHubClient } from "@/components/opfun/MarketHubClient";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Leaderboards - OpStreet" };
 
 export default async function LeaderboardsPage() {
-  const initial = await fetchLeaderboard("earners", "7d").catch(() => ({ range: "7d", items: [] }));
-  return <LeaderboardsClient initial={initial} />;
+  return <MarketHubClient initialProjects={[] as ProjectDTO[]} initialSection="leaders" />;
 }

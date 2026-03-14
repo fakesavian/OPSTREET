@@ -1,8 +1,9 @@
 ﻿"use client";
 
 import { useEffect, useState } from "react";
-import type { LeaderboardRow } from "@/lib/api";
-import { fetchLeaderboard, fetchPlayerProfile } from "@/lib/api";
+import { useWallet } from "@/components/WalletProvider";
+import type { LeaderboardRow, PlayerProfile } from "@/lib/api";
+import { fetchLeaderboard, fetchPlayerProfile, followPlayer, unfollowPlayer } from "@/lib/api";
 
 type TabKey = "earners" | "callouts" | "trending";
 
@@ -10,6 +11,17 @@ interface LeaderboardPayload {
   range: string;
   items: LeaderboardRow[];
 }
+
+type SelectedPlayerState =
+  | PlayerProfile
+  | {
+      walletAddress: string;
+      error: string;
+      title?: string;
+      level?: number;
+      trustScore?: number;
+      badges?: unknown[];
+    };
 
 const TAB_LABELS: Record<TabKey, string> = {
   earners: "Top Earners",
@@ -33,14 +45,16 @@ function formatPct(value: number | undefined): string {
   return `${value.toFixed(1)}%`;
 }
 
-export function LeaderboardsClient({ initial }: { initial: LeaderboardPayload }) {
+export function LeaderboardsClient({ initial, embedded = false }: { initial: LeaderboardPayload; embedded?: boolean }) {
+  const { wallet } = useWallet();
   const [tab, setTab] = useState<TabKey>("earners");
   const [range, setRange] = useState<string>(initial.range);
   const [data, setData] = useState<LeaderboardPayload>(initial);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [selectedPlayer, setSelectedPlayer] = useState<Record<string, unknown> | null>(null);
+  const [selectedPlayer, setSelectedPlayer] = useState<SelectedPlayerState | null>(null);
   const [drawerLoading, setDrawerLoading] = useState(false);
+  const [followBusy, setFollowBusy] = useState(false);
 
   useEffect(() => {
     const validRanges = rangesFor(tab);
@@ -81,14 +95,51 @@ export function LeaderboardsClient({ initial }: { initial: LeaderboardPayload })
     }
   }
 
+  async function toggleFollow(): Promise<void> {
+    if (!selectedPlayer || "error" in selectedPlayer || selectedPlayer.viewerIsSelf) return;
+
+    setFollowBusy(true);
+    setError("");
+    try {
+      const counts = selectedPlayer.viewerIsFollowing
+        ? await unfollowPlayer(selectedPlayer.walletAddress)
+        : await followPlayer(selectedPlayer.walletAddress);
+
+      setSelectedPlayer((current) => {
+        if (!current || "error" in current) return current;
+        return {
+          ...current,
+          followerCount: counts.followerCount,
+          viewerIsFollowing: !current.viewerIsFollowing,
+        };
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update follow state");
+    } finally {
+      setFollowBusy(false);
+    }
+  }
+
   const rows = data.items;
 
   return (
     <div className="space-y-4 pb-20 sm:pb-0">
-      <div className="op-panel p-4">
-        <h1 className="text-2xl font-black text-ink">Player Leaderboards</h1>
-        <p className="text-xs text-[var(--text-muted)] mt-1">Confirmed live trading metrics and graded signal quality, ranked by performance.</p>
-      </div>
+      {!embedded && (
+        <div className="op-panel p-4">
+          <h1 className="text-2xl font-black text-ink">Player Leaderboards</h1>
+          <p className="mt-1 text-xs text-[var(--text-muted)]">Confirmed live trading metrics and graded signal quality, ranked by performance.</p>
+        </div>
+      )}
+
+      {embedded && (
+        <div className="op-panel p-5">
+          <p className="text-[11px] font-black uppercase tracking-[0.22em] text-[var(--text-muted)]">Leaderboard Room</p>
+          <h2 className="mt-2 text-2xl font-black text-ink">Player Leaders</h2>
+          <p className="mt-1 text-sm font-semibold text-[var(--text-secondary)]">
+            Confirmed live trading metrics and graded signal quality, ranked by performance.
+          </p>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         {(["earners", "callouts", "trending"] as TabKey[]).map((key) => (
@@ -117,7 +168,7 @@ export function LeaderboardsClient({ initial }: { initial: LeaderboardPayload })
         </div>
       </div>
 
-      <div className="op-panel p-0 overflow-hidden">
+      <div className="op-panel overflow-hidden p-0">
         {loading && <div className="px-4 py-3 text-xs text-[var(--text-muted)]">Loading leaderboard...</div>}
         {error && <div className="px-4 py-3 text-xs text-opRed">{error}</div>}
         {!loading && rows.length === 0 && !error && (
@@ -130,13 +181,13 @@ export function LeaderboardsClient({ initial }: { initial: LeaderboardPayload })
               <button
                 key={`${tab}-${row.walletAddress}-${row.rank}`}
                 onClick={() => void openProfile(row.walletAddress)}
-                className="w-full text-left px-4 py-3 hover:bg-opYellow/25 transition-colors"
+                className="w-full px-4 py-3 text-left transition-colors hover:bg-opYellow/25"
               >
                 <div className="flex items-center gap-3">
                   <div className="w-7 text-center text-sm font-black text-ink">#{row.rank}</div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-black text-ink truncate">{row.displayName}</p>
-                    <p className="text-[10px] text-[var(--text-muted)] font-mono truncate">{row.walletAddress}</p>
+                    <p className="truncate text-sm font-black text-ink">{row.displayName}</p>
+                    <p className="truncate font-mono text-[10px] text-[var(--text-muted)]">{row.walletAddress}</p>
                   </div>
                   <div className="text-right">
                     {tab === "earners" && (
@@ -180,12 +231,28 @@ export function LeaderboardsClient({ initial }: { initial: LeaderboardPayload })
           {drawerLoading && <p className="mt-3 text-xs text-[var(--text-muted)]">Loading profile...</p>}
 
           {!drawerLoading && selectedPlayer && (
-            <div className="mt-3 space-y-2 text-xs">
+            <div className="mt-3 space-y-3 text-xs">
               <p><span className="font-black">Wallet:</span> {String(selectedPlayer.walletAddress ?? "-")}</p>
               <p><span className="font-black">Title:</span> {String(selectedPlayer.title ?? "Rookie")}</p>
               <p><span className="font-black">Level:</span> {String(selectedPlayer.level ?? 1)}</p>
               <p><span className="font-black">Trust:</span> {String(selectedPlayer.trustScore ?? 50)}</p>
+              <p><span className="font-black">Followers:</span> {"error" in selectedPlayer ? 0 : selectedPlayer.followerCount}</p>
+              <p><span className="font-black">Following:</span> {"error" in selectedPlayer ? 0 : selectedPlayer.followingCount}</p>
               <p><span className="font-black">Badges:</span> {Array.isArray(selectedPlayer.badges) ? selectedPlayer.badges.length : 0}</p>
+
+              {!("error" in selectedPlayer) && !selectedPlayer.viewerIsSelf && wallet && (
+                <button
+                  onClick={() => void toggleFollow()}
+                  disabled={followBusy}
+                  className={`rounded-lg border-2 px-3 py-2 text-xs font-black transition ${
+                    selectedPlayer.viewerIsFollowing
+                      ? "border-ink bg-[var(--panel-cream)] text-ink"
+                      : "border-ink bg-opYellow text-ink"
+                  } disabled:cursor-not-allowed disabled:opacity-50`}
+                >
+                  {followBusy ? "Working..." : selectedPlayer.viewerIsFollowing ? "Unfollow" : "Follow"}
+                </button>
+              )}
             </div>
           )}
         </div>

@@ -54,7 +54,7 @@ export function OpHeader() {
             {[
               { href: "/trending", label: "Trending" },
               { href: "/leaderboards", label: "Leaders" },
-              { href: "/players", label: "Players" },
+              { href: "/players", label: "Search", search: true },
               { href: "/floor", label: "Floor" },
               { href: "/shop", label: "Shop" },
               { href: "/docs", label: "Docs" },
@@ -62,8 +62,14 @@ export function OpHeader() {
               <Link
                 key={item.href}
                 href={item.href}
-                className="op-link-highlight rounded-lg border-2 border-transparent px-3 py-1.5 text-xs font-bold text-ink transition-colors hover:border-ink hover:bg-opYellow"
+                className="op-link-highlight flex items-center gap-1.5 rounded-lg border-2 border-transparent px-3 py-1.5 text-xs font-bold text-ink transition-colors hover:border-ink hover:bg-opYellow"
               >
+                {item.search && (
+                  <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="11" cy="11" r="7" />
+                    <path d="m20 20-3.5-3.5" />
+                  </svg>
+                )}
                 {item.label}
               </Link>
             ))}

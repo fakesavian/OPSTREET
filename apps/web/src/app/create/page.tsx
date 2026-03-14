@@ -159,15 +159,12 @@ export default function CreatePage() {
   return (
     <div className="mx-auto max-w-2xl py-6">
       {/* Header */}
-      <div className="mb-8">
-        <a href="/" className="text-xs font-bold text-[var(--text-muted)] hover:text-ink transition-colors">
-          &larr; Back to feed
-        </a>
-        <h1 className="mt-3 text-3xl font-black text-ink">Launch a Token</h1>
-        <p className="mt-2 text-sm font-bold text-ink">
+      <div className="op-panel mb-8 space-y-3 p-5">
+        <h1 className="text-3xl font-black text-ink">Launch a Token</h1>
+        <p className="text-sm font-bold text-ink">
           Fixed supply &middot; No mint &middot; No hidden admin powers.
         </p>
-        <p className="mt-2 text-xs text-[var(--text-muted)]">
+        <p className="text-xs font-semibold text-[var(--text-secondary)]">
           Default platform payment token:{" "}
           <span className="font-black text-ink">${DEFAULT_GAME_PAYMENT_TOKEN}</span>{" "}
           ({GAME_PAYMENT_TOKENS[DEFAULT_GAME_PAYMENT_TOKEN].contractAddress}).
@@ -178,7 +175,7 @@ export default function CreatePage() {
           href="https://opnet.org/opwallet/"
           target="_blank"
           rel="noopener noreferrer"
-          className="mt-2 inline-flex items-center gap-1 rounded-lg border-2 border-ink bg-opYellow px-2 py-1 text-[10px] font-black text-ink hover:bg-opYellow/80 transition-colors"
+          className="inline-flex items-center gap-1 rounded-lg border-2 border-ink bg-opYellow px-2 py-1 text-[10px] font-black text-ink hover:bg-opYellow/80 transition-colors"
         >
           Install OP_WALLET &rarr;
         </a>

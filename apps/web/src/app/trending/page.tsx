@@ -1,11 +1,10 @@
-import { fetchProjects } from "@/lib/api";
 import type { ProjectDTO } from "@opfun/shared";
-import { TrendingClient } from "./TrendingClient";
+import { MarketHubClient } from "@/components/opfun/MarketHubClient";
 
+export const dynamic = "force-dynamic";
 export const revalidate = 10;
-export const metadata = { title: "Trending — OpStreet" };
+export const metadata = { title: "Trending - OpStreet" };
 
 export default async function TrendingPage() {
-  const result = await fetchProjects("trending").catch(() => ({ items: [] as ProjectDTO[], nextCursor: null, hasMore: false }));
-  return <TrendingClient initialProjects={result.items} />;
+  return <MarketHubClient initialProjects={[] as ProjectDTO[]} initialSection="trending" />;
 }

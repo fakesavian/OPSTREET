@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -13,7 +13,19 @@ type NavLink = {
   cta?: boolean;
   external?: boolean;
   locked?: boolean;
+  search?: boolean;
+  disabled?: boolean;
+  soon?: boolean;
 };
+
+function SearchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3.5-3.5" />
+    </svg>
+  );
+}
 
 export function MobileNav() {
   const [open, setOpen] = useState(false);
@@ -61,12 +73,13 @@ export function MobileNav() {
   const navLinks: NavLink[] = [
     { label: "Trending", href: "/trending" },
     { label: "Leaders", href: "/leaderboards" },
-    { label: "Players", href: "/players" },
+    { label: "Search", href: "/players", search: true },
     { label: "Floor", href: "/floor" },
     { label: "Shop", href: "/shop" },
     { label: clansUnlocked ? "Clans" : "Clans (Locked)", href: clansUnlocked ? "/clans" : "/shop", locked: !clansUnlocked },
     { label: "Docs", href: "/docs" },
     { label: "Swap", href: "https://motoswap.org", external: true },
+    { label: "Staking", href: "/create", disabled: true, soon: true },
     { label: "+ Create Coin", href: "/create", cta: true },
   ];
 
@@ -83,10 +96,10 @@ export function MobileNav() {
         <span className={`block h-0.5 w-5 rounded bg-ink transition-all duration-200 ${open ? "-translate-y-2 -rotate-45" : ""}`} />
       </button>
 
-      {open && <div className="fixed inset-0 z-40 bg-black/60 sm:hidden" onClick={() => setOpen(false)} aria-hidden="true" />}
+      {open && <div className="fixed inset-0 z-[68] bg-black/60 sm:hidden" onClick={() => setOpen(false)} aria-hidden="true" />}
 
       <aside
-        className={`fixed inset-y-0 right-0 z-50 flex w-72 flex-col border-l-3 border-ink bg-[var(--panel-cream)] p-6 transition-transform duration-200 ease-in-out sm:hidden ${
+        className={`fixed inset-y-0 right-0 z-[72] flex w-72 flex-col border-l-3 border-ink bg-[var(--panel-cream)] p-6 transition-transform duration-200 ease-in-out sm:hidden ${
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >
@@ -102,7 +115,7 @@ export function MobileNav() {
         </div>
 
         <nav className="flex flex-col gap-1">
-          {navLinks.map(({ label, href, cta, external, locked }) =>
+          {navLinks.map(({ label, href, cta, external, locked, search, disabled, soon }) =>
             external ? (
               <a
                 key={`${href}-${label}`}
@@ -113,6 +126,21 @@ export function MobileNav() {
               >
                 {label}
               </a>
+            ) : disabled ? (
+              <div
+                key={`${href}-${label}`}
+                className="relative rounded-xl border-2 border-transparent px-4 py-3 text-sm font-bold text-[var(--text-muted)] opacity-70"
+              >
+                <div className="flex items-center gap-2">
+                  {search && <SearchIcon />}
+                  {label}
+                </div>
+                {soon && (
+                  <span className="absolute right-3 top-2 rounded border border-ink bg-opRed px-1.5 py-0.5 text-[8px] font-black leading-none text-white">
+                    SOON
+                  </span>
+                )}
+              </div>
             ) : (
               <Link
                 key={`${href}-${label}`}
@@ -120,23 +148,12 @@ export function MobileNav() {
                 onClick={() => setOpen(false)}
                 className={cta ? "op-btn-primary mt-2 text-center" : `rounded-xl border-2 border-transparent px-4 py-3 text-sm font-bold ${locked ? "text-[var(--text-muted)]" : "text-ink hover:border-ink hover:bg-opYellow"}`}
               >
+                {search && <span className="mr-2 inline-flex align-middle"><SearchIcon /></span>}
                 {label}
               </Link>
             ),
           )}
         </nav>
-
-        <div className="relative mt-2 w-fit">
-          <button
-            disabled
-            className="cursor-not-allowed rounded-xl border-2 border-transparent px-4 py-3 text-left text-sm font-bold text-[var(--text-muted)] opacity-60"
-          >
-            Staking
-          </button>
-          <span className="absolute right-2 top-2 rounded border border-ink bg-opRed px-1.5 py-0.5 text-[8px] font-black leading-none text-white">
-            SOON
-          </span>
-        </div>
 
         <div className="mt-4 border-t-2 border-ink/20 pt-4">
           <p className="mb-2 text-[9px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Wallet</p>
@@ -148,4 +165,3 @@ export function MobileNav() {
     </>
   );
 }
-
