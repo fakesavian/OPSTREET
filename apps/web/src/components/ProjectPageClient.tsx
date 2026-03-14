@@ -12,8 +12,9 @@ import { useWallet } from "./WalletProvider";
 import { AchievementBadges } from "./AchievementBadges";
 import { OpBadge } from "./opfun/OpBadge";
 import { getApiBase } from "@/lib/apiBase";
+import { getOpScanContractUrl, getOpScanHomeUrl } from "@/lib/opscan";
 
-const API = getApiBase();
+const API = typeof window !== "undefined" ? getApiBase() : "";
 
 type FullProject = ProjectDTO & { checkRuns: CheckRun[]; watchEvents: WatchEvent[] };
 
@@ -116,6 +117,28 @@ function LiveMarketSummary({
   );
 }
 
+function launchStatusHint(project: ProjectDTO): string {
+  switch (project.launchStatus) {
+    case "BUILDING":
+      return "Contract build is running.";
+    case "AWAITING_WALLET_DEPLOY":
+      return "Submit the deploy transaction details to continue.";
+    case "DEPLOY_SUBMITTED":
+      return "Deploy transaction is waiting for watcher confirmation.";
+    case "DEPLOY_CONFIRMED":
+    case "AWAITING_POOL_CREATE":
+      return "Create the liquidity pool to unlock trading.";
+    case "POOL_SUBMITTED":
+      return "Pool transaction is waiting for watcher confirmation.";
+    case "LIVE":
+      return "Pool is live. Buy and sell are available below.";
+    case "FAILED":
+      return project.launchError ?? "Launch failed. Retry the launch pipeline.";
+    default:
+      return "Run checks and complete the launch pipeline before trading.";
+  }
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function ProjectPageClient({ initialProject }: { initialProject: FullProject }) {
@@ -125,6 +148,8 @@ export function ProjectPageClient({ initialProject }: { initialProject: FullProj
   // T4: admin secret for resolving watch events
   const [watcherAdminSecret, setWatcherAdminSecret] = useState("");
   const [showWatcherAdmin, setShowWatcherAdmin] = useState(false);
+  const contractUrl = getOpScanContractUrl(project.contractAddress);
+  const poolUrl = getOpScanContractUrl(project.poolAddress);
 
   function handleStatusChange(newStatus: string, updates?: Partial<ProjectDTO>) {
     setProject((p) => ({ ...p, status: newStatus as ProjectDTO["status"], ...updates }));
@@ -229,6 +254,45 @@ export function ProjectPageClient({ initialProject }: { initialProject: FullProj
           : "Trading stays unavailable until deployment and pool creation are confirmed on OP_NET testnet."}
       </div>
 
+      <div className="op-panel px-4 py-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)]">Trading Readiness</p>
+            <p className="text-sm font-bold text-ink">{launchStatusHint(project)}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {project.launchStatus !== "LIVE" && (
+              <a
+                href="#launch-pipeline"
+                className="inline-flex items-center rounded-lg border-2 border-ink bg-opYellow px-3 py-1.5 text-xs font-black text-ink transition-colors hover:bg-opYellow/80"
+              >
+                Finish Launch
+              </a>
+            )}
+            {contractUrl && (
+              <a
+                href={contractUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center rounded-lg border-2 border-ink bg-[var(--cream)] px-3 py-1.5 text-xs font-black text-ink transition-colors hover:bg-opYellow/20"
+              >
+                Contract on OP_SCAN
+              </a>
+            )}
+            {poolUrl && (
+              <a
+                href={poolUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center rounded-lg border-2 border-ink bg-[var(--cream)] px-3 py-1.5 text-xs font-black text-ink transition-colors hover:bg-opYellow/20"
+              >
+                Pool on OP_SCAN
+              </a>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* ── 2-col desktop layout ───────────────────────────────────────────── */}
       <div className="grid lg:grid-cols-[1fr_280px] gap-5">
         {/* Left column */}
@@ -252,17 +316,28 @@ export function ProjectPageClient({ initialProject }: { initialProject: FullProj
                     {k} ↗
                   </a>
                 ))}
+                <a
+                  href={getOpScanHomeUrl()}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 rounded-lg border-2 border-ink bg-[var(--cream)] px-3 py-1.5 text-xs font-black text-ink hover:bg-opYellow transition-colors"
+                >
+                  Open OP_SCAN
+                </a>
               </div>
             </div>
           )}
 
           {/* Meta grid (contract / deploy / build — only when present) */}
-          {(project.contractAddress || project.deployTx || project.buildHash) && (
-            <div className="grid gap-2 sm:grid-cols-3">
+          {(project.contractAddress || project.deployTx || project.poolAddress || project.buildHash) && (
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
               {project.contractAddress && (
-                <MetaCard label="Contract" value={project.contractAddress} mono />
+                <MetaCard label="Contract" value={project.contractAddress} mono href={contractUrl ?? undefined} />
               )}
               {project.deployTx && <MetaCard label="Deploy TX" value={project.deployTx} mono />}
+              {project.poolAddress && (
+                <MetaCard label="Pool" value={project.poolAddress} mono href={poolUrl ?? undefined} />
+              )}
               {project.buildHash && <MetaCard label="Build Hash" value={project.buildHash} mono />}
             </div>
           )}
@@ -326,7 +401,7 @@ export function ProjectPageClient({ initialProject }: { initialProject: FullProj
                 <li>
                   {"🔍 "}
                   <a
-                    href="https://scan.opnet.org"
+                    href={getOpScanHomeUrl()}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-ink underline hover:text-opYellow font-bold"
@@ -402,7 +477,12 @@ export function ProjectPageClient({ initialProject }: { initialProject: FullProj
           <RiskScoreCard riskScore={project.riskScore} />
 
           {/* Launch pipeline — wallet-native deploy + pool */}
-          {(project.status === "READY" || project.status === "LAUNCHED" || project.status === "DEPLOY_PACKAGE_READY") && (
+          {(project.status === "READY" ||
+            project.status === "LAUNCHED" ||
+            project.status === "DEPLOY_PACKAGE_READY" ||
+            Boolean(project.launchStatus) ||
+            Boolean(project.contractAddress) ||
+            Boolean(project.buildHash)) && (
             <LaunchPanel project={project} onStatusChange={handleStatusChange} />
           )}
 
@@ -419,7 +499,17 @@ export function ProjectPageClient({ initialProject }: { initialProject: FullProj
 }
 
 // T3: MetaCard with copy-to-clipboard
-function MetaCard({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function MetaCard({
+  label,
+  value,
+  mono,
+  href,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  href?: string;
+}) {
   const [copied, setCopied] = useState(false);
 
   function copy() {
@@ -446,6 +536,16 @@ function MetaCard({ label, value, mono }: { label: string; value: string; mono?:
       >
         {value}
       </p>
+      {href && (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 inline-flex items-center gap-1 text-[10px] font-black text-ink transition-colors hover:text-opYellow"
+        >
+          Open in OP_SCAN
+        </a>
+      )}
     </div>
   );
 }

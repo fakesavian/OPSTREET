@@ -7,9 +7,21 @@ import type {
   FloorTickerDTO,
   FloorStatsDTO,
 } from "@opfun/shared";
-import { getApiBase, isLocalApiBase } from "./apiBase";
+import { getApiBase, getApiRuntimeConfig, isLocalApiBase } from "./apiBase";
 
-const BASE = getApiBase();
+const BASE =
+  typeof window !== "undefined"
+    ? getApiBase()
+    : "";
+const API_RUNTIME =
+  typeof window !== "undefined"
+    ? getApiRuntimeConfig()
+    : {
+        mode: "same-origin" as const,
+        base: "",
+        environment: (process.env["NODE_ENV"] ?? "development") === "development" ? "development" as const : "production" as const,
+        explicit: false,
+      };
 
 function apiUnavailableError(action: string): Error {
   const localFallback =
@@ -17,8 +29,10 @@ function apiUnavailableError(action: string): Error {
     typeof window !== "undefined" &&
     !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname.toLowerCase());
   const hint = localFallback
-    ? "Set NEXT_PUBLIC_API_URL (or OPFUN_API_URL + /api rewrite) to your live backend and redeploy."
-    : "Start the local stack with `pnpm dev` and try again.";
+    ? "Do not ship a localhost API target. Leave NEXT_PUBLIC_API_URL unset for same-origin /api in Vercel, or set it to your live backend origin and redeploy."
+    : API_RUNTIME.mode === "same-origin"
+      ? "Check the same-origin /api deployment and the backend diagnostics route."
+      : "Start the local stack with `pnpm dev` and try again.";
   return new Error(
     `Cannot reach API at ${BASE} while ${action}. ${hint}`,
   );
@@ -30,6 +44,18 @@ async function fetchOrExplain(url: string, init: RequestInit, action: string): P
   } catch {
     throw apiUnavailableError(action);
   }
+}
+
+async function readErrorMessage(res: Response, fallback: string): Promise<string> {
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    const payload = await res.json().catch(() => null) as { error?: string; message?: string } | null;
+    if (payload?.error) return payload.error;
+    if (payload?.message) return payload.message;
+  }
+
+  const text = (await res.text().catch(() => "")).trim();
+  return text || `${fallback} (HTTP ${res.status})`;
 }
 
 export interface PaginatedProjects {
@@ -298,7 +324,7 @@ export async function fetchAuthNonce(
     body: JSON.stringify({ walletAddress }),
     credentials: "include",
   }, "requesting a wallet nonce");
-  if (!res.ok) throw new Error("Failed to get auth nonce");
+  if (!res.ok) throw new Error(await readErrorMessage(res, "Failed to get auth nonce"));
   return res.json() as Promise<{ nonce: string; message: string; expiresAt: string }>;
 }
 
@@ -355,6 +381,20 @@ export interface LeaderboardRow {
   hotScore?: number;
 }
 
+export interface PlayerSearchResult {
+  walletAddress: string;
+  displayName: string;
+  avatarId: string;
+  level: number;
+  title: string;
+  trustScore: number;
+  badgesCount: number;
+  hotScore?: number;
+  realizedPnlSats?: number;
+  calloutHitRate?: number;
+  totalTrades?: number;
+}
+
 export async function fetchLeaderboard(
   type: "earners" | "callouts" | "trending",
   range: string,
@@ -366,10 +406,103 @@ export async function fetchLeaderboard(
   return res.json() as Promise<{ range: string; items: LeaderboardRow[] }>;
 }
 
-export async function fetchPlayerProfile(playerId: string): Promise<Record<string, unknown>> {
-  const res = await fetch(`${BASE}/players/${encodeURIComponent(playerId)}`, { cache: "no-store" });
+export interface PlayerCharacter {
+  id: string;
+  label: string;
+  imageUrl: string | null;
+  emoji: string | null;
+  tier: string;
+  active: boolean;
+}
+
+export interface PlayerTokenHolding {
+  projectId: string;
+  slug: string;
+  ticker: string;
+  name: string;
+  tokenAmount: number;
+  estimatedValueSats: number;
+  lastTradeAt: string;
+}
+
+export interface PlayerCurrentPosition extends PlayerTokenHolding {
+  netFlowSats: number;
+  currentPriceSats: number;
+  tradeCount: number;
+}
+
+export interface PlayerFoundationProgress {
+  tokensCreated: number;
+  calloutsCount: number;
+}
+
+export interface PlayerProfile {
+  walletAddress: string;
+  displayName: string;
+  bio: string;
+  avatarId: string;
+  level: number;
+  title: string;
+  xp: number;
+  trustScore: number;
+  followerCount: number;
+  followingCount: number;
+  viewerIsSelf: boolean;
+  viewerIsFollowing: boolean;
+  reputationComponents: Record<string, unknown>;
+  badges: Array<{
+    id: string;
+    name: string;
+    description: string;
+    category: string;
+    tier: string;
+    iconKey: string;
+    awardedAt: string;
+  }>;
+  stats: Record<string, unknown>;
+  recentTrades: Array<{
+    id: string;
+    tokenSymbol: string;
+    side: string;
+    amountSats: number;
+    tokenAmount: number;
+    priceSats: number;
+    confirmedAt: string;
+  }>;
+  recentCallouts: Array<{
+    id: string;
+    content: string;
+    projectId: string | null;
+    createdAt: string;
+    grade: {
+      multiple: number;
+      peakAt: string;
+      windowUsed: string;
+      gradingVersion: number;
+      gradedAt: string;
+    } | null;
+  }>;
+  foundation: PlayerFoundationProgress;
+  currentCharacters: PlayerCharacter[];
+  tokenHoldings: PlayerTokenHolding[];
+  currentPositions: PlayerCurrentPosition[];
+}
+
+export async function fetchPlayerProfile(playerId: string): Promise<PlayerProfile> {
+  const res = await fetch(`${BASE}/players/${encodeURIComponent(playerId)}`, {
+    credentials: "include",
+    cache: "no-store",
+  });
   if (!res.ok) throw new Error("Failed to fetch player profile");
-  return res.json() as Promise<Record<string, unknown>>;
+  return res.json() as Promise<PlayerProfile>;
+}
+
+export async function fetchPlayerSearch(query: string, limit: number = 12): Promise<PlayerSearchResult[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (query.trim()) params.set("q", query.trim());
+  const res = await fetch(`${BASE}/players/search?${params}`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Failed to search players");
+  return res.json() as Promise<PlayerSearchResult[]>;
 }
 
 export async function fetchPlayerBadges(playerId: string): Promise<Array<Record<string, unknown>>> {
@@ -399,7 +532,10 @@ export interface PlayerMeInventoryItem {
 export interface PlayerMeProfile {
   walletAddress: string;
   displayName: string;
+  bio: string;
   selectedSpriteId: string;
+  followerCount: number;
+  followingCount: number;
   spriteOptions: PlayerMeSpriteOption[];
   onchainInventory: PlayerMeInventoryItem[];
 }
@@ -415,8 +551,16 @@ export async function fetchPlayerMe(): Promise<PlayerMeProfile> {
 
 export async function updatePlayerMe(data: {
   displayName?: string;
+  bio?: string;
   selectedSpriteId?: string;
-}): Promise<{ walletAddress: string; displayName: string; selectedSpriteId: string }> {
+}): Promise<{
+  walletAddress: string;
+  displayName: string;
+  bio: string;
+  selectedSpriteId: string;
+  followerCount: number;
+  followingCount: number;
+}> {
   const res = await fetch(`${BASE}/players/me`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -427,7 +571,38 @@ export async function updatePlayerMe(data: {
     const err = await res.json().catch(() => ({}));
     throw new Error((err as { error?: string }).error ?? "Failed to update profile.");
   }
-  return res.json() as Promise<{ walletAddress: string; displayName: string; selectedSpriteId: string }>;
+  return res.json() as Promise<{
+    walletAddress: string;
+    displayName: string;
+    bio: string;
+    selectedSpriteId: string;
+    followerCount: number;
+    followingCount: number;
+  }>;
+}
+
+export async function followPlayer(playerId: string): Promise<{ followerCount: number; followingCount: number }> {
+  const res = await fetch(`${BASE}/players/${encodeURIComponent(playerId)}/follow`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Failed to follow player.");
+  }
+  return res.json() as Promise<{ followerCount: number; followingCount: number }>;
+}
+
+export async function unfollowPlayer(playerId: string): Promise<{ followerCount: number; followingCount: number }> {
+  const res = await fetch(`${BASE}/players/${encodeURIComponent(playerId)}/follow`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Failed to unfollow player.");
+  }
+  return res.json() as Promise<{ followerCount: number; followingCount: number }>;
 }
 
 export async function createDevSession(walletAddress: string): Promise<void> {
@@ -450,6 +625,8 @@ export interface BlockStatus {
   blockHeight: number;
   nextBlockEstimateMs: number;
   timestamp: string;
+  source?: "rpc";
+  degraded?: boolean;
 }
 
 export interface TokenPrice {
@@ -461,6 +638,56 @@ export interface TokenPrice {
 export interface PriceData {
   prices: Record<string, TokenPrice>;
   btcUsd?: number;
+}
+
+export interface WalletBalance {
+  address: string;
+  lookupAddress: string;
+  confirmedSats: number;
+  unconfirmedSats: number;
+  totalSats: number;
+  btcUsd: number;
+  usd: number;
+  timestamp: string;
+}
+
+export interface OpnetDiagnosticsResponse {
+  timestamp: string;
+  runtimeMode: "development" | "preview" | "production";
+  network: string;
+  rpcUrl: string;
+  provider: {
+    healthy: boolean;
+    blockHeight?: number;
+    latencyMs?: number;
+    error?: string;
+  };
+  backendApiTarget: string | null;
+  contracts: {
+    factory: { configured: boolean; valid: boolean; codeExists: boolean | null; address: string | null; error?: string };
+    router: { configured: boolean; valid: boolean; codeExists: boolean | null; address: string | null; error?: string };
+    tbtc: { configured: boolean; valid: boolean; codeExists: boolean | null; address: string | null; error?: string };
+    shopCollection: { configured: boolean; valid: boolean; codeExists: boolean | null; address: string | null; error?: string };
+  };
+  readiness: {
+    liveReads: boolean;
+    poolCreation: boolean;
+    routerReads: boolean;
+    tbtcLiquidity: boolean;
+    shopMint: boolean;
+  };
+  indexer: {
+    latestIndexedBlock: number | null;
+    latestIndexedAt: string | null;
+    liveBlockLag: number | null;
+    confirmationsRequired: number;
+  };
+  walletCapabilities: {
+    auth: boolean;
+    launch: boolean;
+    trade: boolean;
+    shop: boolean;
+  };
 }
 
 export async function fetchBlockStatus(): Promise<BlockStatus> {
@@ -479,6 +706,30 @@ export async function fetchBtcPrice(): Promise<{ usd: number }> {
   const res = await fetch(`${BASE}/opnet/btc-price`, { cache: "no-store" });
   if (!res.ok) throw new Error("BTC price unavailable");
   return res.json() as Promise<{ usd: number }>;
+}
+
+export async function fetchWalletBalance(address: string): Promise<WalletBalance> {
+  const res = await fetch(`${BASE}/opnet/address-balance/${encodeURIComponent(address)}`, {
+    credentials: "include",
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Wallet balance unavailable");
+  }
+  return res.json() as Promise<WalletBalance>;
+}
+
+export async function fetchOpnetDiagnostics(): Promise<OpnetDiagnosticsResponse> {
+  const res = await fetchOrExplain(`${BASE}/opnet/diagnostics`, {
+    credentials: "include",
+    cache: "no-store",
+  }, "loading OP_NET diagnostics");
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Failed to fetch OP_NET diagnostics");
+  }
+  return res.json() as Promise<OpnetDiagnosticsResponse>;
 }
 
 // ── Launch Pipeline API ───────────────────────────────────────────────
@@ -626,6 +877,15 @@ export interface MarketStateResponse {
   reserveBase: number;
   reserveQuote: number;
   lastTradeAt: string | null;
+  freshness: {
+    dataBucket: "authoritative-live" | "derived-indexed" | "unavailable";
+    degraded: boolean;
+    stale: boolean;
+    staleAgeMs: number | null;
+    latestIndexedBlock: number | null;
+    latestIndexedAt: string | null;
+    confirmationsRequired: number;
+  };
 }
 
 export interface CandleData {
@@ -647,11 +907,21 @@ export async function fetchCandles(
   projectId: string,
   timeframe: string = "1h",
   limit: number = 100,
-): Promise<{ projectId: string; timeframe: string; candles: CandleData[] }> {
+): Promise<{
+  projectId: string;
+  timeframe: string;
+  candles: CandleData[];
+  freshness: MarketStateResponse["freshness"];
+}> {
   const params = new URLSearchParams({ timeframe, limit: String(limit) });
   const res = await fetch(`${BASE}/projects/${projectId}/candles?${params}`, { cache: "no-store" });
   if (!res.ok) throw new Error("Failed to fetch candles");
-  return res.json() as Promise<{ projectId: string; timeframe: string; candles: CandleData[] }>;
+  return res.json() as Promise<{
+    projectId: string;
+    timeframe: string;
+    candles: CandleData[];
+    freshness: MarketStateResponse["freshness"];
+  }>;
 }
 
 export interface ClanLicenseStatus {

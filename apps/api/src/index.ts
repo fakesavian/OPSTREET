@@ -1,3 +1,7 @@
+import { existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
@@ -16,8 +20,40 @@ import { opnetRoutes } from "./routes/opnet.js";
 import { launchRoutes } from "./routes/launch.js";
 import { prisma } from "./db.js";
 import { seedFoundationData } from "./services/foundation.js";
-import { assertRuntimeConfig, checkProviderHealth } from "@opfun/opnet";
-import { checkExplorerHealth } from "./services/opnetProvider.js";
+import { assertRuntimeConfig, getRuntimeDiagnostics } from "@opfun/opnet";
+
+const currentDir = dirname(fileURLToPath(import.meta.url));
+const appRoot = resolve(currentDir, "..");
+const envFiles = [resolve(appRoot, ".env"), resolve(appRoot, ".env.local")];
+
+function loadEnvFile(filePath: string): void {
+  const contents = readFileSync(filePath, "utf8");
+  for (const rawLine of contents.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+
+    const separatorIndex = line.indexOf("=");
+    if (separatorIndex <= 0) continue;
+
+    const key = line.slice(0, separatorIndex).trim();
+    if (!key || process.env[key] !== undefined) continue;
+
+    let value = line.slice(separatorIndex + 1).trim();
+    if (
+      (value.startsWith("\"") && value.endsWith("\"")) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] = value;
+  }
+}
+
+for (const envFile of envFiles) {
+  if (existsSync(envFile)) {
+    loadEnvFile(envFile);
+  }
+}
 
 // S2: Fail-fast if ADMIN_SECRET is still the default value in production.
 const ADMIN_SECRET = process.env["ADMIN_SECRET"] ?? "dev-secret-change-me";
@@ -110,20 +146,30 @@ const strictOpnetStartup = process.env["STRICT_OPNET_STARTUP"] === "true";
 try {
   assertRuntimeConfig({ requireRpc: true });
 
-  const [providerHealth, explorerHealth] = await Promise.all([
-    checkProviderHealth(),
-    checkExplorerHealth(),
-  ]);
+  const runtimeDiagnostics = await getRuntimeDiagnostics();
 
-  if (!providerHealth.healthy || !explorerHealth.healthy) {
-    const health = { providerHealth, explorerHealth };
+  if (!runtimeDiagnostics.provider.healthy) {
     if (strictOpnetStartup) {
-      console.error("[api] FATAL: OPNet startup health checks failed.", health);
+      console.error("[api] FATAL: OPNet startup health checks failed.", runtimeDiagnostics);
       process.exit(1);
     }
     app.log.warn(
-      { health },
-      "OPNet startup health checks degraded; API will start with OPNet routes potentially unavailable.",
+      { runtimeDiagnostics },
+      "OPNet RPC degraded on startup; API will start with OPNet live routes potentially unavailable.",
+    );
+  }
+
+  const invalidContracts = (
+    Object.entries(runtimeDiagnostics.contracts) as Array<
+      [keyof typeof runtimeDiagnostics.contracts, (typeof runtimeDiagnostics.contracts)[keyof typeof runtimeDiagnostics.contracts]]
+    >
+  )
+    .filter(([, value]) => value.configured && (!value.valid || value.codeExists === false))
+    .map(([key, value]) => ({ key, value }));
+  if (invalidContracts.length > 0) {
+    app.log.warn(
+      { invalidContracts },
+      "OPNet contract configuration is present but failed validation or code probing.",
     );
   }
 

@@ -10,11 +10,13 @@ import {
 import { submitOpnetTradeWithWallet, type WalletProviderType } from "@/lib/wallet";
 import { fetchMarketState, type MarketStateResponse } from "@/lib/api";
 import { getApiBase } from "@/lib/apiBase";
+import { getOpScanContractUrl } from "@/lib/opscan";
 
-const API = getApiBase();
+const API = typeof window !== "undefined" ? getApiBase() : "";
 
 type OrderMode = "SWAP" | "SEND";
 type ConfirmBlocks = 1 | 2 | 3;
+type TradeSide = "BUY" | "SELL";
 
 interface BuyQuote {
   status: string;
@@ -32,7 +34,7 @@ interface BuyQuote {
     }>;
   };
   quote: {
-    side?: "BUY" | "SELL";
+    side?: TradeSide;
     mode: OrderMode;
     currentPriceSats: number;
     priceImpactBps?: number;
@@ -42,7 +44,9 @@ interface BuyQuote {
     paymentTokenToSats: number;
     requestedPaymentAmount: number;
     requestedSats: number;
+    tokenAmount?: number;
     estimatedTokenAmount: number;
+    estimatedPaymentAmount?: number;
     confirmBlocks: ConfirmBlocks;
     reorgProtectionLevel: string;
     reorgProtectionFeeSats: number;
@@ -77,10 +81,12 @@ interface BuyConfirmResponse {
   projectId: string;
   ticker: string;
   walletAddress: string;
+  side?: TradeSide;
   mode: OrderMode;
   paymentToken: GamePaymentToken;
   paymentTokenContract: string;
   paymentAmount: number;
+  tokenAmount?: number;
   amountSats: number;
   confirmBlocks: ConfirmBlocks;
   maxSlippageBps: number;
@@ -159,9 +165,10 @@ function StepLine() {
 }
 
 export function BuyFlowPanel({ project, walletAddress, walletProvider }: BuyFlowPanelProps) {
+  const [side, setSide] = useState<TradeSide>("BUY");
   const [mode, setMode] = useState<OrderMode>("SWAP");
   const [paymentToken, setPaymentToken] = useState<GamePaymentToken>(DEFAULT_GAME_PAYMENT_TOKEN);
-  const [paymentAmount, setPaymentAmount] = useState("1");
+  const [inputAmount, setInputAmount] = useState("1");
   const [confirmBlocks, setConfirmBlocks] = useState<ConfirmBlocks>(2);
   const [slippagePercent, setSlippagePercent] = useState("40");
   const [feeDisplay, setFeeDisplay] = useState<"BTC" | "SATS">("BTC");
@@ -173,6 +180,8 @@ export function BuyFlowPanel({ project, walletAddress, walletProvider }: BuyFlow
   const [market, setMarket] = useState<MarketStateResponse | null>(null);
 
   const poolLive = project.launchStatus === "LIVE";
+  const contractUrl = getOpScanContractUrl(project.contractAddress);
+  const poolUrl = getOpScanContractUrl(project.poolAddress);
 
   // Fetch market state on mount
   useEffect(() => {
@@ -180,22 +189,31 @@ export function BuyFlowPanel({ project, walletAddress, walletProvider }: BuyFlow
     fetchMarketState(project.id).then(setMarket).catch(() => setMarket(null));
   }, [project.id, poolLive]);
 
+  useEffect(() => {
+    setQuote(null);
+    setConfirmation(null);
+    setError("");
+  }, [side, paymentToken, mode, confirmBlocks]);
+
   const localEstimate = useMemo(() => {
     if (!market?.available || market.currentPriceSats <= 0) return 0;
-    const amount = Number(paymentAmount);
+    const amount = Number(inputAmount);
     if (!Number.isFinite(amount) || amount <= 0) return 0;
-    const paymentToSats = paymentToken === "PILL" ? 70_000 : 65_000;
-    const spendSats = amount * paymentToSats;
-    return Math.floor((spendSats / market.currentPriceSats) * 1_000_000);
-  }, [paymentAmount, paymentToken, market]);
+    if (side === "BUY") {
+      const paymentToSats = paymentToken === "PILL" ? 70_000 : 65_000;
+      const spendSats = amount * paymentToSats;
+      return Math.floor((spendSats / market.currentPriceSats) * 1_000_000);
+    }
+    return Math.max(0, Math.floor(amount * market.currentPriceSats));
+  }, [inputAmount, paymentToken, market, side]);
 
   const shownQuote = quote?.quote;
   const isLiveQuote = quote?.status === "LIVE_QUOTE";
 
   async function reserveSwap(): Promise<void> {
     if (!walletAddress) { setError("Connect a wallet first."); return; }
-    const payment = Number(paymentAmount);
-    if (!Number.isFinite(payment) || payment <= 0) { setError("Enter a valid amount."); return; }
+    const amount = Number(inputAmount);
+    if (!Number.isFinite(amount) || amount <= 0) { setError("Enter a valid amount."); return; }
     const slippage = Number(slippagePercent);
     if (!Number.isFinite(slippage) || slippage < 0.1 || slippage > 40) { setError("Slippage must be between 0.1 and 40."); return; }
 
@@ -208,8 +226,10 @@ export function BuyFlowPanel({ project, walletAddress, walletProvider }: BuyFlow
         credentials: "include",
         body: JSON.stringify({
           walletAddress,
+          side,
           paymentToken,
-          paymentAmount: payment,
+          paymentAmount: side === "BUY" ? amount : undefined,
+          tokenAmount: side === "SELL" ? amount : undefined,
           confirmBlocks,
           maxSlippageBps: Math.round(slippage * 100),
           mode,
@@ -249,9 +269,10 @@ export function BuyFlowPanel({ project, walletAddress, walletProvider }: BuyFlow
           projectId: project.id,
           walletAddress,
           contractAddress: quote.contractAddress,
-          side: "BUY",
+          side,
           paymentToken: quote.quote.paymentToken,
           paymentAmount: quote.quote.requestedPaymentAmount,
+          tokenAmount: quote.quote.tokenAmount,
           amountSats: quote.quote.requestedSats,
           confirmBlocks: quote.quote.confirmBlocks,
           maxSlippageBps: quote.quote.maxSlippageBps,
@@ -272,8 +293,10 @@ export function BuyFlowPanel({ project, walletAddress, walletProvider }: BuyFlow
         credentials: "include",
         body: JSON.stringify({
           walletAddress,
+          side,
           paymentToken: quote.quote.paymentToken,
           paymentAmount: quote.quote.requestedPaymentAmount,
+          tokenAmount: quote.quote.tokenAmount,
           amountSats: quote.quote.requestedSats,
           confirmBlocks: quote.quote.confirmBlocks,
           maxSlippageBps: quote.quote.maxSlippageBps,
@@ -301,7 +324,9 @@ export function BuyFlowPanel({ project, walletAddress, walletProvider }: BuyFlow
 
   const networkFeeSats = shownQuote?.networkFeeSats ?? 0;
   const reorgFeeSats = shownQuote?.reorgProtectionFeeSats ?? (confirmBlocks === 1 ? 2_000 : confirmBlocks === 2 ? 5_000 : 8_000);
-  const estimatedReceive = shownQuote?.estimatedTokenAmount ?? localEstimate;
+  const estimatedReceive = side === "BUY"
+    ? (shownQuote?.estimatedTokenAmount ?? localEstimate)
+    : (shownQuote?.estimatedPaymentAmount ?? localEstimate);
 
   // Pool not live — show unavailable state
   if (!poolLive) {
@@ -314,6 +339,34 @@ export function BuyFlowPanel({ project, walletAddress, walletProvider }: BuyFlow
             <p className="mt-1 text-xs text-[var(--text-muted)]">
               Trading is available after the token is deployed and a liquidity pool is confirmed on-chain.
             </p>
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+              <a
+                href="#launch-pipeline"
+                className="inline-flex items-center rounded-lg border-2 border-ink bg-opYellow px-3 py-1.5 text-xs font-black text-ink transition-colors hover:bg-opYellow/80"
+              >
+                Finish Launch
+              </a>
+              {contractUrl && (
+                <a
+                  href={contractUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center rounded-lg border-2 border-ink bg-white px-3 py-1.5 text-xs font-black text-ink transition-colors hover:bg-opYellow/20"
+                >
+                  Contract on OP_SCAN
+                </a>
+              )}
+              {poolUrl && (
+                <a
+                  href={poolUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center rounded-lg border-2 border-ink bg-white px-3 py-1.5 text-xs font-black text-ink transition-colors hover:bg-opYellow/20"
+                >
+                  Pool on OP_SCAN
+                </a>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -348,6 +401,25 @@ export function BuyFlowPanel({ project, walletAddress, walletProvider }: BuyFlow
             </div>
           )}
 
+          <div className="inline-flex rounded-xl border-2 border-ink bg-[var(--cream)] p-1">
+            <button
+              onClick={() => setSide("BUY")}
+              className={`rounded-lg px-3 py-1.5 text-xs font-black ${
+                side === "BUY" ? "bg-opYellow text-ink" : "text-[var(--text-muted)]"
+              }`}
+            >
+              Buy
+            </button>
+            <button
+              onClick={() => setSide("SELL")}
+              className={`rounded-lg px-3 py-1.5 text-xs font-black ${
+                side === "SELL" ? "bg-opYellow text-ink" : "text-[var(--text-muted)]"
+              }`}
+            >
+              Sell
+            </button>
+          </div>
+
           <div className="flex items-center justify-between">
             <div className="inline-flex rounded-xl border-2 border-ink bg-[var(--cream)] p-1">
               <button onClick={() => setMode("SWAP")} className={`rounded-lg px-3 py-1.5 text-xs font-black ${mode === "SWAP" ? "bg-opYellow text-ink" : "text-[var(--text-muted)]"}`}>Swap</button>
@@ -361,26 +433,36 @@ export function BuyFlowPanel({ project, walletAddress, walletProvider }: BuyFlow
           </div>
 
           <div className="rounded-xl border-2 border-ink/20 bg-[var(--cream)] p-3">
-            <div className="mb-2 text-[11px] font-black uppercase tracking-wide text-[var(--text-muted)]">Sell Amount</div>
+            <div className="mb-2 text-[11px] font-black uppercase tracking-wide text-[var(--text-muted)]">{side === "BUY" ? "Spend Amount" : "Sell Amount"}</div>
             <div className="flex gap-2">
-              <input type="number" min={0.00000001} step={0.00000001} value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} className="input font-mono flex-1" />
-              <select value={paymentToken} onChange={(e) => setPaymentToken(e.target.value as GamePaymentToken)}
-                className="rounded-lg border-2 border-ink bg-white px-3 py-2 text-sm font-black text-ink">
-                <option value="MOTO">MOTO</option>
-                <option value="PILL">PILL</option>
-              </select>
+              <input type="number" min={0.00000001} step={0.00000001} value={inputAmount} onChange={(e) => setInputAmount(e.target.value)} className="input font-mono flex-1" />
+              {side === "BUY" ? (
+                <select value={paymentToken} onChange={(e) => setPaymentToken(e.target.value as GamePaymentToken)}
+                  className="rounded-lg border-2 border-ink bg-white px-3 py-2 text-sm font-black text-ink">
+                  <option value="MOTO">MOTO</option>
+                  <option value="PILL">PILL</option>
+                </select>
+              ) : (
+                <div className="rounded-lg border-2 border-ink bg-white px-3 py-2 text-sm font-black text-ink">
+                  {project.ticker}
+                </div>
+              )}
             </div>
-            <div className="mt-2 text-[10px] text-[var(--text-muted)]">{GAME_PAYMENT_TOKENS[paymentToken].name} ({tokenAddressShort(paymentToken)})</div>
+            <div className="mt-2 text-[10px] text-[var(--text-muted)]">
+              {side === "BUY"
+                ? `${GAME_PAYMENT_TOKENS[paymentToken].name} (${tokenAddressShort(paymentToken)})`
+                : `${project.ticker} token amount`}
+            </div>
           </div>
 
           <div className="rounded-xl border-2 border-ink/20 bg-[var(--cream)] p-3">
-            <div className="mb-2 text-[11px] font-black uppercase tracking-wide text-[var(--text-muted)]">Buy Amount</div>
+            <div className="mb-2 text-[11px] font-black uppercase tracking-wide text-[var(--text-muted)]">{side === "BUY" ? "Receive Amount" : "Estimated Payout"}</div>
             <div className="flex items-center justify-between">
               <span className="font-mono text-sm font-black text-ink">
                 {estimatedReceive > 0 ? estimatedReceive.toLocaleString() : "—"}
               </span>
               <span className="rounded-md border-2 border-ink bg-white px-2 py-1 text-[11px] font-black text-ink">
-                {project.ticker} {market?.available ? "(live)" : "(est.)"}
+                {side === "BUY" ? project.ticker : paymentToken} {market?.available ? "(live)" : "(est.)"}
               </span>
             </div>
           </div>
@@ -436,7 +518,7 @@ export function BuyFlowPanel({ project, walletAddress, walletProvider }: BuyFlow
             <button onClick={resetForm} className="op-btn-outline py-3 text-sm font-black">Cancel</button>
             <button onClick={reserveSwap} disabled={loading || !walletAddress || !market?.available}
               className="op-btn-primary py-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-50">
-              {loading ? "Getting quote..." : "Get Live Quote"}
+              {loading ? "Getting quote..." : `Get ${side === "BUY" ? "Buy" : "Sell"} Quote`}
             </button>
           </div>
 
@@ -445,12 +527,20 @@ export function BuyFlowPanel({ project, walletAddress, walletProvider }: BuyFlow
               <div className="mb-2 text-xs font-black uppercase text-ink">Live Quote</div>
               <div className="grid grid-cols-2 gap-2 text-[11px]">
                 <div className="rounded-lg border border-ink/20 bg-white px-2 py-1">
-                  <span className="text-[var(--text-muted)]">Pay</span>
-                  <div className="font-mono font-black text-ink">{shownQuote?.requestedPaymentAmount.toLocaleString()} {shownQuote?.paymentToken}</div>
+                  <span className="text-[var(--text-muted)]">{side === "BUY" ? "Pay" : "Sell"}</span>
+                  <div className="font-mono font-black text-ink">
+                    {side === "BUY"
+                      ? `${shownQuote?.requestedPaymentAmount.toLocaleString()} ${shownQuote?.paymentToken}`
+                      : `${shownQuote?.tokenAmount?.toLocaleString() ?? "0"} ${project.ticker}`}
+                  </div>
                 </div>
                 <div className="rounded-lg border border-ink/20 bg-white px-2 py-1">
-                  <span className="text-[var(--text-muted)]">Receive</span>
-                  <div className="font-mono font-black text-ink">{shownQuote?.estimatedTokenAmount.toLocaleString()} {project.ticker}</div>
+                  <span className="text-[var(--text-muted)]">{side === "BUY" ? "Receive" : "Payout"}</span>
+                  <div className="font-mono font-black text-ink">
+                    {side === "BUY"
+                      ? `${shownQuote?.estimatedTokenAmount.toLocaleString()} ${project.ticker}`
+                      : `${shownQuote?.estimatedPaymentAmount?.toLocaleString() ?? "0"} ${shownQuote?.paymentToken}`}
+                  </div>
                 </div>
                 {shownQuote?.priceImpactBps !== undefined && shownQuote.priceImpactBps > 0 && (
                   <div className="col-span-2 rounded-lg border border-ink/20 bg-white px-2 py-1">
@@ -463,7 +553,7 @@ export function BuyFlowPanel({ project, walletAddress, walletProvider }: BuyFlow
               </div>
               <button onClick={submitReserve} disabled={confirming || !isLiveQuote}
                 className="mt-3 w-full rounded-lg border-2 border-ink bg-opYellow px-3 py-2 text-xs font-black text-ink disabled:opacity-50">
-                {confirming ? "Signing + Submitting..." : "Sign + Submit Trade"}
+                {confirming ? "Signing + Submitting..." : `Sign + Submit ${side === "BUY" ? "Buy" : "Sell"}`}
               </button>
             </div>
           )}
@@ -484,7 +574,11 @@ export function BuyFlowPanel({ project, walletAddress, walletProvider }: BuyFlow
                 )}
                 <div className="flex justify-between">
                   <span className="text-[var(--text-muted)]">Payment</span>
-                  <span className="font-mono font-black text-ink">{confirmation.paymentAmount.toLocaleString()} {confirmation.paymentToken}</span>
+                  <span className="font-mono font-black text-ink">
+                    {confirmation.side === "SELL" && confirmation.tokenAmount
+                      ? `${confirmation.tokenAmount.toLocaleString()} ${project.ticker}`
+                      : `${confirmation.paymentAmount.toLocaleString()} ${confirmation.paymentToken}`}
+                  </span>
                 </div>
               </div>
             </div>

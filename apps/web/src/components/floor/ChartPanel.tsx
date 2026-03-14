@@ -10,7 +10,7 @@ import { getApiBase } from "@/lib/apiBase";
 type TradeSide = "BUY" | "SELL";
 type PaymentToken = "MOTO" | "PILL";
 
-const API = getApiBase();
+const API = typeof window !== "undefined" ? getApiBase() : "";
 
 interface Props {
   ticker: FloorTickerDTO[];

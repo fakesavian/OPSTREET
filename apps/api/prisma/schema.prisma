@@ -107,6 +107,7 @@ model PledgeRecord {
 model UserProfile {
   walletAddress  String    @id
   displayName    String    @default("")
+  bio            String    @default("")
   activeAvatarId String    @default("default-free-1")
   muteUntil      DateTime?
   lastChatAt     DateTime?
@@ -127,6 +128,22 @@ model UserProfile {
   playerReputation  PlayerReputation?
   badgeAwards       BadgeAward[]
   xpEvents          XpEvent[]
+  followers         UserFollow[] @relation("UserFollowers")
+  following         UserFollow[] @relation("UserFollowing")
+}
+
+model UserFollow {
+  id              String   @id @default(cuid())
+  followerWallet  String
+  followingWallet String
+  createdAt       DateTime @default(now())
+
+  follower  UserProfile @relation("UserFollowing", fields: [followerWallet], references: [walletAddress], onDelete: Cascade)
+  following UserProfile @relation("UserFollowers", fields: [followingWallet], references: [walletAddress], onDelete: Cascade)
+
+  @@unique([followerWallet, followingWallet])
+  @@index([followerWallet, createdAt])
+  @@index([followingWallet, createdAt])
 }
 
 model RoomPresence {

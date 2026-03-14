@@ -12,7 +12,6 @@ import {
   connectWithAddress,
   getWalletVerificationIssue,
   signMessage,
-  toBip322Address,
   type WalletState,
 } from "@/lib/wallet";
 import { fetchAuthNonce, verifyWalletSignature, authLogout, fetchAuthMe, createDevSession } from "@/lib/api";
@@ -94,10 +93,14 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     return () => {
       mounted = false;
     };
-  }, [wallet?.address]);
+  }, [wallet]);
+
+  function shouldUseDevSession(targetWallet: WalletState): boolean {
+    return targetWallet.provider === "manual";
+  }
 
   async function runWalletVerification(targetWallet: WalletState): Promise<boolean> {
-    if (targetWallet.provider === "manual") {
+    if (shouldUseDevSession(targetWallet)) {
       try {
         await createDevSession(targetWallet.address);
         setIsVerified(true);
@@ -105,7 +108,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         return true;
       } catch {
         setIsVerified(false);
-        setVerifyError("Manual address mode cannot sign messages in this environment.");
+        setVerifyError(
+          targetWallet.provider === "manual"
+            ? "Manual address mode cannot sign messages in this environment."
+            : "Local OP_WALLET auth could not create a dev session.",
+        );
         return false;
       }
     }
@@ -120,18 +127,14 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setVerifying(true);
     setVerifyError("");
     try {
-      const bip322Addr = toBip322Address(targetWallet.address) ?? targetWallet.address;
-      const { nonce, message } = await fetchAuthNonce(bip322Addr);
+      const { nonce, message } = await fetchAuthNonce(targetWallet.address);
       const signature = await signMessage(targetWallet.provider, message);
       if (!signature) {
-        await createDevSession(targetWallet.address);
-        setIsVerified(true);
-        setVerifyError("");
-        return true;
+        throw new Error("Wallet did not return a BIP-322 signature.");
       }
 
       await verifyWalletSignature({
-        walletAddress: bip322Addr,
+        walletAddress: targetWallet.address,
         signature,
         nonce,
       });
@@ -139,16 +142,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setVerifyError("");
       return true;
     } catch (e) {
-      try {
-        await createDevSession(targetWallet.address);
-        setIsVerified(true);
-        setVerifyError("");
-        return true;
-      } catch {
-        setIsVerified(false);
-        setVerifyError(e instanceof Error ? e.message : "Verification failed");
-        return false;
-      }
+      setIsVerified(false);
+      setVerifyError(e instanceof Error ? e.message : "Verification failed");
+      return false;
     } finally {
       setVerifying(false);
     }

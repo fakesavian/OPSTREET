@@ -487,20 +487,39 @@ export async function floorRoutes(app: FastifyInstance) {
   // ── GET /floor/ticker ───────────────────────────────────────────────────
 
   app.get("/floor/ticker", async (_req, reply) => {
-    const projects = await prisma.project.findMany({
-      include: { marketState: true },
-    });
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const [projects, calloutCounts] = await Promise.all([
+      prisma.project.findMany({
+        include: { marketState: true },
+      }),
+      prisma.callout.groupBy({
+        by: ["projectId"],
+        where: {
+          projectId: { not: null },
+          createdAt: { gt: since },
+        },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const calloutCountByProjectId = new Map<string, number>();
+    for (const row of calloutCounts) {
+      if (!row.projectId) continue;
+      calloutCountByProjectId.set(row.projectId, row._count._all);
+    }
 
     const enriched = await Promise.all(projects.map(async (project) => {
       const marketState = project.marketState;
       const hasLiveData = Boolean(marketState && marketState.reserveBase > 0 && marketState.reserveQuote > 0);
       const priceDelta24h = hasLiveData ? await getPriceDelta24h(project.id) : "";
+      const calloutCount24h = calloutCountByProjectId.get(project.id) ?? 0;
 
       return {
         sortKey: {
           live: hasLiveData ? 1 : 0,
           volume24hSats: marketState?.volume24hSats ?? 0,
           tradeCount24h: marketState?.tradeCount24h ?? 0,
+          calloutCount24h,
           currentPriceSats: marketState?.currentPriceSats ?? 0,
           viewCount: project.viewCount,
           recentLaunchAt: project.liveAt?.getTime() ?? 0,
@@ -517,6 +536,7 @@ export async function floorRoutes(app: FastifyInstance) {
         currentPriceSats: marketState?.currentPriceSats ?? 0,
         volume24hSats: marketState?.volume24hSats ?? 0,
         tradeCount24h: marketState?.tradeCount24h ?? 0,
+        calloutCount24h,
         hasLiveData,
       };
     }));
@@ -526,6 +546,7 @@ export async function floorRoutes(app: FastifyInstance) {
         b.sortKey.live - a.sortKey.live ||
         b.sortKey.volume24hSats - a.sortKey.volume24hSats ||
         b.sortKey.tradeCount24h - a.sortKey.tradeCount24h ||
+        b.sortKey.calloutCount24h - a.sortKey.calloutCount24h ||
         b.sortKey.currentPriceSats - a.sortKey.currentPriceSats ||
         b.sortKey.viewCount - a.sortKey.viewCount ||
         b.sortKey.recentLaunchAt - a.sortKey.recentLaunchAt ||

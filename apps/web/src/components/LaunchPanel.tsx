@@ -10,10 +10,9 @@ import {
   submitDeploy,
   submitPool,
 } from "@/lib/api";
+import { getOpScanContractUrl, getOpScanHomeUrl } from "@/lib/opscan";
 import { useWallet } from "./WalletProvider";
 import { signOpnetInteractionWithWallet } from "@/lib/wallet";
-
-const EXPLORER = "https://testnet.opnet.org";
 
 interface LaunchPanelProps {
   project: ProjectDTO;
@@ -184,8 +183,10 @@ export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
 
   // ── LIVE state ──
   if (launchStatus === "LIVE") {
+    const contractUrl = getOpScanContractUrl(launch?.contractAddress);
+    const poolUrl = getOpScanContractUrl(launch?.poolAddress);
     return (
-      <div className="op-panel border-opGreen">
+      <div id="launch-pipeline" className="op-panel border-opGreen">
         <div className="border-b-2 border-ink/10 px-4 py-3">
           <h2 className="font-black text-ink text-sm uppercase tracking-wider">Token Live</h2>
         </div>
@@ -195,20 +196,32 @@ export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
             <div>
               <p className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)]">Contract</p>
               <p className="font-mono text-xs text-ink mt-0.5 break-all">{launch.contractAddress}</p>
-              <a
-                href={`${EXPLORER}/contract/${launch.contractAddress}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-1 inline-flex items-center gap-1 text-xs font-bold text-ink hover:text-opYellow"
-              >
-                View on Explorer
-              </a>
+              {contractUrl && (
+                <a
+                  href={contractUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1 inline-flex items-center gap-1 text-xs font-bold text-ink hover:text-opYellow"
+                >
+                  View on OP_SCAN
+                </a>
+              )}
             </div>
           )}
           {launch?.poolAddress && (
             <div>
               <p className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)]">Pool</p>
               <p className="font-mono text-xs text-ink mt-0.5 break-all">{launch.poolAddress}</p>
+              {poolUrl && (
+                <a
+                  href={poolUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1 inline-flex items-center gap-1 text-xs font-bold text-ink hover:text-opYellow"
+                >
+                  View pool on OP_SCAN
+                </a>
+              )}
             </div>
           )}
           {launch?.liveAt && (
@@ -222,7 +235,7 @@ export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
   }
 
   return (
-    <div className="op-panel">
+    <div id="launch-pipeline" className="op-panel">
       <div className="border-b-2 border-ink/10 px-4 py-3">
         <h2 className="font-black text-ink text-sm uppercase tracking-wider">Launch Pipeline</h2>
         <p className="text-[10px] text-[var(--text-muted)] mt-0.5">
@@ -362,6 +375,14 @@ export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
               <p className="text-[10px] text-[var(--text-muted)]">
                 Almost there — watcher is confirming your pool on-chain.
               </p>
+              <a
+                href={getOpScanHomeUrl()}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold text-ink hover:text-opYellow"
+              >
+                Open OP_SCAN
+              </a>
             </div>
           </div>
         )}

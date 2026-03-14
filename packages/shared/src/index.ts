@@ -170,6 +170,7 @@ export interface FloorTickerDTO {
   currentPriceSats: number;
   volume24hSats: number;
   tradeCount24h: number;
+  calloutCount24h: number;
   hasLiveData: boolean;
   launchStatus?: LaunchStatus | null;
 }

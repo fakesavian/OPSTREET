@@ -34,6 +34,8 @@ interface Props {
   ticker: FloorTickerDTO[];
   onCalloutPosted: () => void;
   onReacted: () => void;
+  onCalloutSelect?: (callout: FloorCalloutDTO) => void;
+  embedded?: boolean;
   className?: string;
 }
 

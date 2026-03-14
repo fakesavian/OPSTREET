@@ -114,6 +114,9 @@ AUTH_DOMAIN="localhost"
 OPNET_RPC_URL=""                     # OP_NET testnet RPC (required for trade broadcast + watcher confirmation)
 OPNET_RPC_KEY=""                     # Optional API key for RPC
 OPNET_EXPLORER_URL="https://testnet.opnet.org"
+MOTOSWAP_FACTORY_ADDRESS="0xa02aa5ca4c307107484d5fb690d811df1cf526f8de204d24528653dcae369a0f"
+MOTOSWAP_ROUTER_ADDRESS="0x0e6ff1f2d7db7556cb37729e3738f4dae82659b984b2621fab08e1111b1b937a"
+OPNET_TBTC_CONTRACT_ADDRESS=""       # Leave blank until you have a separately verified OP_NET testnet TBTC contract
 SHOP_OP721_COLLECTION=""             # OP721 collection address for shop items
 PILL_SATS_RATE=70000                 # PILL→sats conversion rate
 MOTO_SATS_RATE=65000                 # MOTO→sats conversion rate
@@ -126,13 +129,15 @@ OPNET_RPC_URL=""                     # Required for trade confirmation + pool in
 OPNET_RPC_KEY=""
 
 # apps/web/.env.local
-# Option A (recommended): leave NEXT_PUBLIC_API_URL unset and use /api rewrite with OPFUN_API_URL.
-# Option B: set NEXT_PUBLIC_API_URL directly to your API origin.
+# Local development only: localhost is allowed here.
+# In Vercel preview/production, do NOT point NEXT_PUBLIC_API_URL to localhost.
+# Recommended production mode is same-origin /api with NEXT_PUBLIC_API_URL left unset.
 NEXT_PUBLIC_API_URL="http://localhost:3001"
 NEXT_PUBLIC_LIQUIDITY_VAULT_ADDRESS="tb1ppdtv25qr5ydzr9733rl23pt9gx36cvffxe8mr82t2ntd9ddf3uus6wecwc"
 
 # apps/web production env (Vercel)
-# Backend origin for Next.js /api proxy rewrites.
+# Recommended: leave NEXT_PUBLIC_API_URL unset so the browser uses same-origin /api.
+# Optional: set OPFUN_API_URL if you want Next.js to proxy /api to a separate backend origin.
 OPFUN_API_URL="https://your-api-origin.example.com"
 ```
 

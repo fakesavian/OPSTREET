@@ -19,7 +19,7 @@ jobs:
           node-version: 20
           cache: pnpm
 
-      - name: Setup pnpm (Corepack)
+      - name: Enable Corepack and activate pnpm 9
         run: |
           corepack enable
           corepack prepare pnpm@9 --activate
@@ -50,7 +50,7 @@ jobs:
           node-version: 20
           cache: pnpm
 
-      - name: Setup pnpm (Corepack)
+      - name: Enable Corepack and activate pnpm 9
         run: |
           corepack enable
           corepack prepare pnpm@9 --activate
@@ -94,7 +94,7 @@ jobs:
           node-version: 20
           cache: pnpm
 
-      - name: Setup pnpm (Corepack)
+      - name: Enable Corepack and activate pnpm 9
         run: |
           corepack enable
           corepack prepare pnpm@9 --activate

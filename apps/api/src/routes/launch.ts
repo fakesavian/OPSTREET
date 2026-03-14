@@ -657,12 +657,28 @@ export async function launchRoutes(app: FastifyInstance) {
   app.get<{ Params: { id: string }; Querystring: { timeframe?: string; limit?: string } }>(
     "/projects/:id/candles",
     async (request, reply) => {
-      const { getCandles } = await import("../services/marketIndexer.js");
+      const { getCandles, getMarketDataDiagnostics } = await import("../services/marketIndexer.js");
       const timeframe = request.query.timeframe ?? "1h";
       const limit = Math.min(Math.max(Number(request.query.limit ?? 100), 1), 500);
 
-      const candles = await getCandles(request.params.id, timeframe, limit);
-      return reply.send({ projectId: request.params.id, timeframe, candles });
+      const [candles, diagnostics] = await Promise.all([
+        getCandles(request.params.id, timeframe, limit),
+        getMarketDataDiagnostics(request.params.id),
+      ]);
+      return reply.send({
+        projectId: request.params.id,
+        timeframe,
+        candles,
+        freshness: {
+          dataBucket: diagnostics.dataBucket,
+          degraded: diagnostics.degraded,
+          stale: diagnostics.stale,
+          staleAgeMs: diagnostics.staleAgeMs,
+          latestIndexedBlock: diagnostics.latestIndexedBlock,
+          latestIndexedAt: diagnostics.latestIndexedAt?.toISOString() ?? null,
+          confirmationsRequired: diagnostics.confirmationsRequired,
+        },
+      });
     },
   );
 
@@ -671,9 +687,13 @@ export async function launchRoutes(app: FastifyInstance) {
   app.get<{ Params: { id: string } }>(
     "/projects/:id/market-state",
     async (request, reply) => {
-      const state = await prisma.projectMarketState.findUnique({
-        where: { projectId: request.params.id },
-      });
+      const [{ getMarketDataDiagnostics }, state] = await Promise.all([
+        import("../services/marketIndexer.js"),
+        prisma.projectMarketState.findUnique({
+          where: { projectId: request.params.id },
+        }),
+      ]);
+      const diagnostics = await getMarketDataDiagnostics(request.params.id);
 
       if (!state) {
         return reply.send({
@@ -685,6 +705,15 @@ export async function launchRoutes(app: FastifyInstance) {
           reserveBase: 0,
           reserveQuote: 0,
           lastTradeAt: null,
+          freshness: {
+            dataBucket: diagnostics.dataBucket,
+            degraded: diagnostics.degraded,
+            stale: diagnostics.stale,
+            staleAgeMs: diagnostics.staleAgeMs,
+            latestIndexedBlock: diagnostics.latestIndexedBlock,
+            latestIndexedAt: diagnostics.latestIndexedAt?.toISOString() ?? null,
+            confirmationsRequired: diagnostics.confirmationsRequired,
+          },
         });
       }
 
@@ -697,6 +726,15 @@ export async function launchRoutes(app: FastifyInstance) {
         reserveBase: state.reserveBase,
         reserveQuote: state.reserveQuote,
         lastTradeAt: state.lastTradeAt?.toISOString() ?? null,
+        freshness: {
+          dataBucket: diagnostics.dataBucket,
+          degraded: diagnostics.degraded,
+          stale: diagnostics.stale,
+          staleAgeMs: diagnostics.staleAgeMs,
+          latestIndexedBlock: diagnostics.latestIndexedBlock,
+          latestIndexedAt: diagnostics.latestIndexedAt?.toISOString() ?? null,
+          confirmationsRequired: diagnostics.confirmationsRequired,
+        },
       });
     },
   );

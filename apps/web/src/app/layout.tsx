@@ -1,5 +1,6 @@
-﻿import type { Metadata } from "next";
+import type { Metadata } from "next";
 import "./globals.css";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import { WalletProvider } from "@/components/WalletProvider";
 import { OpHeader } from "@/components/opfun/OpHeader";
 import { OpBottomNav } from "@/components/opfun/OpBottomNav";
@@ -48,6 +49,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
             </footer>
             <OpBottomNav />
+            <SpeedInsights />
           </NotificationProvider>
         </WalletProvider>
       </body>

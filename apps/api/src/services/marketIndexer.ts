@@ -51,6 +51,18 @@ export interface PendingTradeSubmission {
   submittedAt: Date;
 }
 
+export interface MarketDataDiagnostics {
+  dataBucket: "authoritative-live" | "derived-indexed" | "unavailable";
+  liveStateAvailable: boolean;
+  indexedStateAvailable: boolean;
+  degraded: boolean;
+  stale: boolean;
+  staleAgeMs: number | null;
+  latestIndexedBlock: number | null;
+  latestIndexedAt: Date | null;
+  confirmationsRequired: number;
+}
+
 const TIMEFRAME_SECONDS: Record<string, number> = {
   "1m": 60,
   "5m": 300,
@@ -59,6 +71,11 @@ const TIMEFRAME_SECONDS: Record<string, number> = {
   "4h": 14400,
   "1d": 86400,
 };
+
+export const MARKET_INDEX_MAX_STALENESS_MS = Number(
+  process.env["MARKET_INDEX_MAX_STALENESS_MS"] ?? 10 * 60 * 1000,
+);
+export const MARKET_CONFIRMATION_BLOCKS = Number(process.env["MARKET_CONFIRMATION_BLOCKS"] ?? 2);
 
 export function priceFromReserves(reserveBase: number, reserveQuote: number): number {
   if (reserveQuote <= 0) return 0;
@@ -431,12 +448,6 @@ export async function failTradeSubmission(projectId: string, txId: string, error
   return true;
 }
 
-// Maximum age for indexed reserve snapshots to be considered valid for quoting.
-// If the most recent snapshot is older than this, the indexed fallback is rejected.
-const MARKET_INDEX_MAX_STALENESS_MS = Number(
-  process.env["MARKET_INDEX_MAX_STALENESS_MS"] ?? 10 * 60 * 1000, // default: 10 minutes
-);
-
 function normalizeAddress(address: string | null | undefined): string {
   return (address ?? "").trim().toLowerCase();
 }
@@ -626,6 +637,69 @@ export async function getCandles(
     close: candle.close,
     volume: candle.volume,
   }));
+}
+
+export async function getMarketDataDiagnostics(projectId: string): Promise<MarketDataDiagnostics> {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: {
+      poolAddress: true,
+      marketState: {
+        select: {
+          reserveBase: true,
+          reserveQuote: true,
+          updatedAt: true,
+        },
+      },
+    },
+  });
+
+  const latestSnapshot = await prisma.poolSnapshot.findFirst({
+    where: { projectId },
+    orderBy: [{ blockHeight: "desc" }, { recordedAt: "desc" }],
+    select: {
+      reserveBase: true,
+      reserveQuote: true,
+      blockHeight: true,
+      recordedAt: true,
+    },
+  });
+
+  const indexedUpdatedAt = latestSnapshot?.recordedAt ?? project?.marketState?.updatedAt ?? null;
+  const staleAgeMs = indexedUpdatedAt ? Date.now() - indexedUpdatedAt.getTime() : null;
+  const stale = staleAgeMs === null ? true : staleAgeMs > MARKET_INDEX_MAX_STALENESS_MS;
+  const indexedStateAvailable = Boolean(
+    latestSnapshot
+      ? latestSnapshot.reserveBase > 0 && latestSnapshot.reserveQuote > 0
+      : project?.marketState && project.marketState.reserveBase > 0 && project.marketState.reserveQuote > 0,
+  );
+
+  let liveStateAvailable = false;
+  if (project?.poolAddress) {
+    try {
+      liveStateAvailable = Boolean(await fetchLivePoolState(project.poolAddress));
+    } catch {
+      liveStateAvailable = false;
+    }
+  }
+
+  const dataBucket = liveStateAvailable
+    ? "authoritative-live"
+    : indexedStateAvailable
+      ? "derived-indexed"
+      : "unavailable";
+
+  return {
+    dataBucket,
+    liveStateAvailable,
+    indexedStateAvailable,
+    degraded: !liveStateAvailable,
+    stale,
+    staleAgeMs,
+    latestIndexedBlock: latestSnapshot?.blockHeight ?? null,
+    latestIndexedAt: indexedUpdatedAt,
+    confirmationsRequired: MARKET_CONFIRMATION_BLOCKS,
+  };
 }
 
 export async function getPriceDelta24h(projectId: string): Promise<string> {

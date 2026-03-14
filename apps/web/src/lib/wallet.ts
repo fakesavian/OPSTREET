@@ -38,6 +38,7 @@ interface OPNetProvider {
 }
 
 type LooseFn = (...args: unknown[]) => Promise<unknown> | unknown;
+const OPNET_SIGN_TIMEOUT_MS = 20_000;
 
 export interface OpnetTradeRequest {
   projectId: string;
@@ -399,37 +400,48 @@ export async function signMessage(
       const signFn = obj["signMessage"];
       if (typeof signFn === "function") {
         const fn = signFn as LooseFn;
-        const attempts: unknown[][] = [
-          [message, "bip322-simple"],
-          [message],
-          [{ message, type: "bip322-simple" }],
-          [{ message }],
-        ];
-        for (const args of attempts) {
-          try {
-            const result = await fn(...args);
-            if (typeof result === "string" && result.length > 0) return result;
-          } catch {
-            // Try next signature variant.
-          }
+        try {
+          const result = await withTimeout(
+            Promise.resolve(fn(message, "bip322-simple")).then((value) => {
+              if (typeof value === "string" && value.length > 0) return value;
+              throw new Error("OP_WALLET returned an empty signature.");
+            }),
+            OPNET_SIGN_TIMEOUT_MS,
+            "OP_WALLET did not complete the signature request. Close any blank wallet popup and try again.",
+          );
+          return result;
+        } catch (error) {
+          const detail = normalizeWalletError(errorMessage(error));
+          throw new Error(
+            detail.startsWith("__internal_")
+              ? "OP_WALLET could not complete message signing in this build."
+              : detail,
+          );
         }
       }
 
       const requestFn = obj["request"];
       if (typeof requestFn === "function") {
         const request = requestFn as LooseFn;
-        const attempts: unknown[][] = [
-          [{ method: "signMessage", params: [message, "bip322-simple"] }],
-          [{ method: "signMessage", params: [message] }],
-          [{ method: "signMessage", params: { message, type: "bip322-simple" } }],
-        ];
-        for (const args of attempts) {
-          try {
-            const result = await request(...args);
-            if (typeof result === "string" && result.length > 0) return result;
-          } catch {
-            // Try next request payload variant.
-          }
+        try {
+          const result = await withTimeout(
+            Promise.resolve(
+              request({ method: "signMessage", params: [message, "bip322-simple"] }),
+            ).then((value) => {
+              if (typeof value === "string" && value.length > 0) return value;
+              throw new Error("OP_WALLET returned an empty signature.");
+            }),
+            OPNET_SIGN_TIMEOUT_MS,
+            "OP_WALLET did not complete the signature request. Close any blank wallet popup and try again.",
+          );
+          return result;
+        } catch (error) {
+          const detail = normalizeWalletError(errorMessage(error));
+          throw new Error(
+            detail.startsWith("__internal_")
+              ? "OP_WALLET could not complete message signing in this build."
+              : detail,
+          );
         }
       }
     }
@@ -444,6 +456,44 @@ function getField(obj: Record<string, unknown>, keys: string[]): string | undefi
     if (typeof value === "string" && value.length > 0) return value;
   }
   return undefined;
+}
+
+function getNestedObject(obj: Record<string, unknown>, keys: string[]): Record<string, unknown> | null {
+  for (const key of keys) {
+    const value = obj[key];
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+  }
+  return null;
+}
+
+function normalizeHexString(value: string): string | null {
+  const trimmed = value.trim();
+  const normalized = trimmed.startsWith("0x") ? trimmed.slice(2) : trimmed;
+  if (!normalized || normalized.length % 2 !== 0) return null;
+  if (!/^[0-9a-f]+$/i.test(normalized)) return null;
+  return normalized.toLowerCase();
+}
+
+async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
+  const input = new Uint8Array(bytes.byteLength);
+  input.set(bytes);
+  const digest = await crypto.subtle.digest("SHA-256", input.buffer);
+  return new Uint8Array(digest);
+}
+
+async function deriveTxIdFromRawHex(rawHex: string): Promise<string | null> {
+  const normalized = normalizeHexString(rawHex);
+  if (!normalized || normalized.length <= 128) return null;
+
+  const bytes = Uint8Array.from(
+    normalized.match(/.{2}/g) ?? [],
+    (byte) => Number.parseInt(byte, 16),
+  );
+  const first = await sha256(bytes);
+  const second = await sha256(first);
+  return Array.from(second).reverse().map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function parseSubmitResult(value: unknown): OpnetTradeSubmitResult | null {
@@ -466,16 +516,50 @@ function parseSubmitResult(value: unknown): OpnetTradeSubmitResult | null {
   const txId = getField(obj, ["txid", "txId", "transactionId", "hash", "txHash", "transactionHash"]);
   const reservationId = getField(obj, ["reservationId", "orderId", "id"]);
   const signedPsbt = getField(obj, ["signedPsbt", "psbt", "signed_psbt"]);
-  const signedTxHex = getField(obj, ["signedTxHex", "rawTxHex", "rawTransaction", "hex"]);
+  const signedTxHex = getField(obj, [
+    "signedTxHex",
+    "rawTxHex",
+    "rawTransaction",
+    "transactionRaw",
+    "transactionHex",
+    "hex",
+  ]);
 
   if (txId || reservationId || signedPsbt || signedTxHex) {
     return { txId, reservationId, signedPsbt, signedTxHex, raw: value };
   }
 
-  for (const nestedKey of ["result", "data", "payload"]) {
+  for (const nestedKey of ["result", "data", "payload", "receipt", "transaction", "tx", "response"]) {
     const nested = obj[nestedKey];
     const nestedParsed = parseSubmitResult(nested);
     if (nestedParsed) return nestedParsed;
+  }
+
+  const nestedObject = getNestedObject(obj, ["result", "data", "payload", "receipt", "transaction", "tx", "response"]);
+  if (nestedObject) {
+    const nestedTxId = getField(nestedObject, [
+      "txid",
+      "txId",
+      "transactionId",
+      "transactionHash",
+      "txHash",
+      "hash",
+    ]);
+    const nestedSignedTxHex = getField(nestedObject, [
+      "signedTxHex",
+      "rawTxHex",
+      "rawTransaction",
+      "transactionRaw",
+      "transactionHex",
+      "hex",
+    ]);
+    if (nestedTxId || nestedSignedTxHex) {
+      return {
+        txId: nestedTxId,
+        signedTxHex: nestedSignedTxHex,
+        raw: value,
+      };
+    }
   }
 
   return null;
@@ -516,6 +600,20 @@ function normalizeWalletError(raw: string): string {
     return "__internal_call_format_mismatch__";
   }
   return msg;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function isFatalWalletError(msg: string): boolean {
@@ -823,8 +921,18 @@ export async function submitOpnetLiquidityFundingWithWallet(
           : await (call.target["request"] as LooseFn)(call.payload);
       const parsed = parseSubmitResult(result);
       if (parsed?.txId) return { txId: parsed.txId, raw: parsed.raw };
+      if (parsed?.signedTxHex) {
+        const derivedTxId = await deriveTxIdFromRawHex(parsed.signedTxHex);
+        if (derivedTxId) {
+          return { txId: derivedTxId, raw: parsed.raw };
+        }
+      }
       if (parsed?.reservationId) return { txId: parsed.reservationId, raw: parsed.raw };
-      if (typeof result === "string" && result.length > 8) return { txId: result, raw: result };
+      if (typeof result === "string") {
+        const derivedTxId = await deriveTxIdFromRawHex(result);
+        if (derivedTxId) return { txId: derivedTxId, raw: result };
+        if (result.length > 8) return { txId: result, raw: result };
+      }
     } catch (error) {
       const normalized = normalizeWalletError(errorMessage(error));
       failures.push(normalized);

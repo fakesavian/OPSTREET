@@ -103,7 +103,7 @@ export function WalletButton({ variant = "default" }: { variant?: "default" | "m
         {showMenu && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} aria-hidden="true" />
-            <div className="absolute right-0 top-full mt-1 z-50 w-64 op-panel overflow-hidden">
+            <div className="absolute right-0 top-full mt-2 z-50 w-[min(20rem,calc(100vw-1rem))] op-panel overflow-hidden">
               <div className="px-4 py-3 border-b-2 border-ink/10">
                 <p className="text-[9px] uppercase tracking-wider text-[var(--text-muted)] font-black mb-1">
                   Connected via {wallet.provider}{wallet.network ? ` · ${wallet.network}` : ""}

@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, type ReactNode } from "react";
 import type { ProjectDTO, RiskCard } from "@opfun/shared";
 import { getApiBase } from "@/lib/apiBase";
 
-const API = getApiBase();
+const API = typeof window !== "undefined" ? getApiBase() : "";
 
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: "Draft - ready for audit",

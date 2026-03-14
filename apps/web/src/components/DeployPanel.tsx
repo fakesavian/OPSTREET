@@ -3,9 +3,9 @@
 import { useState } from "react";
 import type { ProjectDTO } from "@opfun/shared";
 import { getApiBase } from "@/lib/apiBase";
+import { getOpScanContractUrl } from "@/lib/opscan";
 
-const API = getApiBase();
-const EXPLORER = "https://testnet.opnet.org";
+const API = typeof window !== "undefined" ? getApiBase() : "";
 
 interface DeployPanelProps {
   project: ProjectDTO & { checkRuns: unknown[] };
@@ -85,6 +85,7 @@ export function DeployPanel({ project, onStatusChange }: DeployPanelProps) {
     : 0;
 
   if (isLaunched) {
+    const contractUrl = getOpScanContractUrl(project.contractAddress);
     return (
       <div className="op-panel border-opGreen bg-opGreen/10">
         <div className="px-5 py-4 border-b-2 border-ink/10">
@@ -97,14 +98,16 @@ export function DeployPanel({ project, onStatusChange }: DeployPanelProps) {
               <p className="font-mono text-opGreen text-xs mt-0.5 break-all">
                 {project.contractAddress}
               </p>
-              <a
-                href={`${EXPLORER}/contract/${project.contractAddress}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-1 inline-flex items-center gap-1 text-xs font-bold text-ink hover:text-opGreen transition-colors"
-              >
-                View on OPNet Testnet Explorer ↗
-              </a>
+              {contractUrl && (
+                <a
+                  href={contractUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1 inline-flex items-center gap-1 text-xs font-bold text-ink hover:text-opGreen transition-colors"
+                >
+                  View on OP_SCAN
+                </a>
+              )}
             </div>
           )}
           {project.deployTx && (

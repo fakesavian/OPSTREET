@@ -30,10 +30,19 @@ interface Props {
   walletAddress: string | null;
   muteUntil: string | null;
   onMessageSent: () => void;
+  embedded?: boolean;
+  hideHeader?: boolean;
   className?: string;
 }
 
-export function ChatBox({ messages, walletAddress, muteUntil: muteUntilProp, onMessageSent, className }: Props) {
+export function ChatBox({
+  messages,
+  walletAddress,
+  muteUntil: muteUntilProp,
+  onMessageSent,
+  hideHeader,
+  className,
+}: Props) {
   const { wallet, isVerified, verify, verifying } = useWallet();
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -136,10 +145,12 @@ export function ChatBox({ messages, walletAddress, muteUntil: muteUntilProp, onM
 
   return (
     <div className={`card flex flex-col gap-2 ${className ?? "h-[320px]"}`}>
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-black uppercase tracking-wider text-ink">Trollbox</span>
-        {!walletAddress && <span className="text-[10px] text-[var(--text-muted)]">Connect wallet to chat</span>}
-      </div>
+      {!hideHeader && (
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-black uppercase tracking-wider text-ink">Trollbox</span>
+          {!walletAddress && <span className="text-[10px] text-[var(--text-muted)]">Connect wallet to chat</span>}
+        </div>
+      )}
 
       {walletAddress && !isVerified && (
         <div className="rounded-xl border-2 border-ink bg-opYellow/25 px-3 py-2 text-xs font-semibold text-ink">

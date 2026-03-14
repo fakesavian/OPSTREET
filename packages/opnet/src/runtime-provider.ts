@@ -1,4 +1,5 @@
 import { networks } from "@btc-vision/bitcoin";
+import { Address } from "@btc-vision/transaction";
 import { GAME_PAYMENT_TOKENS, type LiquidityToken } from "@opfun/shared";
 import {
   ABIDataTypes,
@@ -72,6 +73,34 @@ export interface RuntimeContractConfig {
   routerAddress: string;
   shopCollectionAddress: string;
   tbtcContractAddress: string;
+}
+
+export interface RuntimeAddressDiagnostic {
+  address: string | null;
+  configured: boolean;
+  valid: boolean;
+  codeExists: boolean | null;
+  error?: string;
+}
+
+export interface RuntimeDiagnostics {
+  timestamp: string;
+  network: string;
+  rpcUrl: string;
+  provider: ProviderHealthResult;
+  contracts: {
+    factory: RuntimeAddressDiagnostic;
+    router: RuntimeAddressDiagnostic;
+    shopCollection: RuntimeAddressDiagnostic;
+    tbtc: RuntimeAddressDiagnostic;
+  };
+  readiness: {
+    liveReads: boolean;
+    poolCreation: boolean;
+    routerReads: boolean;
+    tbtcLiquidity: boolean;
+    shopMint: boolean;
+  };
 }
 
 export interface LivePoolState {
@@ -382,7 +411,7 @@ export async function fetchLivePoolState(poolAddress: string): Promise<LivePoolS
 
   try {
     const pool = getContract<IMotoswapPoolContract>(
-      poolAddress as never,
+      toContractAddress(poolAddress, "pool address") as never,
       MotoswapPoolAbi,
       getRpcProvider(),
       OPNET_NETWORK,
@@ -432,13 +461,16 @@ export async function findPoolAddress(token0: string, token1: string): Promise<s
   ensureRequirements({ requireFactory: true });
 
   const factory = getContract<IMotoswapFactoryContract>(
-    MOTOSWAP_FACTORY_ADDRESS as never,
+    toContractAddress(MOTOSWAP_FACTORY_ADDRESS, "MOTOSWAP_FACTORY_ADDRESS") as never,
     MotoSwapFactoryAbi,
     getRpcProvider(),
     OPNET_NETWORK,
   );
 
-  const pool = await factory.getPool(token0 as never, token1 as never);
+  const pool = await factory.getPool(
+    toContractAddress(token0, "token0 address") as never,
+    toContractAddress(token1, "token1 address") as never,
+  );
   if (pool.revert) return null;
   return addressToString(pool.properties.pool);
 }
@@ -465,14 +497,17 @@ export async function preparePoolCreation(
   const feeRate = options?.feeRate ?? DEFAULT_INTERACTION_FEE_RATE;
 
   const factory = getContract<IMotoswapFactoryContract>(
-    MOTOSWAP_FACTORY_ADDRESS as never,
+    toContractAddress(MOTOSWAP_FACTORY_ADDRESS, "MOTOSWAP_FACTORY_ADDRESS") as never,
     MotoSwapFactoryAbi,
     getRpcProvider(),
     OPNET_NETWORK,
     walletAddress as never,
   );
 
-  const simulation = await factory.createPool(token0 as never, token1 as never);
+  const simulation = await factory.createPool(
+    toContractAddress(token0, "token0 address") as never,
+    toContractAddress(token1, "token1 address") as never,
+  );
   if (simulation.revert) {
     throw new Error(`Pool creation simulation failed: ${simulation.revert}`);
   }
@@ -507,19 +542,22 @@ export async function prepareShopMint(
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- opnet getContract proxies ABI methods at runtime
   const collection = getContract(
-    SHOP_OP721_COLLECTION_ADDRESS as never,
+    toContractAddress(SHOP_OP721_COLLECTION_ADDRESS, "SHOP_OP721_COLLECTION") as never,
     SHOP_OP721_MINT_ABI,
     getRpcProvider(),
     OPNET_NETWORK,
     walletAddress as never,
   ) as unknown as {
-    mint: (mintTokenId: bigint, to: string) => Promise<{
+    mint: (mintTokenId: bigint, to: Address) => Promise<{
       revert?: string;
       toOfflineBuffer: (refundAddress: string, amount: bigint) => Promise<Buffer>;
     }>;
   };
 
-  const simulation = await collection.mint(numericTokenId, walletAddress);
+  const simulation = await collection.mint(
+    numericTokenId,
+    toContractAddress(walletAddress, "wallet address"),
+  );
   if (simulation.revert) {
     throw new Error(`OP721 mint simulation failed: ${simulation.revert}`);
   }
@@ -616,6 +654,93 @@ export async function fetchTransactionReceipt(txId: string): Promise<Transaction
   }
 }
 
+async function inspectRuntimeAddress(
+  label: string,
+  value: string,
+  canProbeCode: boolean,
+): Promise<RuntimeAddressDiagnostic> {
+  const address = value.trim();
+  if (!address) {
+    return {
+      address: null,
+      configured: false,
+      valid: false,
+      codeExists: null,
+    };
+  }
+
+  try {
+    toContractAddress(address, label);
+
+    let codeExists: boolean | null = null;
+    if (canProbeCode) {
+      const code = await checkContractCode(address);
+      codeExists = code.exists;
+    }
+
+    return {
+      address,
+      configured: true,
+      valid: true,
+      codeExists,
+    };
+  } catch (error) {
+    return {
+      address,
+      configured: true,
+      valid: false,
+      codeExists: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export async function getRuntimeDiagnostics(): Promise<RuntimeDiagnostics> {
+  const providerHealth = await checkProviderHealth();
+  const canProbeCode = providerHealth.healthy;
+
+  const [factory, router, shopCollection, tbtc] = await Promise.all([
+    inspectRuntimeAddress("MOTOSWAP_FACTORY_ADDRESS", MOTOSWAP_FACTORY_ADDRESS, canProbeCode),
+    inspectRuntimeAddress("MOTOSWAP_ROUTER_ADDRESS", MOTOSWAP_ROUTER_ADDRESS, canProbeCode),
+    inspectRuntimeAddress("SHOP_OP721_COLLECTION", SHOP_OP721_COLLECTION_ADDRESS, canProbeCode),
+    inspectRuntimeAddress("OPNET_TBTC_CONTRACT_ADDRESS", TBTC_CONTRACT_ADDRESS, canProbeCode),
+  ]);
+
+  return {
+    timestamp: new Date().toISOString(),
+    network: getOpnetNetwork(),
+    rpcUrl: OPNET_RPC_URL,
+    provider: providerHealth,
+    contracts: {
+      factory,
+      router,
+      shopCollection,
+      tbtc,
+    },
+    readiness: {
+      liveReads: providerHealth.healthy,
+      poolCreation: providerHealth.healthy && factory.valid && factory.codeExists === true,
+      routerReads: providerHealth.healthy && router.valid && router.codeExists === true,
+      tbtcLiquidity: providerHealth.healthy && tbtc.valid && tbtc.codeExists === true,
+      shopMint: providerHealth.healthy && shopCollection.valid && shopCollection.codeExists === true,
+    },
+  };
+}
+
+function toContractAddress(value: string, label: string): Address {
+  const normalized = value.trim();
+  if (!normalized) {
+    throw new RuntimeConfigError(`${label} is not configured.`);
+  }
+
+  try {
+    return Address.fromString(normalized);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new RuntimeConfigError(`Invalid ${label}: ${normalized}. ${detail}`);
+  }
+}
+
 export async function checkOp721Ownership(
   collectionAddress: string,
   tokenId: bigint,
@@ -625,7 +750,7 @@ export async function checkOp721Ownership(
 
   try {
     const collection = getContract<IOP721Contract>(
-      collectionAddress as never,
+      toContractAddress(collectionAddress, "collection address") as never,
       OP_721_ABI,
       getRpcProvider(),
       OPNET_NETWORK,

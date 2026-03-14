@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { getApiBase } from "@/lib/apiBase";
 
-const API = getApiBase();
+const API = typeof window !== "undefined" ? getApiBase() : "";
 
 interface Badge {
   id: string;
