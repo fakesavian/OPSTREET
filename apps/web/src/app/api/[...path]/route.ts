@@ -181,14 +181,29 @@ async function proxyRequest(
   const method = request.method.toUpperCase();
   const body = method === "GET" || method === "HEAD" ? undefined : await request.arrayBuffer();
 
+  const apiOrigin = new URL(origin).origin;
+
   try {
     let upstream = await fetch(targetUrl, {
       method,
       headers,
       body,
       cache: "no-store",
-      redirect: "manual",
+      redirect: "follow",
     });
+
+    // If the request was redirected outside the API origin, Vercel deployment
+    // protection or another infrastructure redirect intercepted the request.
+    if (upstream.redirected && upstream.url && !upstream.url.startsWith(apiOrigin)) {
+      return Response.json(
+        {
+          error:
+            "API request was redirected away from the API origin. " +
+            "Disable Vercel Authentication on the API project (Settings → Deployment Protection).",
+        },
+        { status: 503 },
+      );
+    }
 
     if (upstream.status === 404 && shouldTryApiPrefixFallback(request, origin)) {
       const fallbackUrl = buildTargetUrl(request, context.params.path, origin, "api");
@@ -197,7 +212,7 @@ async function proxyRequest(
         headers,
         body,
         cache: "no-store",
-        redirect: "manual",
+        redirect: "follow",
       });
       if (fallback.ok || fallback.status !== 404) {
         upstream = fallback;
