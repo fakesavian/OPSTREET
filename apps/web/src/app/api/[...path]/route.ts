@@ -12,6 +12,23 @@ const HOP_BY_HOP_HEADERS = [
   "trailer",
   "transfer-encoding",
   "upgrade",
+  // Vercel infrastructure headers — forwarding these causes the API's Vercel edge
+  // to see a mismatched host and issue a 308 redirect back to the web domain.
+  "x-forwarded-host",
+  "x-forwarded-for",
+  "x-forwarded-proto",
+  "x-real-ip",
+  "x-vercel-forwarded-for",
+  "x-vercel-id",
+  "x-vercel-ip-city",
+  "x-vercel-ip-country",
+  "x-vercel-ip-country-region",
+  "x-vercel-ip-latitude",
+  "x-vercel-ip-longitude",
+  "x-vercel-ip-timezone",
+  "x-vercel-proxied-for",
+  "x-vercel-sc-basepath",
+  "x-vercel-sc-headers",
 ];
 
 export const runtime = "nodejs";
