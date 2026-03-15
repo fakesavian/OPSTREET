@@ -20,6 +20,15 @@ import {
   generateDeployReadme,
 } from "./templates/deploy-script.js";
 import { generateOP20Contract } from "./templates/op20-fixed.js";
+import {
+  generateBondingCurveContract,
+} from "./templates/bonding-curve.js";
+import type { BondingCurveTemplateVars } from "./templates/bonding-curve.js";
+import {
+  generateBondingCurveEntry,
+  generateBondingCurvePackageJson,
+  generateBondingCurveAsconfigJson,
+} from "./templates/bonding-curve-entry.js";
 
 // Derive class name from token name (must match scaffolder logic)
 function toClassName(name: string): string {
@@ -31,6 +40,20 @@ function toClassName(name: string): string {
       .join("")
       .replace(/^[^a-zA-Z]/, "T") + "Token"
   );
+}
+
+export interface BondingCurveInput {
+  /**
+   * Address of the BondingCurve contract (known before token deploy because
+   * we pre-compute it from the deploy transaction in a two-step sequence).
+   * When undefined, the scaffolder generates placeholder comments instructing
+   * the deployer to fill in the curve address after step 1.
+   */
+  curveAddress?: string;
+  /** Override any bonding curve constants (graduation threshold, fees, etc.). */
+  curveVars?: Partial<BondingCurveTemplateVars>;
+  /** Fee recipient address (from OPNET_FEE_RECIPIENT env var). */
+  feeRecipient?: string;
 }
 
 export interface DeployInput {
@@ -45,6 +68,11 @@ export interface DeployInput {
   liquidityToken?: "TBTC" | "MOTO" | "PILL";
   liquidityAmount?: string;
   generatedDir: string; // packages/opnet/generated/<projectId>
+  /**
+   * When set, scaffolds a BondingCurve contract alongside the OP_20 token.
+   * The OP_20 token will mint 100% supply to the curve contract address.
+   */
+  bondingCurve?: BondingCurveInput;
 }
 
 export type DeployStatus =
@@ -59,6 +87,8 @@ export interface DeployOutput {
   deployTx?: string;
   buildHash: string;
   wasmPath?: string;
+  /** Path to the compiled BondingCurve WASM (only set when bondingCurve was requested). */
+  curveWasmPath?: string;
   packageDir: string;
   instructions: string;
   error?: string;
@@ -66,52 +96,131 @@ export interface DeployOutput {
 
 /**
  * Step 1: scaffold the full deploy package under generated/<projectId>/
+ * When input.bondingCurve is set, scaffolds both:
+ *   contract/token/ — OP_20 token (mints to curve address)
+ *   contract/curve/ — BondingCurve contract
  */
 async function scaffoldDeployPackage(input: DeployInput): Promise<void> {
   const className = toClassName(input.name);
-  const contractDir = path.join(input.generatedDir, "contract");
-  const contractSrcDir = path.join(contractDir, "src");
-
-  await fs.mkdir(contractSrcDir, { recursive: true });
-
-  // Write the AS contract (may already exist from M2 scaffold, overwrite is fine)
-  const contractSource = generateOP20Contract({
-    name: input.name,
-    ticker: input.ticker,
-    decimals: input.decimals,
-    maxSupplyHuman: input.maxSupply,
-    iconUrl: input.iconUrl,
-  });
-  await fs.writeFile(path.join(contractSrcDir, `${input.ticker}.ts`), contractSource, "utf8");
-
-  // Write the AS entry point
-  const entrySource = generateContractEntry({ className, ticker: input.ticker });
-  await fs.writeFile(path.join(contractSrcDir, "index.ts"), entrySource, "utf8");
-
-  // package.json
-  const pkgJson = generateContractPackageJson({
-    slug: input.slug,
-    name: input.name,
-    ticker: input.ticker,
-  });
-  await fs.writeFile(path.join(contractDir, "package.json"), pkgJson, "utf8");
-
-  // asconfig.json
-  const asconfig = generateAsconfigJson({ ticker: input.ticker });
-  await fs.writeFile(path.join(contractDir, "asconfig.json"), asconfig, "utf8");
-
-  // Deploy script files (at root of generatedDir)
   const now = new Date().toISOString();
-  const deployTs = generateDeployScript({
-    name: input.name,
-    ticker: input.ticker,
-    buildHash: input.buildHash,
-    generatedAt: now,
-    liquidityToken: input.liquidityToken,
-    liquidityAmount: input.liquidityAmount,
-  });
-  await fs.writeFile(path.join(input.generatedDir, "deploy.ts"), deployTs, "utf8");
 
+  if (input.bondingCurve) {
+    // ── Bonding curve layout: two contracts ──────────────────────────────
+    const tokenDir = path.join(input.generatedDir, "contract", "token");
+    const curveDir = path.join(input.generatedDir, "contract", "curve");
+    const tokenSrcDir = path.join(tokenDir, "src");
+    const curveSrcDir = path.join(curveDir, "src");
+
+    await fs.mkdir(tokenSrcDir, { recursive: true });
+    await fs.mkdir(curveSrcDir, { recursive: true });
+
+    const curveAddress = input.bondingCurve.curveAddress;
+    const atomicSupply = computeAtomicSupply(input.maxSupply, input.decimals);
+
+    // Token contract: mints 100% supply to curve address
+    const tokenSource = generateOP20Contract({
+      name: input.name,
+      ticker: input.ticker,
+      decimals: input.decimals,
+      maxSupplyHuman: input.maxSupply,
+      iconUrl: input.iconUrl,
+      mintTarget: curveAddress ?? "deployer",
+    });
+    await fs.writeFile(path.join(tokenSrcDir, `${input.ticker}.ts`), tokenSource, "utf8");
+    await fs.writeFile(
+      path.join(tokenSrcDir, "index.ts"),
+      generateContractEntry({ className, ticker: input.ticker }),
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(tokenDir, "package.json"),
+      generateContractPackageJson({ slug: input.slug + "-token", name: input.name, ticker: input.ticker }),
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(tokenDir, "asconfig.json"),
+      generateAsconfigJson({ ticker: input.ticker }),
+      "utf8",
+    );
+
+    // Curve contract: BondingCurve with baked-in constants
+    const curveVars: BondingCurveTemplateVars = {
+      name: input.name,
+      ticker: input.ticker,
+      maxSupplyAtomic: atomicSupply,
+      ...input.bondingCurve.curveVars,
+    };
+    const curveSource = await generateBondingCurveContract(curveVars);
+    await fs.writeFile(path.join(curveSrcDir, "BondingCurve.ts"), curveSource, "utf8");
+    await fs.writeFile(path.join(curveSrcDir, "index.ts"), generateBondingCurveEntry(), "utf8");
+    await fs.writeFile(
+      path.join(curveDir, "package.json"),
+      generateBondingCurvePackageJson({ slug: input.slug + "-curve", name: input.name }),
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(curveDir, "asconfig.json"),
+      generateBondingCurveAsconfigJson(),
+      "utf8",
+    );
+
+    // Bonding curve deploy script
+    const deployTs = generateDeployScript({
+      name: input.name,
+      ticker: input.ticker,
+      buildHash: input.buildHash,
+      generatedAt: now,
+      liquidityToken: input.liquidityToken,
+      liquidityAmount: input.liquidityAmount,
+      bondingCurve: {
+        feeRecipient: input.bondingCurve.feeRecipient ?? "",
+        curveAddress,
+      },
+    });
+    await fs.writeFile(path.join(input.generatedDir, "deploy.ts"), deployTs, "utf8");
+  } else {
+    // ── Standard single-contract layout ─────────────────────────────────
+    const contractDir = path.join(input.generatedDir, "contract");
+    const contractSrcDir = path.join(contractDir, "src");
+
+    await fs.mkdir(contractSrcDir, { recursive: true });
+
+    const contractSource = generateOP20Contract({
+      name: input.name,
+      ticker: input.ticker,
+      decimals: input.decimals,
+      maxSupplyHuman: input.maxSupply,
+      iconUrl: input.iconUrl,
+    });
+    await fs.writeFile(path.join(contractSrcDir, `${input.ticker}.ts`), contractSource, "utf8");
+    await fs.writeFile(
+      path.join(contractSrcDir, "index.ts"),
+      generateContractEntry({ className, ticker: input.ticker }),
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(contractDir, "package.json"),
+      generateContractPackageJson({ slug: input.slug, name: input.name, ticker: input.ticker }),
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(contractDir, "asconfig.json"),
+      generateAsconfigJson({ ticker: input.ticker }),
+      "utf8",
+    );
+
+    const deployTs = generateDeployScript({
+      name: input.name,
+      ticker: input.ticker,
+      buildHash: input.buildHash,
+      generatedAt: now,
+      liquidityToken: input.liquidityToken,
+      liquidityAmount: input.liquidityAmount,
+    });
+    await fs.writeFile(path.join(input.generatedDir, "deploy.ts"), deployTs, "utf8");
+  }
+
+  // Deploy package.json and README are always at root of generatedDir
   const deployPkg = generateDeployPackageJson({
     slug: input.slug,
     name: input.name,
@@ -130,6 +239,11 @@ async function scaffoldDeployPackage(input: DeployInput): Promise<void> {
     liquidityAmount: input.liquidityAmount,
   });
   await fs.writeFile(path.join(input.generatedDir, "DEPLOY.md"), readme, "utf8");
+}
+
+/** Convert human supply string to atomic units string (multiply by 10^decimals). */
+function computeAtomicSupply(humanSupply: string, decimals: number): string {
+  return (BigInt(humanSupply) * BigInt(10) ** BigInt(decimals)).toString();
 }
 
 function readAscVersion(ascCommand: string, cwd?: string): string | null {
@@ -161,12 +275,27 @@ function resolveAscCommand(contractDir: string): string | null {
 }
 
 /**
- * Step 2: try to compile the AssemblyScript contract.
- * Returns the path to the WASM if successful, null otherwise.
+ * Step 2: try to compile the AssemblyScript contract(s).
+ * For bonding curve deployments, compiles token then curve in sequence.
+ * Returns { wasmPath, curveWasmPath } — null paths indicate compile failure.
  */
-function tryCompile(input: DeployInput): string | null {
-  const contractDir = path.join(input.generatedDir, "contract");
-  const wasmPath = path.join(contractDir, "build", `${input.ticker}.wasm`);
+function tryCompile(input: DeployInput): { wasmPath: string | null; curveWasmPath: string | null } {
+  const isBondingCurve = !!input.bondingCurve;
+  const tokenContractDir = isBondingCurve
+    ? path.join(input.generatedDir, "contract", "token")
+    : path.join(input.generatedDir, "contract");
+  const curveContractDir = path.join(input.generatedDir, "contract", "curve");
+
+  const tokenWasm = compileSingleContract(input, tokenContractDir, `${input.ticker}.wasm`);
+  const curveWasm = isBondingCurve
+    ? compileSingleContract(input, curveContractDir, "BondingCurve.wasm")
+    : null;
+
+  return { wasmPath: tokenWasm, curveWasmPath: curveWasm };
+}
+
+function compileSingleContract(input: DeployInput, contractDir: string, wasmName: string): string | null {
+  const wasmPath = path.join(contractDir, "build", wasmName);
   const requiredAscPrefix = process.env["ASC_VERSION_PREFIX"]?.trim() || "0.29";
 
   // Already compiled?
@@ -267,15 +396,20 @@ export async function deployContract(input: DeployInput): Promise<DeployOutput> 
     // Always scaffold
     await scaffoldDeployPackage(input);
 
-    // Try to compile
-    const wasmPath = tryCompile(input);
+    // Try to compile (returns { wasmPath, curveWasmPath })
+    const { wasmPath, curveWasmPath } = tryCompile(input);
 
-    if (!wasmPath) {
+    // For bonding curve: require both WASMs to advance past PACKAGE_READY
+    const tokenReady = !!wasmPath;
+    const curveReady = !input.bondingCurve || !!curveWasmPath;
+
+    if (!tokenReady || !curveReady) {
       return {
         status: "PACKAGE_READY",
         buildHash: input.buildHash,
         packageDir,
-        wasmPath: undefined,
+        wasmPath: wasmPath ?? undefined,
+        curveWasmPath: curveWasmPath ?? undefined,
         instructions: buildInstructions(input, "compile"),
       };
     }
@@ -289,7 +423,8 @@ export async function deployContract(input: DeployInput): Promise<DeployOutput> 
         deployTx: deployed.deployTx,
         buildHash: input.buildHash,
         packageDir,
-        wasmPath,
+        wasmPath: wasmPath ?? undefined,
+        curveWasmPath: curveWasmPath ?? undefined,
         instructions: buildInstructions(input, "done", deployed.contractAddress),
       };
     }
@@ -298,7 +433,8 @@ export async function deployContract(input: DeployInput): Promise<DeployOutput> 
       status: "COMPILED",
       buildHash: input.buildHash,
       packageDir,
-      wasmPath,
+      wasmPath: wasmPath ?? undefined,
+      curveWasmPath: curveWasmPath ?? undefined,
       instructions: buildInstructions(input, "deploy"),
     };
   } catch (err) {
