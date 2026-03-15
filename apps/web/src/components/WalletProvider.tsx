@@ -159,11 +159,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setWallet(state);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 
-      if (state.provider !== "manual") {
-        await runWalletVerification(state);
-      } else {
-        setIsVerified(false);
-      }
+      setIsVerified(false);
+      setVerifyError("");
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Connection failed";
       setConnectError(

@@ -51,6 +51,10 @@ model Project {
   poolTx         String?
   liveAt         DateTime?
 
+  // ── Bonding curve fields (null for DIRECT_POOL launches) ──
+  launchType     String?   // LaunchType: "DIRECT_POOL" | "BONDING_CURVE"
+  curveAddress   String?   // BondingCurve contract address (BONDING_CURVE only)
+
   @@index([status])
   @@index([pledgeCount])
   @@index([launchStatus])

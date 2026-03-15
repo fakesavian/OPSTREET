@@ -64,11 +64,36 @@ function resolveApiOrigin(): { origin: string | null; error?: string } {
   return { origin: configured };
 }
 
-function buildTargetUrl(request: NextRequest, path: string[], origin: string): URL {
+function joinUrlPath(...parts: string[]): string {
+  const cleaned = parts
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => part.replace(/^\/+|\/+$/g, ""));
+  return cleaned.length > 0 ? `/${cleaned.join("/")}` : "/";
+}
+
+function buildTargetUrl(
+  request: NextRequest,
+  path: string[],
+  origin: string,
+  extraPrefix?: string,
+): URL {
+  const base = new URL(origin);
   const suffix = path.join("/");
-  const url = new URL(`${origin}/${suffix}`);
+  const url = new URL(base.origin);
+  url.pathname = joinUrlPath(base.pathname, extraPrefix ?? "", suffix);
   url.search = request.nextUrl.search;
   return url;
+}
+
+function isSelfTarget(request: NextRequest, origin: string): boolean {
+  const target = new URL(origin);
+  return target.origin === request.nextUrl.origin && (!target.pathname || target.pathname === "/");
+}
+
+function shouldTryApiPrefixFallback(request: NextRequest, origin: string): boolean {
+  const target = new URL(origin);
+  return target.origin !== request.nextUrl.origin && (!target.pathname || target.pathname === "/");
 }
 
 function buildForwardHeaders(request: NextRequest): Headers {
@@ -99,6 +124,22 @@ function buildResponseHeaders(upstream: Response): Headers {
   return headers;
 }
 
+async function normalizeUpstreamFailure(upstream: Response): Promise<Response | null> {
+  const vercelError = upstream.headers.get("x-vercel-error")?.trim() ?? "";
+  const bodyText = await upstream.clone().text().catch(() => "");
+  if (!/DEPLOYMENT_NOT_FOUND|deployment could not be found/i.test(`${vercelError}\n${bodyText}`)) {
+    return null;
+  }
+
+  return Response.json(
+    {
+      error:
+        "Backend API deployment is unavailable. Update OPFUN_API_URL to a live backend origin and redeploy the web app.",
+    },
+    { status: 502 },
+  );
+}
+
 async function proxyRequest(
   request: NextRequest,
   context: { params: { path: string[] } },
@@ -108,18 +149,48 @@ async function proxyRequest(
     return Response.json({ error }, { status: 503 });
   }
 
+  if (isSelfTarget(request, origin)) {
+    return Response.json(
+      {
+        error:
+          "OPFUN_API_URL is pointing at this web app instead of the backend API service. Set it to the API deployment origin, or include its base path if it is mounted under /api.",
+      },
+      { status: 503 },
+    );
+  }
+
   const targetUrl = buildTargetUrl(request, context.params.path, origin);
   const headers = buildForwardHeaders(request);
   const method = request.method.toUpperCase();
+  const body = method === "GET" || method === "HEAD" ? undefined : await request.arrayBuffer();
 
   try {
-    const upstream = await fetch(targetUrl, {
+    let upstream = await fetch(targetUrl, {
       method,
       headers,
-      body: method === "GET" || method === "HEAD" ? undefined : await request.arrayBuffer(),
+      body,
       cache: "no-store",
       redirect: "manual",
     });
+
+    if (upstream.status === 404 && shouldTryApiPrefixFallback(request, origin)) {
+      const fallbackUrl = buildTargetUrl(request, context.params.path, origin, "api");
+      const fallback = await fetch(fallbackUrl, {
+        method,
+        headers,
+        body,
+        cache: "no-store",
+        redirect: "manual",
+      });
+      if (fallback.ok || fallback.status !== 404) {
+        upstream = fallback;
+      }
+    }
+
+    if (!upstream.ok) {
+      const normalized = await normalizeUpstreamFailure(upstream);
+      if (normalized) return normalized;
+    }
 
     return new Response(upstream.body, {
       status: upstream.status,

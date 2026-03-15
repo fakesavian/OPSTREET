@@ -51,8 +51,8 @@ export class {{CLASS_NAME}} extends OP20 {
                 '{{ICON_URL}}',
             ),
         );
-        // Mint entire supply to deployer at launch — no further minting possible
-        this._mint(Blockchain.tx.origin, maxSupply);
+        // Mint entire supply to {{MINT_TARGET_COMMENT}}
+        this._mint({{MINT_TARGET_EXPR}}, maxSupply);
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -62,6 +62,7 @@ export class {{CLASS_NAME}} extends OP20 {
     // No upgrade  — no logic replacement mechanism
     // ──────────────────────────────────────────────────────────────────────────
 }
+
 `;
 
 export interface OP20TemplateVars {
@@ -70,6 +71,16 @@ export interface OP20TemplateVars {
   decimals: number;
   maxSupplyHuman: string;   // e.g. "1000000000"
   iconUrl?: string;
+  /**
+   * Optional: address to mint the full supply to on deployment.
+   *   - "deployer" (default) → mints to Blockchain.tx.origin
+   *   - any other string     → treated as an Address literal in the contract
+   *     (must be a valid OPNet address that the AS runtime can construct)
+   *
+   * Used by bonding curve launches to mint 100% supply directly into the
+   * BondingCurve contract at token deploy time.
+   */
+  mintTarget?: string;
 }
 
 /** Convert human supply to atomic units (multiply by 10^decimals) */
@@ -94,6 +105,16 @@ export function generateOP20Contract(vars: OP20TemplateVars): string {
   const atomicSupply = toAtomicSupply(vars.maxSupplyHuman, vars.decimals);
   const className = toClassName(vars.name) + "Token";
 
+  // Resolve mint target: "deployer" (default) or a literal address string
+  const mintTarget = vars.mintTarget ?? "deployer";
+  const isCurveTarget = mintTarget !== "deployer";
+  const mintTargetExpr = isCurveTarget
+    ? `Address.fromString('${mintTarget}')`
+    : "Blockchain.tx.origin";
+  const mintTargetComment = isCurveTarget
+    ? `bonding curve contract (${mintTarget})`
+    : "deployer at launch — no further minting possible";
+
   return OP20_FIXED_TEMPLATE
     .replace(/\{\{NAME\}\}/g, vars.name)
     .replace(/\{\{TICKER\}\}/g, vars.ticker)
@@ -101,5 +122,7 @@ export function generateOP20Contract(vars: OP20TemplateVars): string {
     .replace(/\{\{MAX_SUPPLY_ATOMIC\}\}/g, atomicSupply)
     .replace(/\{\{MAX_SUPPLY_HUMAN\}\}/g, vars.maxSupplyHuman)
     .replace(/\{\{CLASS_NAME\}\}/g, className)
-    .replace(/\{\{ICON_URL\}\}/g, vars.iconUrl ?? "");
+    .replace(/\{\{ICON_URL\}\}/g, vars.iconUrl ?? "")
+    .replace(/\{\{MINT_TARGET_EXPR\}\}/g, mintTargetExpr)
+    .replace(/\{\{MINT_TARGET_COMMENT\}\}/g, mintTargetComment);
 }

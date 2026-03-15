@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "installCommand": "cd ../.. && pnpm install --no-frozen-lockfile",
+  "buildCommand": "cd ../.. && pnpm --filter @opfun/shared build && pnpm --filter @opfun/opnet build && pnpm --filter api db:generate",
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/api/index.ts"
+    }
+  ]
+}

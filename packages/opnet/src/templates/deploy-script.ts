@@ -310,16 +310,44 @@ export function generateDeployScript(vars: {
   generatedAt: string;
   liquidityToken?: "TBTC" | "MOTO" | "PILL";
   liquidityAmount?: string;
+  /** When set, the deploy script is for a bonding curve launch (two-contract sequence). */
+  bondingCurve?: {
+    feeRecipient: string;
+    curveAddress?: string;
+  };
 }): string {
   const liquidityToken = vars.liquidityToken ?? "MOTO";
   const liquidityAmount = vars.liquidityAmount ?? "100";
-  return DEPLOY_SCRIPT_TEMPLATE
+
+  // For bonding curve deploys, prefix the script with a header comment
+  // describing the two-step deploy sequence. The actual deploy script is
+  // the same shape — wallet tooling handles both WASMs in order.
+  let base = DEPLOY_SCRIPT_TEMPLATE
     .replace(/\{\{NAME\}\}/g, vars.name)
     .replace(/\{\{TICKER\}\}/g, vars.ticker)
     .replace(/\{\{BUILD_HASH\}\}/g, vars.buildHash)
     .replace(/\{\{GENERATED_AT\}\}/g, vars.generatedAt)
     .replace(/\{\{LIQUIDITY_TOKEN\}\}/g, liquidityToken)
     .replace(/\{\{LIQUIDITY_AMOUNT\}\}/g, liquidityAmount);
+
+  if (vars.bondingCurve) {
+    const curveNote = [
+      `// ── BONDING CURVE DEPLOY NOTE ────────────────────────────────────────────`,
+      `// This project uses a two-contract bonding curve launch:`,
+      `//   Step 1: Deploy OP_20 token (contract/token/) — mints 100% supply to curve`,
+      `//   Step 2: Deploy BondingCurve (contract/curve/) — accumulates MOTO, auto-graduates`,
+      `//   Step 3: Creator calls MOTO.approve(curveAddress, 5000) then curve.initialize()`,
+      `//`,
+      `// Fee recipient: ${vars.bondingCurve.feeRecipient || "SET OPNET_FEE_RECIPIENT env var"}`,
+      `// Curve address: ${vars.bondingCurve.curveAddress ?? "(computed after step 1 — see deploy-result.json)"}`,
+      `// Graduation:    auto-triggered inside buy() when moToReserve >= 1_000_000_000`,
+      `// ──────────────────────────────────────────────────────────────────────────`,
+      ``,
+    ].join("\n");
+    base = curveNote + base;
+  }
+
+  return base;
 }
 
 export function generateDeployPackageJson(vars: { slug: string; name: string; ticker: string }): string {

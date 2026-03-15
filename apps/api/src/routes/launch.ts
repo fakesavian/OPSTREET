@@ -20,12 +20,14 @@ import { verifyWalletToken } from "../middleware/verifyWalletToken.js";
 import { assertLaunchTransition } from "../launchMachine.js";
 import {
   RuntimeConfigError,
+  OPNET_FEE_RECIPIENT,
   broadcastSignedInteraction,
   deployContract,
   getLiquidityTokenContractAddress,
   preparePoolCreation,
+  prepareCurveInitialization,
 } from "@opfun/opnet";
-import type { LaunchStatus, LiquidityToken } from "@opfun/shared";
+import type { LaunchStatus, LaunchType, LiquidityToken } from "@opfun/shared";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GENERATED_DIR = path.resolve(__dirname, "../../../../packages/opnet/generated");
@@ -123,6 +125,14 @@ function projectLiquidityToken(project: { liquidityToken: string | null }): Liqu
   return value;
 }
 
+function projectLaunchType(project: { launchType?: string | null }): LaunchType {
+  const value = project.launchType ?? "DIRECT_POOL";
+  if (value !== "DIRECT_POOL" && value !== "BONDING_CURVE") {
+    return "DIRECT_POOL"; // safe fallback for legacy projects
+  }
+  return value as LaunchType;
+}
+
 function resolvePoolPair(project: {
   contractAddress: string | null;
   liquidityToken: string | null;
@@ -211,12 +221,14 @@ export async function launchRoutes(app: FastifyInstance) {
       });
       if (!project) return reply.status(404).send({ error: "Project not found" });
 
+      const p = project as Record<string, unknown>;
       return reply.send({
         projectId: project.id,
         ticker: project.ticker,
         status: project.status,
         launchStatus: project.launchStatus ?? "DRAFT",
         launchError: project.launchError ?? null,
+        launchType: (p["launchType"] as string | null) ?? "DIRECT_POOL",
         contractAddress: project.contractAddress ?? null,
         deployTx: project.deployTx ?? null,
         buildHash: project.buildHash ?? null,
@@ -224,6 +236,7 @@ export async function launchRoutes(app: FastifyInstance) {
         poolBaseToken: project.poolBaseToken ?? null,
         poolTx: project.poolTx ?? null,
         liveAt: project.liveAt?.toISOString() ?? null,
+        curveAddress: (p["curveAddress"] as string | null) ?? null,
         checkRuns: project.checkRuns,
       });
     },
@@ -365,6 +378,42 @@ export async function launchRoutes(app: FastifyInstance) {
         });
       }
 
+      const launchType = projectLaunchType(project as { launchType?: string | null });
+
+      // ── Bonding curve path: prepare curve.initialize() ─────────────────
+      if (launchType === "BONDING_CURVE") {
+        const curveAddr = (project as Record<string, unknown>)["curveAddress"] as string | null;
+        if (!curveAddr) {
+          return reply.status(409).send({
+            error: "curveAddress not set — curve contract has not been deployed yet.",
+          });
+        }
+        if (!OPNET_FEE_RECIPIENT) {
+          return reply.status(503).send({ error: "OPNET_FEE_RECIPIENT is not configured." });
+        }
+        try {
+          const intent = await prepareCurveInitialization(sessionWallet, curveAddr);
+          return reply.send({
+            status: "CURVE_INIT_INTENT",
+            projectId: project.id,
+            ticker: project.ticker,
+            launchType: "BONDING_CURVE",
+            curveAddress: curveAddr,
+            feeRecipient: OPNET_FEE_RECIPIENT,
+            interaction: intent.interaction,
+            instructions: [
+              "First call MOTO.approve(curveAddress, 5000) with your OP_WALLET.",
+              "Then sign the curve.initialize() interaction when prompted.",
+              "OPStreet records the init tx and the curve becomes LIVE once confirmed.",
+            ],
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Failed to prepare curve initialization.";
+          return reply.status(err instanceof RuntimeConfigError ? 503 : 400).send({ error: message });
+        }
+      }
+
+      // ── Direct pool path (existing behaviour) ───────────────────────────
       try {
         const pair = resolvePoolPair(project);
         const intent = await preparePoolCreation(
@@ -377,6 +426,7 @@ export async function launchRoutes(app: FastifyInstance) {
           status: "POOL_CREATE_INTENT",
           projectId: project.id,
           ticker: project.ticker,
+          launchType: "DIRECT_POOL",
           poolBaseToken: pair.poolBaseToken,
           baseTokenAddress: pair.baseTokenAddress,
           quoteTokenAddress: pair.quoteTokenAddress,
@@ -848,6 +898,7 @@ export async function launchRoutes(app: FastifyInstance) {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function runBuild(project: any, app: FastifyInstance): Promise<void> {
   const projectId = project.id as string;
+  const launchType = projectLaunchType(project as { launchType?: string | null });
 
   try {
     const output = await withTimeout(
@@ -864,6 +915,15 @@ async function runBuild(project: any, app: FastifyInstance): Promise<void> {
           | "TBTC" | "MOTO" | "PILL" | undefined,
         liquidityAmount: (project as Record<string, unknown>)["liquidityAmount"] as string | undefined,
         generatedDir: path.join(GENERATED_DIR, projectId),
+        // Pass bonding curve config when the project is a bonding curve launch
+        ...(launchType === "BONDING_CURVE"
+          ? {
+              bondingCurve: {
+                curveAddress: (project as Record<string, unknown>)["curveAddress"] as string | undefined,
+                feeRecipient: OPNET_FEE_RECIPIENT || undefined,
+              },
+            }
+          : {}),
       }),
       BOB_TIMEOUT_MS,
       "deployContract",
@@ -958,8 +1018,14 @@ export async function confirmDeployOnChain(
 }
 
 /**
- * Called by the watcher when a pool creation tx is confirmed on-chain.
+ * Called by the watcher when a pool creation tx (or curve init tx) is confirmed on-chain.
  * Transitions: POOL_SUBMITTED → LIVE
+ *
+ * For BONDING_CURVE projects:
+ *   - poolAddress parameter receives the curveAddress (stored in poolAddress column for uniformity)
+ *   - The project also gets curveAddress column updated
+ *   - launchStatus becomes LIVE (curve is now active and accepting buys/sells)
+ * For DIRECT_POOL projects: poolAddress is the MotoSwap AMM pool address.
  */
 export async function confirmPoolOnChain(
   projectId: string,
@@ -971,13 +1037,22 @@ export async function confirmPoolOnChain(
   const current = currentLaunchStatus(project);
   if (current !== "POOL_SUBMITTED") return false;
 
+  const launchType = projectLaunchType(project as { launchType?: string | null });
+
   try {
-    await setLaunchStatus(projectId, "POOL_SUBMITTED", "LIVE", {
+    const updateData: Record<string, unknown> = {
       poolAddress,
       liveAt: new Date(),
-    });
+    };
 
-    // Create pool metadata record
+    // For bonding curve: also record curveAddress for easier lookup
+    if (launchType === "BONDING_CURVE") {
+      updateData["curveAddress"] = poolAddress;
+    }
+
+    await setLaunchStatus(projectId, "POOL_SUBMITTED", "LIVE", updateData);
+
+    // Create pool metadata record (curve address treated as pool for watcher compat)
     if (project.poolTx) {
       await prisma.poolMetadata.upsert({
         where: { projectId },

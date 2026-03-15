@@ -137,7 +137,8 @@ NEXT_PUBLIC_LIQUIDITY_VAULT_ADDRESS="tb1ppdtv25qr5ydzr9733rl23pt9gx36cvffxe8mr82
 
 # apps/web production env (Vercel)
 # Leave NEXT_PUBLIC_API_URL unset so the browser stays on same-origin /api.
-# Set OPFUN_API_URL on the web deployment so the built-in /api proxy can forward to your public API origin.
+# Set OPFUN_API_URL on the web deployment so the built-in /api proxy can forward to your public API base URL.
+# Do not point this at the web app itself. If your backend is mounted under /api, include that base path here.
 OPFUN_API_URL="https://your-api-origin.example.com"
 ```
 

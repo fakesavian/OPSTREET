@@ -7,5 +7,6 @@
     "moduleResolution": "NodeNext",
     "lib": ["ES2022"]
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["generated", "dist", "node_modules"]
 }

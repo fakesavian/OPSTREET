@@ -38,6 +38,18 @@ function apiUnavailableError(action: string): Error {
   );
 }
 
+function normalizeApiErrorMessage(raw: string, fallback: string): string {
+  const message = raw.trim();
+  if (!message) return fallback;
+  if (/DEPLOYMENT_NOT_FOUND|deployment could not be found/i.test(message)) {
+    return "Backend API deployment is unavailable. Update OPFUN_API_URL to a live backend origin and redeploy the web app.";
+  }
+  if (/API proxy is not configured|Invalid OPFUN_API_URL|Failed to reach backend API at/i.test(message)) {
+    return "Backend API is misconfigured for this deployment. Set OPFUN_API_URL to a live backend origin and redeploy the web app.";
+  }
+  return message;
+}
+
 async function fetchOrExplain(url: string, init: RequestInit, action: string): Promise<Response> {
   try {
     return await fetch(url, init);
@@ -55,7 +67,7 @@ async function readErrorMessage(res: Response, fallback: string): Promise<string
   }
 
   const text = (await res.text().catch(() => "")).trim();
-  return text || `${fallback} (HTTP ${res.status})`;
+  return normalizeApiErrorMessage(text || `${fallback} (HTTP ${res.status})`, fallback);
 }
 
 export interface PaginatedProjects {
@@ -341,7 +353,11 @@ export async function verifyWalletSignature(data: {
   }, "verifying the wallet signature");
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error((err as { error?: string }).error ?? "Verification failed");
+    const message = normalizeApiErrorMessage(
+      (err as { error?: string }).error ?? "Verification failed",
+      "Verification failed",
+    );
+    throw new Error(message);
   }
   return res.json() as Promise<{ walletAddress: string }>;
 }

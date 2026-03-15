@@ -17,7 +17,12 @@ export {
   type DeployInput,
   type DeployOutput,
   type DeployStatus,
+  type BondingCurveInput,
 } from "./deployer.js";
+export {
+  generateBondingCurveContract,
+  type BondingCurveTemplateVars,
+} from "./templates/bonding-curve.js";
 export {
   getProvider,
   getRpcProvider,
@@ -32,6 +37,7 @@ export {
   findPoolAddress,
   preparePoolCreation,
   prepareShopMint,
+  prepareCurveInitialization,
   fetchTransactionReceipt,
   broadcastTransaction,
   broadcastSignedInteraction,
@@ -44,6 +50,7 @@ export {
   MOTOSWAP_FACTORY_ADDRESS,
   MOTOSWAP_ROUTER_ADDRESS,
   SHOP_OP721_COLLECTION_ADDRESS,
+  OPNET_FEE_RECIPIENT,
   type RuntimeConfigRequirements,
   type RuntimeContractConfig,
   type RuntimeAddressDiagnostic,
@@ -54,6 +61,7 @@ export {
   type PreparedInteraction,
   type PoolCreationIntent,
   type ShopMintIntent,
+  type CurveInitIntent,
   type SignedInteractionPayload,
   type TransactionReceiptResult,
   type BroadcastResult,

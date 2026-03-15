@@ -24,6 +24,13 @@ const OPNET_NETWORK = networks.testnet;
 const DEFAULT_INTERACTION_FEE_RATE = Number(process.env["OPNET_INTERACTION_FEE_RATE"] ?? 5);
 const DEFAULT_INTERACTION_MAX_SPEND = BigInt(process.env["OPNET_INTERACTION_MAX_SPEND"] ?? "50000");
 
+/**
+ * Fee recipient address for bonding curve launch fees.
+ * Must be set via OPNET_FEE_RECIPIENT env var before using bonding curve launches.
+ * Receives: 5_000 atomic MOTO launch fee per new curve, plus 1% swap fees.
+ */
+export const OPNET_FEE_RECIPIENT = (process.env["OPNET_FEE_RECIPIENT"] ?? "").trim();
+
 export const MOTOSWAP_FACTORY_ADDRESS = process.env["MOTOSWAP_FACTORY_ADDRESS"] ?? "";
 export const MOTOSWAP_ROUTER_ADDRESS = process.env["MOTOSWAP_ROUTER_ADDRESS"] ?? "";
 export const SHOP_OP721_COLLECTION_ADDRESS = process.env["SHOP_OP721_COLLECTION"] ?? "";
@@ -136,6 +143,13 @@ export interface PoolCreationIntent {
 export interface ShopMintIntent {
   collectionAddress: string;
   tokenId: string;
+  interaction: PreparedInteraction;
+}
+
+export interface CurveInitIntent {
+  /** Address of the BondingCurve contract to be initialized. */
+  curveAddress: string;
+  /** Encoded initialize() call for the wallet to sign. */
   interaction: PreparedInteraction;
 }
 
@@ -567,6 +581,67 @@ export async function prepareShopMint(
   return {
     collectionAddress: SHOP_OP721_COLLECTION_ADDRESS,
     tokenId,
+    interaction: buildPreparedInteraction(offlineBuffer, walletAddress, maximumAllowedSatToSpend, feeRate),
+  };
+}
+
+/**
+ * prepareCurveInitialization — Simulate and encode a call to BondingCurve.initialize().
+ *
+ * The caller (creator) must have pre-approved MOTO allowance >= 5_000 atomic units
+ * to the curveAddress before calling this. Returns the offline interaction buffer
+ * for the wallet to sign and broadcast.
+ *
+ * Deployment sequence context:
+ *   Step 3: Creator calls MOTO.approve(curveAddress, launchFee)
+ *   Step 4: Creator calls curve.initialize()  ← this function prepares that call
+ */
+export async function prepareCurveInitialization(
+  walletAddress: string,
+  curveAddress: string,
+  options?: {
+    maximumAllowedSatToSpend?: bigint;
+    feeRate?: number;
+  },
+): Promise<CurveInitIntent> {
+  ensureRequirements({ requireRpc: true });
+
+  const maximumAllowedSatToSpend = options?.maximumAllowedSatToSpend ?? DEFAULT_INTERACTION_MAX_SPEND;
+  const feeRate = options?.feeRate ?? DEFAULT_INTERACTION_FEE_RATE;
+
+  // ABI for BondingCurve.initialize() — no inputs, returns bool
+  const CURVE_INIT_ABI: BitcoinInterfaceAbi = [
+    {
+      name: "initialize",
+      type: BitcoinAbiTypes.Function,
+      inputs: [],
+      outputs: [{ name: "success", type: ABIDataTypes.BOOL }],
+    },
+  ];
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- opnet getContract proxies ABI at runtime
+  const curve = getContract(
+    toContractAddress(curveAddress, "curveAddress") as never,
+    CURVE_INIT_ABI,
+    getRpcProvider(),
+    OPNET_NETWORK,
+    walletAddress as never,
+  ) as unknown as {
+    initialize: () => Promise<{
+      revert?: string;
+      toOfflineBuffer: (refundAddress: string, amount: bigint) => Promise<Buffer>;
+    }>;
+  };
+
+  const simulation = await curve.initialize();
+  if (simulation.revert) {
+    throw new Error(`BondingCurve.initialize() simulation failed: ${simulation.revert}`);
+  }
+
+  const offlineBuffer = await simulation.toOfflineBuffer(walletAddress, maximumAllowedSatToSpend);
+
+  return {
+    curveAddress,
     interaction: buildPreparedInteraction(offlineBuffer, walletAddress, maximumAllowedSatToSpend, feeRate),
   };
 }

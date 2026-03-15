@@ -27,6 +27,13 @@ export type CheckRunStatus = "PENDING" | "OK" | "WARN" | "FAIL";
 export type WatchSeverity = "INFO" | "WARN" | "CRITICAL";
 export type LiquidityToken = "TBTC" | "MOTO" | "PILL";
 
+/**
+ * Controls the launch mechanic for this token:
+ *   DIRECT_POOL     — legacy: 100% supply minted to deployer, creator adds liquidity to MotoSwap
+ *   BONDING_CURVE   — pump.fun style: 100% supply minted to BondingCurve, curve auto-graduates
+ */
+export type LaunchType = "DIRECT_POOL" | "BONDING_CURVE";
+
 export interface ProjectDTO {
   id: string;
   slug: string;
@@ -62,6 +69,20 @@ export interface ProjectDTO {
   poolBaseToken: string | null;
   poolTx: string | null;
   liveAt: string | null;
+
+  // ── Bonding curve fields (null for DIRECT_POOL launches) ──
+  /**
+   * Launch mechanic. Defaults to DIRECT_POOL for backward compatibility.
+   * BONDING_CURVE projects use curveAddress below instead of poolAddress
+   * until graduation, after which poolAddress holds the graduated AMM pool.
+   */
+  launchType: LaunchType | null;
+  /**
+   * Address of the deployed BondingCurve contract.
+   * Null for DIRECT_POOL launches and before curve is deployed.
+   * After graduation, the AMM pool address is stored in poolAddress.
+   */
+  curveAddress: string | null;
 }
 
 export interface RiskCard {

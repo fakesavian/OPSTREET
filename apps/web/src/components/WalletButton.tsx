@@ -33,6 +33,11 @@ export function WalletButton({ variant = "default" }: { variant?: "default" | "m
   const [manualAddress, setManualAddress] = useState("");
   const verificationIssue = wallet ? getWalletVerificationIssue(wallet) : null;
 
+  async function handleVerifyClick() {
+    const ok = await verify();
+    if (ok) setShowMenu(false);
+  }
+
   function handleManualSubmit() {
     const addr = manualAddress.trim();
     if (!addr) return;
@@ -66,7 +71,7 @@ export function WalletButton({ variant = "default" }: { variant?: "default" | "m
               </p>
               {!isVerified && wallet.provider !== "manual" && !verificationIssue && (
                 <button
-                  onClick={() => void verify()}
+                  onClick={() => void handleVerifyClick()}
                   disabled={verifying}
                   className="mt-2 w-full op-btn-outline text-xs disabled:opacity-50"
                 >
@@ -81,7 +86,11 @@ export function WalletButton({ variant = "default" }: { variant?: "default" | "m
               </button>
             </div>
           )}
-          {verifyError && <p className="text-[10px] text-opRed font-semibold mt-2">{verifyError}</p>}
+          {verifyError && (
+            <p className="mt-2 rounded-lg border border-opRed/30 bg-opRed/5 px-2.5 py-2 text-[10px] font-semibold leading-relaxed text-opRed break-words whitespace-normal">
+              {verifyError}
+            </p>
+          )}
         </div>
       );
     }
@@ -103,7 +112,7 @@ export function WalletButton({ variant = "default" }: { variant?: "default" | "m
         {showMenu && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} aria-hidden="true" />
-            <div className="absolute right-0 top-full mt-2 z-50 w-[min(20rem,calc(100vw-1rem))] op-panel overflow-hidden">
+            <div className="absolute right-0 top-full mt-2 z-50 w-[22rem] max-w-[calc(100vw-1rem)] op-panel overflow-hidden">
               <div className="px-4 py-3 border-b-2 border-ink/10">
                 <p className="text-[9px] uppercase tracking-wider text-[var(--text-muted)] font-black mb-1">
                   Connected via {wallet.provider}{wallet.network ? ` · ${wallet.network}` : ""}
@@ -122,17 +131,18 @@ export function WalletButton({ variant = "default" }: { variant?: "default" | "m
                   </p>
                 ) : (
                   <button
-                    onClick={() => {
-                      void verify();
-                      setShowMenu(false);
-                    }}
+                    onClick={() => void handleVerifyClick()}
                     disabled={verifying}
                     className="w-full text-left text-[10px] text-ink font-black hover:text-opGreen transition-colors disabled:opacity-50"
                   >
                     {verifying ? "Signing..." : "Sign to verify"}
                   </button>
                 )}
-                {verifyError && <p className="text-[10px] text-opRed font-bold mt-1 leading-tight">{verifyError}</p>}
+                {verifyError && (
+                  <p className="mt-2 rounded-lg border border-opRed/30 bg-opRed/5 px-2.5 py-2 text-[10px] font-bold leading-relaxed text-opRed break-words whitespace-normal">
+                    {verifyError}
+                  </p>
+                )}
               </div>
 
               <a
