@@ -1,15 +1,12 @@
+import type { FastifyInstance } from "fastify";
+
 declare global {
   // Cache the Fastify app across warm invocations.
   // eslint-disable-next-line no-var
-  var __opstreetApiAppPromise: Promise<{
-    ready(): Promise<unknown>;
-    server: {
-      emit(event: "request", req: unknown, res: unknown): boolean;
-    };
-  }> | undefined;
+  var __opstreetApiAppPromise: Promise<FastifyInstance> | undefined;
 }
 
-async function getApp() {
+async function getApp(): Promise<FastifyInstance> {
   if (!globalThis.__opstreetApiAppPromise) {
     globalThis.__opstreetApiAppPromise = import("../src/app.js")
       .then(({ buildApp }) => buildApp({ skipWarmRuntime: true }))
