@@ -136,8 +136,8 @@ NEXT_PUBLIC_API_URL="http://localhost:3001"
 NEXT_PUBLIC_LIQUIDITY_VAULT_ADDRESS="tb1ppdtv25qr5ydzr9733rl23pt9gx36cvffxe8mr82t2ntd9ddf3uus6wecwc"
 
 # apps/web production env (Vercel)
-# Recommended: leave NEXT_PUBLIC_API_URL unset so the browser uses same-origin /api.
-# Optional: set OPFUN_API_URL if you want Next.js to proxy /api to a separate backend origin.
+# Leave NEXT_PUBLIC_API_URL unset so the browser stays on same-origin /api.
+# Set OPFUN_API_URL on the web deployment so the built-in /api proxy can forward to your public API origin.
 OPFUN_API_URL="https://your-api-origin.example.com"
 ```
 

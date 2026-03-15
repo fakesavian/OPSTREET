@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useWallet } from "@/components/WalletProvider";
+import { PixelAvatarPreview } from "@/components/floor/PixelAvatarPreview";
 import { submitOpnetLiquidityFundingWithWallet, toBip322Address, truncateAddress } from "@/lib/wallet";
 import {
   fetchPlayerMe,
@@ -17,17 +18,7 @@ import {
   type PriceData,
   type WalletBalance,
 } from "@/lib/api";
-
-type PoseKey = "base" | "idle" | "run" | "phone" | "sit";
 type WalletAction = "deposit" | "receive" | "send" | null;
-
-const POSE_OPTIONS: Array<{ key: PoseKey; label: string }> = [
-  { key: "base", label: "Base" },
-  { key: "idle", label: "Idle" },
-  { key: "run", label: "Run" },
-  { key: "phone", label: "Phone" },
-  { key: "sit", label: "Sit" },
-];
 
 function usernameFromDisplayName(displayName: string): string {
   const raw = displayName.trim();
@@ -36,20 +27,6 @@ function usernameFromDisplayName(displayName: string): string {
     return `@${cleaned.slice(0, 8)}...${cleaned.slice(-6)}`;
   }
   return cleaned ? `@${cleaned.toLowerCase()}` : "@opstreet";
-}
-
-function getCharacterPosePath(label: string | undefined, pose: PoseKey): string | null {
-  if (!label) return null;
-
-  const suffixByPose: Record<PoseKey, string> = {
-    base: "_idle_16x16",
-    idle: "_idle_anim_16x16",
-    run: "_run_16x16",
-    phone: "_phone_16x16",
-    sit: "_sit_16x16",
-  };
-
-  return `/sprites/characters/${label}${suffixByPose[pose]}.png`;
 }
 
 function formatUsd(value: number): string {
@@ -93,7 +70,6 @@ export default function ProfilePage() {
   const [displayBusy, setDisplayBusy] = useState(false);
   const [bioDraft, setBioDraft] = useState("");
   const [bioBusy, setBioBusy] = useState(false);
-  const [pose, setPose] = useState<PoseKey>("base");
   const [selectedBaseId, setSelectedBaseId] = useState("");
   const [activeWalletAction, setActiveWalletAction] = useState<WalletAction>("deposit");
   const [sendTo, setSendTo] = useState("");
@@ -173,11 +149,14 @@ export default function ProfilePage() {
     const selectedId = selectedBaseId || profile.selectedSpriteId;
     return profile.spriteOptions.find((sprite) => sprite.id === selectedId) ?? null;
   }, [profile, selectedBaseId]);
-
-  const spriteStageSrc = useMemo(
-    () => getCharacterPosePath(selectedSprite?.label, pose) ?? selectedSprite?.imageUrl ?? null,
-    [pose, selectedSprite],
-  );
+  const selectedAvatarId = selectedSprite?.id ?? profile?.selectedSpriteId ?? "sprite-adam";
+  const spriteOptions = useMemo(() => profile?.spriteOptions ?? [], [profile?.spriteOptions]);
+  const selectedBaseIndex = useMemo(() => {
+    if (!spriteOptions.length) return 0;
+    const activeId = selectedBaseId || profile?.selectedSpriteId || spriteOptions[0]?.id;
+    const foundIndex = spriteOptions.findIndex((sprite) => sprite.id === activeId);
+    return foundIndex >= 0 ? foundIndex : 0;
+  }, [profile?.selectedSpriteId, selectedBaseId, spriteOptions]);
 
   const portfolioSats = useMemo(() => {
     return playerProfile?.currentPositions.reduce((sum, position) => sum + position.estimatedValueSats, 0) ?? 0;
@@ -193,6 +172,12 @@ export default function ProfilePage() {
   const createdCount = playerProfile?.foundation.tokensCreated ?? 0;
   const bip322Address = walletAddress ? toBip322Address(walletAddress) : null;
   const hasAlternateReceiveAddress = Boolean(bip322Address && bip322Address !== walletAddress);
+
+  function shiftBase(direction: -1 | 1): void {
+    if (!spriteOptions.length) return;
+    const nextIndex = (selectedBaseIndex + direction + spriteOptions.length) % spriteOptions.length;
+    setSelectedBaseId(spriteOptions[nextIndex]!.id);
+  }
 
   async function chooseSprite(spriteId: string): Promise<void> {
     setSpriteBusy(spriteId);
@@ -341,12 +326,12 @@ export default function ProfilePage() {
             <div className="mx-auto max-w-[760px]">
               <div className="flex items-start gap-4">
                 <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-2xl border-[3px] border-ink bg-opYellow">
-                  {spriteStageSrc ? (
-                    <img
-                      src={spriteStageSrc}
-                      alt={selectedSprite?.label ?? "Character"}
-                      className="h-16 w-16 object-contain"
-                      style={{ imageRendering: "pixelated" }}
+                  {selectedSprite ? (
+                    <PixelAvatarPreview
+                      avatarId={selectedAvatarId}
+                      walletAddress={walletAddress}
+                      frameWidth={24}
+                      showShadow={false}
                     />
                   ) : (
                     <span className="text-xs font-black text-ink">NO BASE</span>
@@ -554,30 +539,20 @@ export default function ProfilePage() {
             <div className="rounded-[20px] border-[3px] border-ink bg-[#fff3c4] p-4">
               <div className="rounded-[20px] border-[3px] border-ink bg-[radial-gradient(circle_at_center,_rgba(255,216,77,0.65),_rgba(255,251,235,1)_68%)] p-6">
                 <div className="mx-auto flex h-[280px] max-w-[260px] items-center justify-center rounded-[24px] border-[3px] border-dashed border-ink bg-[var(--panel-cream)]">
-                  {spriteStageSrc ? (
-                    <img
-                      src={spriteStageSrc}
-                      alt={selectedSprite?.label ?? "Selected sprite"}
-                      className="h-48 w-48 object-contain"
-                      style={{ imageRendering: "pixelated" }}
+                  {selectedSprite ? (
+                    <PixelAvatarPreview
+                      avatarId={selectedAvatarId}
+                      walletAddress={walletAddress}
+                      frameWidth={96}
+                      className="scale-[1.15]"
                     />
                   ) : (
                     <span className="text-xs font-black uppercase tracking-[0.18em] text-[var(--text-muted)]">Select a base</span>
                   )}
                 </div>
-                <div className="mt-4 flex flex-wrap justify-center gap-2">
-                  {POSE_OPTIONS.map((option) => (
-                    <button
-                      key={option.key}
-                      onClick={() => setPose(option.key)}
-                      className={`rounded-full border-2 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] transition ${
-                        pose === option.key ? "border-ink bg-opYellow text-ink" : "border-ink bg-[var(--panel-cream)] text-ink"
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
+                <p className="mt-4 text-center text-[11px] font-black uppercase tracking-[0.18em] text-[var(--text-muted)]">
+                  Front-facing floor preview
+                </p>
               </div>
               <button
                 onClick={() => selectedBaseId && void chooseSprite(selectedBaseId)}
@@ -594,38 +569,54 @@ export default function ProfilePage() {
                 {loading ? (
                   <p className="mt-3 text-sm text-[var(--text-muted)]">Loading sprite bases...</p>
                 ) : (
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                    {(profile?.spriteOptions ?? []).map((sprite) => {
-                      const active = selectedBaseId === sprite.id;
-                      const live = profile?.selectedSpriteId === sprite.id;
-                      const previewSrc = getCharacterPosePath(sprite.label, "base") ?? sprite.imageUrl;
-                      return (
+                  <div className="mt-3 rounded-[18px] border-[3px] border-ink bg-[var(--panel-cream)] p-4">
+                    {spriteOptions.length ? (
+                      <div className="flex items-center gap-3">
                         <button
-                          key={sprite.id}
-                          onClick={() => setSelectedBaseId(sprite.id)}
-                          className={`rounded-[18px] border-[3px] p-4 text-left transition ${
-                            active ? "border-ink bg-opYellow" : "border-ink bg-[var(--panel-cream)] hover:bg-[#fff3c4]"
-                          }`}
+                          type="button"
+                          onClick={() => shiftBase(-1)}
+                          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border-[3px] border-ink bg-white text-2xl font-black text-ink transition hover:bg-opYellow"
+                          aria-label="Previous base character"
                         >
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-20 w-20 items-center justify-center rounded-2xl border-[3px] border-ink bg-white">
-                              <img
-                                src={previewSrc}
-                                alt={sprite.label}
-                                className="h-14 w-14 object-contain"
-                                style={{ imageRendering: "pixelated" }}
-                              />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="text-base font-black text-ink">{sprite.label}</p>
-                              <p className="mt-1 text-[11px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                                {live ? "Live on Floor" : active ? "Ready to Equip" : "Preview Base"}
-                              </p>
-                            </div>
+                          &#8249;
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setSelectedBaseId(spriteOptions[selectedBaseIndex]!.id)}
+                          className="flex min-w-0 flex-1 items-center gap-4 rounded-[18px] border-[3px] border-ink bg-white px-4 py-4 text-left transition hover:bg-[#fff3c4]"
+                        >
+                          <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-2xl border-[3px] border-ink bg-[#fffaf0]">
+                            <PixelAvatarPreview
+                              avatarId={spriteOptions[selectedBaseIndex]!.id}
+                              walletAddress={walletAddress}
+                              frameWidth={40}
+                              showShadow={false}
+                            />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xl font-black text-ink">{spriteOptions[selectedBaseIndex]!.label}</p>
+                            <p className="mt-1 text-[11px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                              {profile?.selectedSpriteId === spriteOptions[selectedBaseIndex]!.id ? "Live on Floor" : "Ready to Equip"}
+                            </p>
+                            <p className="mt-3 text-[10px] font-black uppercase tracking-[0.18em] text-[var(--text-muted)]">
+                              {selectedBaseIndex + 1} / {spriteOptions.length}
+                            </p>
                           </div>
                         </button>
-                      );
-                    })}
+
+                        <button
+                          type="button"
+                          onClick={() => shiftBase(1)}
+                          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border-[3px] border-ink bg-white text-2xl font-black text-ink transition hover:bg-opYellow"
+                          aria-label="Next base character"
+                        >
+                          &#8250;
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-[var(--text-muted)]">No base characters unlocked yet.</p>
+                    )}
                   </div>
                 )}
               </div>

@@ -1,17 +1,22 @@
 ﻿"use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface Props {
   walletAddress: string;
+  initialDisplayName?: string;
   onJoin: (displayName: string) => Promise<void>;
   onClose: () => void;
 }
 
-export function JoinFloorModal({ walletAddress, onJoin, onClose }: Props) {
-  const [displayName, setDisplayName] = useState(walletAddress.slice(0, 8));
+export function JoinFloorModal({ walletAddress, initialDisplayName, onJoin, onClose }: Props) {
+  const [displayName, setDisplayName] = useState(initialDisplayName?.trim() || walletAddress.slice(0, 8));
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    setDisplayName(initialDisplayName?.trim() || walletAddress.slice(0, 8));
+  }, [initialDisplayName, walletAddress]);
 
   async function handleJoin() {
     const name = displayName.trim();

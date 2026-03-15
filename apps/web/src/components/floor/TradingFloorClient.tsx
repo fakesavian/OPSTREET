@@ -10,6 +10,7 @@ import {
   fetchFloorPresence,
   fetchFloorStats,
   fetchFloorTicker,
+  fetchPlayerMe,
   type FloorProfile,
 } from "@/lib/api";
 import type {
@@ -65,6 +66,7 @@ export function TradingFloorClient() {
   const walletAddress = wallet?.address ?? null;
 
   const [profile, setProfile] = useState<FloorProfile | null>(null);
+  const [savedDisplayName, setSavedDisplayName] = useState("");
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [hasJoined, setHasJoined] = useState(false);
 
@@ -77,6 +79,7 @@ export function TradingFloorClient() {
     totalCallouts: 0,
     totalMessages: 0,
   });
+  const [chatVisibleSince, setChatVisibleSince] = useState<string | null>(null);
   const [openMobilePanels, setOpenMobilePanels] = useState<Record<MobilePanelKey, boolean>>({
     chart: false,
     callouts: false,
@@ -104,11 +107,11 @@ export function TradingFloorClient() {
   }, [walletAddress]);
 
   const fetchChatData = useCallback(async () => {
+    if (!chatVisibleSince) return;
     try {
-      const newMessages = await fetchFloorChat(lastChatTs.current);
+      const newMessages = await fetchFloorChat(lastChatTs.current ?? chatVisibleSince);
       if (newMessages.length > 0) {
         setChat((previous) => {
-          if (!lastChatTs.current) return newMessages;
           const existingIds = new Set(previous.map((message) => message.id));
           const fresh = newMessages.filter((message) => !existingIds.has(message.id));
           return [...previous, ...fresh].slice(-200);
@@ -118,7 +121,7 @@ export function TradingFloorClient() {
     } catch {
       // ignore
     }
-  }, []);
+  }, [chatVisibleSince]);
 
   const fetchTickerData = useCallback(async () => {
     try {
@@ -137,9 +140,33 @@ export function TradingFloorClient() {
   }, []);
 
   useEffect(() => {
+    if (!walletAddress) {
+      setProfile(null);
+      setSavedDisplayName("");
+      setHasJoined(false);
+      setShowJoinModal(false);
+      setChat([]);
+      setChatVisibleSince(null);
+      lastChatTs.current = undefined;
+      return;
+    }
+
+    let active = true;
+    fetchPlayerMe()
+      .then((me) => {
+        if (active) setSavedDisplayName(me.displayName.trim());
+      })
+      .catch(() => {
+        if (active) setSavedDisplayName("");
+      });
+    return () => {
+      active = false;
+    };
+  }, [walletAddress]);
+
+  useEffect(() => {
     fetchPresence();
     fetchCalloutData();
-    fetchChatData();
     fetchTickerData();
     fetchStatsData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -149,12 +176,18 @@ export function TradingFloorClient() {
     const intervals = [
       setInterval(fetchPresence, PRESENCE_INTERVAL),
       setInterval(fetchCalloutData, CALLOUT_INTERVAL),
-      setInterval(fetchChatData, CHAT_INTERVAL),
       setInterval(fetchTickerData, TICKER_INTERVAL),
       setInterval(fetchStatsData, STATS_INTERVAL),
     ];
     return () => intervals.forEach(clearInterval);
-  }, [fetchPresence, fetchCalloutData, fetchChatData, fetchTickerData, fetchStatsData]);
+  }, [fetchPresence, fetchCalloutData, fetchTickerData, fetchStatsData]);
+
+  useEffect(() => {
+    if (!chatVisibleSince) return;
+    void fetchChatData();
+    const intervalId = setInterval(fetchChatData, CHAT_INTERVAL);
+    return () => clearInterval(intervalId);
+  }, [chatVisibleSince, fetchChatData]);
 
   useEffect(() => {
     if (!walletAddress || !hasJoined) return;
@@ -179,10 +212,15 @@ export function TradingFloorClient() {
   const handleJoin = useCallback(
     async (displayName: string) => {
       if (!walletAddress) return;
+      const joinedAt = new Date().toISOString();
       const nextProfile = await floorJoin({ walletAddress, displayName });
       setProfile(nextProfile);
       setHasJoined(true);
       setShowJoinModal(false);
+      setSavedDisplayName(nextProfile.displayName);
+      setChat([]);
+      setChatVisibleSince(joinedAt);
+      lastChatTs.current = joinedAt;
       await fetchPresence();
     },
     [walletAddress, fetchPresence],
@@ -416,6 +454,7 @@ export function TradingFloorClient() {
       {showJoinModal && walletAddress && (
         <JoinFloorModal
           walletAddress={walletAddress}
+          initialDisplayName={savedDisplayName || profile?.displayName || walletAddress.slice(0, 8)}
           onJoin={handleJoin}
           onClose={() => setShowJoinModal(false)}
         />

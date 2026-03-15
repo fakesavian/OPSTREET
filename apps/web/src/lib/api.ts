@@ -29,9 +29,9 @@ function apiUnavailableError(action: string): Error {
     typeof window !== "undefined" &&
     !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname.toLowerCase());
   const hint = localFallback
-    ? "Do not ship a localhost API target. Leave NEXT_PUBLIC_API_URL unset for same-origin /api in Vercel, or set it to your live backend origin and redeploy."
+    ? "Do not ship a localhost API target. Leave NEXT_PUBLIC_API_URL unset, set OPFUN_API_URL on the web deployment to your live backend origin, and redeploy."
     : API_RUNTIME.mode === "same-origin"
-      ? "Check the same-origin /api deployment and the backend diagnostics route."
+      ? "Check the same-origin /api proxy and confirm OPFUN_API_URL points at a live backend that can answer /opnet/diagnostics."
       : "Start the local stack with `pnpm dev` and try again.";
   return new Error(
     `Cannot reach API at ${BASE} while ${action}. ${hint}`,

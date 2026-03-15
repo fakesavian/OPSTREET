@@ -72,7 +72,6 @@ export function MobileNav() {
 
   const navLinks: NavLink[] = [
     { label: "Trending", href: "/trending" },
-    { label: "Leaders", href: "/leaderboards" },
     { label: "Search", href: "/players", search: true },
     { label: "Floor", href: "/floor" },
     { label: "Shop", href: "/shop" },

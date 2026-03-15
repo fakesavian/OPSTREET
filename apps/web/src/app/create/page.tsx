@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createProject } from "@/lib/api";
+import { createProject, fetchWalletBalance } from "@/lib/api";
 import { DEFAULT_GAME_PAYMENT_TOKEN, GAME_PAYMENT_TOKENS } from "@opfun/shared";
 import { useWallet } from "@/components/WalletProvider";
 import { submitOpnetLiquidityFundingWithWallet } from "@/lib/wallet";
@@ -118,6 +118,25 @@ export default function CreatePage() {
         throw new Error("Liquidity amount must be greater than zero.");
       }
 
+      const walletBalance = await fetchWalletBalance(wallet.address).catch(() => null);
+      if (walletBalance) {
+        const confirmedSats = Math.max(0, walletBalance.confirmedSats);
+        if (confirmedSats < fundingPreview.totalSats) {
+          const pendingHint =
+            walletBalance.unconfirmedSats > 0
+              ? ` ${formatSats(walletBalance.unconfirmedSats)} sats are still unconfirmed.`
+              : "";
+          if (confirmedSats <= 0) {
+            throw new Error(
+              `Connected OP_WALLET has no confirmed UTXOs yet. Fund the wallet first, then retry.${pendingHint}`,
+            );
+          }
+          throw new Error(
+            `Need at least ${formatSats(fundingPreview.totalSats)} confirmed sats before network fees. Current confirmed balance is ${formatSats(confirmedSats)} sats.${pendingHint}`,
+          );
+        }
+      }
+
       const funding = await submitOpnetLiquidityFundingWithWallet(wallet.provider, {
         toAddress: LIQUIDITY_VAULT_ADDRESS,
         amountSats: fundingPreview.totalSats,
@@ -145,6 +164,10 @@ export default function CreatePage() {
       if (/insufficient funds/i.test(msg)) {
         setError(
           `${msg} Need at least ${formatSats(fundingPreview.totalSats)} sats (${formatTbtc(fundingPreview.totalTbtc)} tBTC) plus network fees.`,
+        );
+      } else if (/utxos?/i.test(msg)) {
+        setError(
+          `OP_WALLET could not find confirmed spendable UTXOs. Fund the connected wallet with at least ${formatSats(fundingPreview.totalSats)} sats (${formatTbtc(fundingPreview.totalTbtc)} tBTC) plus network fees, then retry.`,
         );
       } else if (/invalid.*address|invalid.*recipient|network/i.test(msg)) {
         setError(`${msg} Open OP_WALLET and verify you are on "OP_NET Testnet" (Signet).`);

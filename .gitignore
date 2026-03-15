@@ -5,10 +5,14 @@ dist
 *.db-journal
 .env
 .env.local
+.env.development.local
 .DS_Store
 packages/opnet/generated/*/
 tools/*.exe
 tools/*.zip
+.codex/
+.codex_tmp/
+.tmp/
 test-results/
 playwright-report/
 # Next.js generated declaration file (auto-generated, should not be committed)

@@ -53,7 +53,6 @@ export function OpHeader() {
           <nav className="hidden items-center gap-1.5 sm:flex pr-6">
             {[
               { href: "/trending", label: "Trending" },
-              { href: "/leaderboards", label: "Leaders" },
               { href: "/players", label: "Search", search: true },
               { href: "/floor", label: "Floor" },
               { href: "/shop", label: "Shop" },
