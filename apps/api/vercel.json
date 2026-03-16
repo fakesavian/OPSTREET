@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "installCommand": "cd ../.. && rm -rf node_modules && pnpm install --no-frozen-lockfile",
+  "installCommand": "cd ../.. && rm -rf node_modules && pnpm install --frozen-lockfile",
   "buildCommand": "cd ../.. && pnpm --filter @opfun/shared build && pnpm --filter @opfun/opnet build && pnpm --filter api db:generate",
   "functions": {
     "api/index.ts": {

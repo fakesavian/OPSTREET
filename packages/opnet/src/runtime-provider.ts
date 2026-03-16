@@ -1,5 +1,7 @@
-import { networks } from "@btc-vision/bitcoin";
-import { Address } from "@btc-vision/transaction";
+// NOTE: @btc-vision/bitcoin and @btc-vision/transaction are intentionally NOT imported
+// at the top level. They are loaded lazily (inside functions) via dynamic import() to
+// prevent ERR_PACKAGE_PATH_NOT_EXPORTED crashes on Vercel if a stale cached version of
+// these packages (e.g. @btc-vision/transaction@1.7.31) is present at lambda startup.
 import { GAME_PAYMENT_TOKENS, type LiquidityToken } from "@opfun/shared";
 import {
   ABIDataTypes,
@@ -20,9 +22,33 @@ import type {
 
 const OPNET_RPC_URL = (process.env["OPNET_RPC_URL"] ?? "").trim() || "https://testnet.opnet.org";
 const OPNET_PROVIDER_TIMEOUT_MS = Number(process.env["OPNET_PROVIDER_TIMEOUT_MS"] ?? 15_000);
-const OPNET_NETWORK = networks.testnet;
 const DEFAULT_INTERACTION_FEE_RATE = Number(process.env["OPNET_INTERACTION_FEE_RATE"] ?? 5);
 const DEFAULT_INTERACTION_MAX_SPEND = BigInt(process.env["OPNET_INTERACTION_MAX_SPEND"] ?? "50000");
+
+// Lazy-loaded module caches — populated on first use, never at module load time.
+let _btcNetworks: { testnet: unknown } | null = null;
+let _AddressClass: { fromString: (s: string) => unknown } | null = null;
+
+async function getBtcNetworks(): Promise<{ testnet: unknown }> {
+  if (!_btcNetworks) {
+    const mod = await import("@btc-vision/bitcoin");
+    _btcNetworks = mod.networks as { testnet: unknown };
+  }
+  return _btcNetworks;
+}
+
+async function getAddressClass(): Promise<{ fromString: (s: string) => unknown }> {
+  if (!_AddressClass) {
+    const mod = await import("@btc-vision/transaction");
+    _AddressClass = mod.Address as { fromString: (s: string) => unknown };
+  }
+  return _AddressClass;
+}
+
+async function getOpnetNetworkObj(): Promise<unknown> {
+  const nets = await getBtcNetworks();
+  return nets.testnet;
+}
 
 /**
  * Fee recipient address for bonding curve launch fees.
@@ -218,36 +244,38 @@ function addressToHex(address: unknown): string | null {
   return typeof hex === "string" && hex.length > 0 ? hex.toLowerCase() : null;
 }
 
-function addressToP2Op(address: unknown): string | null {
+async function addressToP2Op(address: unknown): Promise<string | null> {
   if (!address || typeof address !== "object") return null;
   const maybeAddress = address as {
-    p2op?: (network: typeof OPNET_NETWORK) => string;
+    p2op?: (network: unknown) => string;
   };
   if (typeof maybeAddress.p2op !== "function") return null;
   try {
-    const opAddress = maybeAddress.p2op(OPNET_NETWORK);
+    const network = await getOpnetNetworkObj();
+    const opAddress = maybeAddress.p2op(network);
     return typeof opAddress === "string" && opAddress.length > 0 ? opAddress : null;
   } catch {
     return null;
   }
 }
 
-function addressToP2Tr(address: unknown): string | null {
+async function addressToP2Tr(address: unknown): Promise<string | null> {
   if (!address || typeof address !== "object") return null;
   const maybeAddress = address as {
-    p2tr?: (network: typeof OPNET_NETWORK) => string;
+    p2tr?: (network: unknown) => string;
   };
   if (typeof maybeAddress.p2tr !== "function") return null;
   try {
-    const p2tr = maybeAddress.p2tr(OPNET_NETWORK);
+    const network = await getOpnetNetworkObj();
+    const p2tr = maybeAddress.p2tr(network);
     return typeof p2tr === "string" && p2tr.length > 0 ? p2tr : null;
   } catch {
     return null;
   }
 }
 
-function addressToString(address: unknown): string | null {
-  const p2op = addressToP2Op(address);
+async function addressToString(address: unknown): Promise<string | null> {
+  const p2op = await addressToP2Op(address);
   if (p2op) return p2op;
 
   if (typeof address === "string") {
@@ -267,24 +295,30 @@ function addressToString(address: unknown): string | null {
   return null;
 }
 
-function normalizeAddressCandidates(address: unknown): string[] {
+async function normalizeAddressCandidates(address: unknown): Promise<string[]> {
   const candidates = new Set<string>();
   const push = (value: string | null) => {
     if (value) candidates.add(value.toLowerCase());
   };
 
-  push(addressToString(address));
+  const [str, p2op, p2tr] = await Promise.all([
+    addressToString(address),
+    addressToP2Op(address),
+    addressToP2Tr(address),
+  ]);
+  push(str);
   push(addressToHex(address));
-  push(addressToP2Op(address));
-  push(addressToP2Tr(address));
+  push(p2op);
+  push(p2tr);
 
   return Array.from(candidates);
 }
 
-function addressMatchesExpected(address: unknown, expectedOwner: string): boolean {
+async function addressMatchesExpected(address: unknown, expectedOwner: string): Promise<boolean> {
   const expected = expectedOwner.trim().toLowerCase();
   if (!expected) return false;
-  return normalizeAddressCandidates(address).includes(expected);
+  const candidates = await normalizeAddressCandidates(address);
+  return candidates.includes(expected);
 }
 
 function bufferToBigInt(value: unknown): bigint | null {
@@ -347,18 +381,19 @@ function buildPreparedInteraction(
   };
 }
 
-export function getProvider(): JSONRpcProvider {
+export async function getProvider(): Promise<JSONRpcProvider> {
   ensureRequirements({ requireRpc: true });
 
   if (provider && providerUrl === OPNET_RPC_URL) return provider;
 
-  provider = new JSONRpcProvider({ url: OPNET_RPC_URL, network: OPNET_NETWORK, timeout: OPNET_PROVIDER_TIMEOUT_MS });
+  const network = await getOpnetNetworkObj();
+  provider = new JSONRpcProvider({ url: OPNET_RPC_URL, network: network as never, timeout: OPNET_PROVIDER_TIMEOUT_MS });
   providerUrl = OPNET_RPC_URL;
   return provider;
 }
 
-export function getRpcProvider(): AbstractRpcProvider {
-  return getProvider() as AbstractRpcProvider;
+export async function getRpcProvider(): Promise<AbstractRpcProvider> {
+  return (await getProvider()) as AbstractRpcProvider;
 }
 
 export async function closeProvider(): Promise<void> {
@@ -403,7 +438,7 @@ export async function checkProviderHealth(): Promise<ProviderHealthResult> {
 
   const startedAt = Date.now();
   try {
-    const blockHeight = await getProvider().getBlockNumber();
+    const blockHeight = await (await getProvider()).getBlockNumber();
     return {
       healthy: true,
       url,
@@ -424,11 +459,16 @@ export async function fetchLivePoolState(poolAddress: string): Promise<LivePoolS
   if (!poolAddress) return null;
 
   try {
-    const pool = getContract<IMotoswapPoolContract>(
-      toContractAddress(poolAddress, "pool address") as never,
-      MotoswapPoolAbi,
+    const [contractAddress, rpcProvider, network] = await Promise.all([
+      toContractAddress(poolAddress, "pool address"),
       getRpcProvider(),
-      OPNET_NETWORK,
+      getOpnetNetworkObj(),
+    ]);
+    const pool = getContract<IMotoswapPoolContract>(
+      contractAddress as never,
+      MotoswapPoolAbi,
+      rpcProvider,
+      network as never,
     );
 
     const [token0Result, token1Result, reservesResult] = await Promise.all([
@@ -441,8 +481,10 @@ export async function fetchLivePoolState(poolAddress: string): Promise<LivePoolS
       return null;
     }
 
-    const token0 = addressToString(token0Result.properties.token0);
-    const token1 = addressToString(token1Result.properties.token1);
+    const [token0, token1] = await Promise.all([
+      addressToString(token0Result.properties.token0),
+      addressToString(token1Result.properties.token1),
+    ]);
     if (!token0 || !token1) return null;
 
     return {
@@ -474,16 +516,24 @@ export async function fetchLivePoolReserves(poolAddress: string): Promise<LivePo
 export async function findPoolAddress(token0: string, token1: string): Promise<string | null> {
   ensureRequirements({ requireFactory: true });
 
-  const factory = getContract<IMotoswapFactoryContract>(
-    toContractAddress(MOTOSWAP_FACTORY_ADDRESS, "MOTOSWAP_FACTORY_ADDRESS") as never,
-    MotoSwapFactoryAbi,
+  const [factoryAddr, token0Addr, token1Addr, rpcProvider, network] = await Promise.all([
+    toContractAddress(MOTOSWAP_FACTORY_ADDRESS, "MOTOSWAP_FACTORY_ADDRESS"),
+    toContractAddress(token0, "token0 address"),
+    toContractAddress(token1, "token1 address"),
     getRpcProvider(),
-    OPNET_NETWORK,
+    getOpnetNetworkObj(),
+  ]);
+
+  const factory = getContract<IMotoswapFactoryContract>(
+    factoryAddr as never,
+    MotoSwapFactoryAbi,
+    rpcProvider,
+    network as never,
   );
 
   const pool = await factory.getPool(
-    toContractAddress(token0, "token0 address") as never,
-    toContractAddress(token1, "token1 address") as never,
+    token0Addr as never,
+    token1Addr as never,
   );
   if (pool.revert) return null;
   return addressToString(pool.properties.pool);
@@ -510,23 +560,31 @@ export async function preparePoolCreation(
   const maximumAllowedSatToSpend = options?.maximumAllowedSatToSpend ?? DEFAULT_INTERACTION_MAX_SPEND;
   const feeRate = options?.feeRate ?? DEFAULT_INTERACTION_FEE_RATE;
 
-  const factory = getContract<IMotoswapFactoryContract>(
-    toContractAddress(MOTOSWAP_FACTORY_ADDRESS, "MOTOSWAP_FACTORY_ADDRESS") as never,
-    MotoSwapFactoryAbi,
+  const [factoryAddr, token0Addr, token1Addr, rpcProvider, network] = await Promise.all([
+    toContractAddress(MOTOSWAP_FACTORY_ADDRESS, "MOTOSWAP_FACTORY_ADDRESS"),
+    toContractAddress(token0, "token0 address"),
+    toContractAddress(token1, "token1 address"),
     getRpcProvider(),
-    OPNET_NETWORK,
+    getOpnetNetworkObj(),
+  ]);
+
+  const factory = getContract<IMotoswapFactoryContract>(
+    factoryAddr as never,
+    MotoSwapFactoryAbi,
+    rpcProvider,
+    network as never,
     walletAddress as never,
   );
 
   const simulation = await factory.createPool(
-    toContractAddress(token0, "token0 address") as never,
-    toContractAddress(token1, "token1 address") as never,
+    token0Addr as never,
+    token1Addr as never,
   );
   if (simulation.revert) {
     throw new Error(`Pool creation simulation failed: ${simulation.revert}`);
   }
 
-  const poolAddress = addressToString(simulation.properties.address);
+  const poolAddress = await addressToString(simulation.properties.address);
   if (!poolAddress) {
     throw new Error("Pool creation simulation did not return a pool address.");
   }
@@ -554,15 +612,22 @@ export async function prepareShopMint(
   const maximumAllowedSatToSpend = options?.maximumAllowedSatToSpend ?? DEFAULT_INTERACTION_MAX_SPEND;
   const feeRate = options?.feeRate ?? DEFAULT_INTERACTION_FEE_RATE;
 
+  const [collectionAddr, walletAddr, rpcProvider, network] = await Promise.all([
+    toContractAddress(SHOP_OP721_COLLECTION_ADDRESS, "SHOP_OP721_COLLECTION"),
+    toContractAddress(walletAddress, "wallet address"),
+    getRpcProvider(),
+    getOpnetNetworkObj(),
+  ]);
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- opnet getContract proxies ABI methods at runtime
   const collection = getContract(
-    toContractAddress(SHOP_OP721_COLLECTION_ADDRESS, "SHOP_OP721_COLLECTION") as never,
+    collectionAddr as never,
     SHOP_OP721_MINT_ABI,
-    getRpcProvider(),
-    OPNET_NETWORK,
+    rpcProvider,
+    network as never,
     walletAddress as never,
   ) as unknown as {
-    mint: (mintTokenId: bigint, to: Address) => Promise<{
+    mint: (mintTokenId: bigint, to: unknown) => Promise<{
       revert?: string;
       toOfflineBuffer: (refundAddress: string, amount: bigint) => Promise<Buffer>;
     }>;
@@ -570,7 +635,7 @@ export async function prepareShopMint(
 
   const simulation = await collection.mint(
     numericTokenId,
-    toContractAddress(walletAddress, "wallet address"),
+    walletAddr,
   );
   if (simulation.revert) {
     throw new Error(`OP721 mint simulation failed: ${simulation.revert}`);
@@ -619,12 +684,18 @@ export async function prepareCurveInitialization(
     },
   ];
 
+  const [curveAddr, rpcProvider, network] = await Promise.all([
+    toContractAddress(curveAddress, "curveAddress"),
+    getRpcProvider(),
+    getOpnetNetworkObj(),
+  ]);
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- opnet getContract proxies ABI at runtime
   const curve = getContract(
-    toContractAddress(curveAddress, "curveAddress") as never,
+    curveAddr as never,
     CURVE_INIT_ABI,
-    getRpcProvider(),
-    OPNET_NETWORK,
+    rpcProvider,
+    network as never,
     walletAddress as never,
   ) as unknown as {
     initialize: () => Promise<{
@@ -648,7 +719,7 @@ export async function prepareCurveInitialization(
 
 export async function broadcastTransaction(signedPayload: string, isPsbt = false): Promise<BroadcastResult> {
   try {
-    const result = await getProvider().sendRawTransaction(signedPayload, isPsbt);
+    const result = await (await getProvider()).sendRawTransaction(signedPayload, isPsbt);
     const txId = resultTxId(result);
     if (!result.success || !txId) {
       return {
@@ -672,7 +743,7 @@ export async function broadcastSignedInteraction(
     let fundingTxId: string | undefined;
 
     if (payload.fundingTransactionRaw) {
-      const funding = await getProvider().sendRawTransaction(payload.fundingTransactionRaw, false);
+      const funding = await (await getProvider()).sendRawTransaction(payload.fundingTransactionRaw, false);
       const maybeFundingTxId = resultTxId(funding);
       if (!funding.success || !maybeFundingTxId) {
         return {
@@ -683,7 +754,7 @@ export async function broadcastSignedInteraction(
       fundingTxId = maybeFundingTxId;
     }
 
-    const interaction = await getProvider().sendRawTransaction(payload.interactionTransactionRaw, false);
+    const interaction = await (await getProvider()).sendRawTransaction(payload.interactionTransactionRaw, false);
     const txId = resultTxId(interaction);
     if (!interaction.success || !txId) {
       return {
@@ -708,7 +779,7 @@ export async function broadcastSignedInteraction(
 
 export async function fetchTransactionReceipt(txId: string): Promise<TransactionReceiptResult> {
   try {
-    const providerInstance = getProvider();
+    const providerInstance = await getProvider();
     const receipt = await providerInstance.getTransactionReceipt(txId);
     const transaction = await providerInstance.getTransaction(txId).catch(() => null);
     const blockHeight = txBlockHeight(transaction);
@@ -745,7 +816,7 @@ async function inspectRuntimeAddress(
   }
 
   try {
-    toContractAddress(address, label);
+    await toContractAddress(address, label);
 
     let codeExists: boolean | null = null;
     if (canProbeCode) {
@@ -802,14 +873,15 @@ export async function getRuntimeDiagnostics(): Promise<RuntimeDiagnostics> {
   };
 }
 
-function toContractAddress(value: string, label: string): Address {
+async function toContractAddress(value: string, label: string): Promise<unknown> {
   const normalized = value.trim();
   if (!normalized) {
     throw new RuntimeConfigError(`${label} is not configured.`);
   }
 
+  const AddressClass = await getAddressClass();
   try {
-    return Address.fromString(normalized);
+    return AddressClass.fromString(normalized);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new RuntimeConfigError(`Invalid ${label}: ${normalized}. ${detail}`);
@@ -824,11 +896,16 @@ export async function checkOp721Ownership(
   if (!collectionAddress || !expectedOwner.trim()) return false;
 
   try {
-    const collection = getContract<IOP721Contract>(
-      toContractAddress(collectionAddress, "collection address") as never,
-      OP_721_ABI,
+    const [collectionAddr, rpcProvider, network] = await Promise.all([
+      toContractAddress(collectionAddress, "collection address"),
       getRpcProvider(),
-      OPNET_NETWORK,
+      getOpnetNetworkObj(),
+    ]);
+    const collection = getContract<IOP721Contract>(
+      collectionAddr as never,
+      OP_721_ABI,
+      rpcProvider,
+      network as never,
     );
     const result = await collection.ownerOf(tokenId);
     if (result.revert) return false;
@@ -842,7 +919,7 @@ export async function checkContractCode(
   address: string,
 ): Promise<{ exists: boolean; codeFingerprint?: string }> {
   try {
-    const code = await getProvider().getCode(address, true);
+    const code = await (await getProvider()).getCode(address, true);
     const codeBuffer = Buffer.isBuffer(code) ? code : Buffer.from(String(code));
     const codeFingerprint = codeBuffer.toString("hex").slice(0, 64);
     if (!codeFingerprint || /^0+$/.test(codeFingerprint)) {
@@ -856,7 +933,7 @@ export async function checkContractCode(
 
 export async function readStorageSlot(address: string, pointer: string): Promise<bigint | null> {
   try {
-    const stored = await getProvider().getStorageAt(address, pointer);
+    const stored = await (await getProvider()).getStorageAt(address, pointer);
     return bufferToBigInt(stored.value);
   } catch {
     return null;

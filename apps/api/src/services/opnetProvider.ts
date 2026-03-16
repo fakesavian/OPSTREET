@@ -261,7 +261,7 @@ export async function fetchBlockStatus(): Promise<BlockStatusData> {
 
   let nextBlockEstimateMs = -1;
   try {
-    const provider = getProvider() as unknown as {
+    const provider = (await getProvider()) as unknown as {
       getBlock?: (height: number) => Promise<unknown>;
     };
     if (typeof provider.getBlock === "function") {
