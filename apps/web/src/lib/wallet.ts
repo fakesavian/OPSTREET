@@ -1404,8 +1404,13 @@ export async function submitOpnetLiquidityFundingWithWallet(
   const sats = payload.amountSats;
   const memo = payload.memo ?? "OpStreet liquidity";
 
-  // Collect candidate provider objects
+  // Collect candidate provider objects.
+  // sendBitcoin lives on walletInstance.web3 (Web3Provider), NOT on walletInstance directly.
+  // walletInstance = window.opnet (OPWalletInterface extends Unisat; web3?: Web3Provider)
   const root = opnet as Record<string, unknown>;
+  const web3Sub = root["web3"];
+  const web3Targets: Array<Record<string, unknown>> = [];
+  if (web3Sub && typeof web3Sub === "object") web3Targets.push(web3Sub as Record<string, unknown>);
   const targets: Array<Record<string, unknown>> = [root];
   for (const key of ["bitcoin", "opnet"] as const) {
     const sub = root[key];
@@ -1419,64 +1424,27 @@ export async function submitOpnetLiquidityFundingWithWallet(
   const altAddr =
     rawAddrLower.startsWith("opt1") ? convertBech32Hrp(rawAddr, "tb") ?? rawAddr : rawAddr;
 
-  // ── First: OP_WALLET structured API ──────────────────────────────────────
-  // OP_WALLET's sendBitcoin takes IFundingTransactionParametersWithoutSigner =
-  //   { from?, to?, utxos: UTXO[], amount: bigint, feeRate? }
-  // It does NOT accept positional (address, sats, opts) — that is Unisat's API.
-  // Returns BitcoinTransferBase = { tx: string, estimatedFees, nextUTXOs, inputUtxos }
-  // where tx is the transaction hex/id (we treat it as the txId for tracking).
-  try {
-    // Fetch UTXOs from wallet or RPC proxy
-    let rawUtxos: OPNetUTXO[] = [];
-    for (const target of targets) {
-      const fn = target["getBitcoinUtxos"] as LooseFn | undefined;
-      if (typeof fn !== "function") continue;
-      try {
-        const res = await fn(0, 100);
-        let arr: unknown[] | undefined;
-        if (Array.isArray(res)) { arr = res; }
-        else if (res && typeof res === "object") {
-          const obj2 = res as Record<string, unknown>;
-          arr = (obj2["utxos"] ?? obj2["confirmed"] ?? obj2["data"]) as unknown[] | undefined;
-        }
-        if (Array.isArray(arr) && arr.length) { rawUtxos = arr as OPNetUTXO[]; break; }
-      } catch { /* try next target */ }
-    }
-
-    // Fallback: fetch UTXOs via server proxy
-    if (!rawUtxos.length) {
-      for (const tryAddr of [payload.senderAddress, addr, altAddr].filter(Boolean) as string[]) {
-        try {
-          const resp = await fetch(`/api/opnet-utxos?address=${encodeURIComponent(tryAddr)}`);
-          if (!resp.ok) continue;
-          const data = (await resp.json()) as { confirmed?: OPNetUTXO[]; raw?: OPNetUTXO[] };
-          const pick = data.confirmed?.length ? data.confirmed : (data.raw ?? []);
-          if (pick.length) { rawUtxos = pick; break; }
-        } catch { /* try next */ }
-      }
-    }
-
-    if (rawUtxos.length) {
-      const utxos = rawUtxos
-        .map(normalizeUTXO)
-        .filter((u): u is NonNullable<ReturnType<typeof normalizeUTXO>> => u !== null)
-        .map((u) => ({ txid: u.txid, vout: u.vout, value: u.sats }));
-
-      if (utxos.length) {
-        for (const target of targets) {
-          if (typeof target["sendBitcoin"] !== "function") continue;
-          const fn = target["sendBitcoin"] as LooseFn;
-          const fromAddr = payload.senderAddress ?? addr;
-          const structuredParams = {
-            from: fromAddr,
-            to: addr,
-            amount: BigInt(sats),
-            utxos,
-            feeRate: 5,
-          };
+  // ── First: OP_WALLET Web3Provider API ────────────────────────────────────
+  // sendBitcoin is on window.opnet.web3.sendBitcoin (Web3Provider), not window.opnet directly.
+  // Signature: sendBitcoin(params: IFundingTransactionParametersWithoutSigner): Promise<BitcoinTransferBase>
+  //   params = { from?, to, amount: bigint, utxos: UTXO[], feeRate?, autoAdjustAmount? }
+  //   UTXO   = { transactionId, outputIndex, value: bigint, scriptPubKey }
+  //   result = { tx: string (txId), estimatedFees, nextUTXOs, inputUtxos }
+  // The wallet manages its own UTXOs — try with empty utxos array first (wallet fetches internally).
+  if (web3Targets.length) {
+    const fromAddr = payload.senderAddress ?? addr;
+    // Try 1: let wallet manage UTXOs entirely (empty array + autoAdjustAmount)
+    for (const w3 of web3Targets) {
+      if (typeof w3["sendBitcoin"] !== "function") continue;
+      const fn = w3["sendBitcoin"] as LooseFn;
+      for (const toAddr of [addr, altAddr]) {
+        for (const params of [
+          { from: fromAddr, to: toAddr, amount: BigInt(sats), utxos: [], feeRate: 5, autoAdjustAmount: false },
+          { to: toAddr, amount: BigInt(sats), utxos: [], feeRate: 5 },
+          { from: fromAddr, to: toAddr, amount: BigInt(sats), utxos: [], feeRate: 1 },
+        ]) {
           try {
-            const result = await fn(structuredParams);
-            // result.tx is the txId (BitcoinTransferBase)
+            const result = await fn(params);
             if (result && typeof result === "object") {
               const r = result as Record<string, unknown>;
               const txVal = r["tx"];
@@ -1489,15 +1457,11 @@ export async function submitOpnetLiquidityFundingWithWallet(
           } catch (error) {
             const normalized = normalizeWalletError(errorMessage(error));
             if (isFatalWalletError(normalized)) throw new Error(normalized);
-            failures.push(`structured:${normalized}`);
+            failures.push(`web3:${normalized}`);
           }
         }
       }
     }
-  } catch (error) {
-    const normalized = normalizeWalletError(errorMessage(error));
-    if (isFatalWalletError(normalized)) throw new Error(normalized);
-    failures.push(`utxo-fetch:${normalized}`);
   }
 
   // ── Fallback: positional API (Unisat and other wallets) ──────────────────

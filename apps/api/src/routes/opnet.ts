@@ -47,10 +47,17 @@ export async function opnetRoutes(app: FastifyInstance) {
       return reply.send(data);
     } catch (err) {
       app.log.warn({ err }, "block-status upstream unavailable");
-      return reply.status(503).send({
-        error: "Block status unavailable",
-        upstream: err instanceof Error ? err.message : "Unknown error",
-      });
+      // Return a degraded 200 (not 503) so the frontend can distinguish
+      // "RPC offline" from "API offline". The BlockTimerBar checks degraded flag.
+      const degraded: BlockStatusData = {
+        network: "opnet-testnet",
+        blockHeight: blockCache?.data.blockHeight ?? 0,
+        nextBlockEstimateMs: -1,
+        timestamp: new Date().toISOString(),
+        source: "rpc",
+        degraded: true,
+      };
+      return reply.send(degraded);
     }
   });
 

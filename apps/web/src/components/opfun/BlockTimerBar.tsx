@@ -16,8 +16,10 @@ export function BlockTimerBar() {
         .then((data) => {
           if (mounted) {
             setStatus(data);
-            setCountdown(data.nextBlockEstimateMs > 0 ? Math.floor(data.nextBlockEstimateMs / 1000) : null);
-            setLastPollOk(true);
+            // degraded = RPC unreachable but API alive; treat as offline for indicators
+            const healthy = !data.degraded && data.blockHeight > 0;
+            setLastPollOk(healthy);
+            setCountdown(healthy && data.nextBlockEstimateMs > 0 ? Math.floor(data.nextBlockEstimateMs / 1000) : null);
           }
         })
         .catch(() => {
