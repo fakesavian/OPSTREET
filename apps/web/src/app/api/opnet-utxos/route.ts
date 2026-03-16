@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const OPNET_RPC = "https://testnet.opnet.org";
+const OPNET_RPC = "https://testnet.opnet.org/api/v1/json-rpc";
 
 /**
  * Server-side proxy for OPNet UTXOs.

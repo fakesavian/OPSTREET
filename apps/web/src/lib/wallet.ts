@@ -1055,25 +1055,39 @@ async function tryPsbtTransfer(
   vaultAddress: string,
   amountSats: number,
 ): Promise<{ txId: string; raw?: unknown } | null> {
-  // 1. Fetch UTXOs via server-side proxy (avoids browser CORS restrictions)
-  // Try opt1 format first, then tb1 as fallback
-  const addrsToTry = [connectedAddr];
-  const tb1Version = convertBech32Hrp(connectedAddr, "tb1");
-  if (tb1Version && tb1Version !== connectedAddr) addrsToTry.push(tb1Version);
-
+  // 1. Fetch UTXOs — try wallet's own getBitcoinUtxos() first, then our RPC proxy
   let utxos: OPNetUTXO[] = [];
-  for (const addr of addrsToTry) {
-    try {
-      const proxyUrl = `/api/opnet-utxos?address=${encodeURIComponent(addr)}`;
-      const resp = await fetch(proxyUrl);
-      if (!resp.ok) continue;
-      const data = (await resp.json()) as { confirmed?: OPNetUTXO[]; pending?: OPNetUTXO[] };
-      // Prefer confirmed UTXOs only — pending ones may already be in the mempool
-      utxos = data.confirmed ?? [];
-      if (!utxos.length) utxos = [...(data.confirmed ?? []), ...(data.pending ?? [])];
-      if (utxos.length) break;
-    } catch { /* try next */ }
+
+  // 1a. Ask OP_WALLET directly for its UTXOs (no network call needed)
+  try {
+    const root = opnet as Record<string, unknown>;
+    const getUtxosFn = (root["getBitcoinUtxos"] ?? (root["bitcoin"] as Record<string,unknown>|undefined)?.["getBitcoinUtxos"]) as LooseFn | undefined;
+    if (typeof getUtxosFn === "function") {
+      const walletUtxos = await getUtxosFn(0, 100) as OPNetUTXO[] | undefined;
+      if (Array.isArray(walletUtxos) && walletUtxos.length) utxos = walletUtxos;
+    }
+  } catch { /* fall through to proxy */ }
+
+  // 1b. Server-side proxy using JSON-RPC btc_getUTXOs (avoids CORS)
+  if (!utxos.length) {
+    const addrsToTry = [connectedAddr];
+    const tb1Version = convertBech32Hrp(connectedAddr, "tb1");
+    if (tb1Version && tb1Version !== connectedAddr) addrsToTry.push(tb1Version);
+
+    for (const addr of addrsToTry) {
+      try {
+        const proxyUrl = `/api/opnet-utxos?address=${encodeURIComponent(addr)}`;
+        const resp = await fetch(proxyUrl);
+        if (!resp.ok) continue;
+        const data = (await resp.json()) as { confirmed?: OPNetUTXO[]; pending?: OPNetUTXO[] };
+        // Prefer confirmed UTXOs only
+        utxos = data.confirmed ?? [];
+        if (!utxos.length) utxos = [...(data.confirmed ?? []), ...(data.pending ?? [])];
+        if (utxos.length) break;
+      } catch { /* try next */ }
+    }
   }
+
   if (!utxos.length) return null;
 
   // 2. Derive scripts
