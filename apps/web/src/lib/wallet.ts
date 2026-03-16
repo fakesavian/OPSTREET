@@ -376,7 +376,6 @@ export function getWalletVerificationIssue(wallet: WalletState): string | null {
 export async function signMessage(
   provider: WalletProviderType,
   message: string,
-  address?: string,
 ): Promise<string | null> {
   if (provider === "manual") return null;
 
@@ -406,16 +405,11 @@ export async function signMessage(
       if (typeof signFn === "function") {
         const fn = signFn as LooseFn;
 
-        // Try multiple call signatures. OP_WALLET may need the address as a
-        // third arg so it can look up the correct tweaked key for BIP-322.
+        // Try call signatures from most to least specific.
+        // Do NOT pass the address as any extra arg — OP_WALLET interprets a
+        // third string argument as a pre-computed SHA-256 hash and throws a
+        // "Hash mismatch" security error when it doesn't match SHA-256(message).
         const callVariants: unknown[][] = [
-          // Address-aware variants first (best chance for P2TR key resolution)
-          ...(address ? [
-            [message, "bip322-simple", address],
-            [address, message, "bip322-simple"],
-            [message, address, "bip322-simple"],
-          ] : []),
-          // Standard variants
           [message, "bip322-simple"],
           [message],
         ];
@@ -434,7 +428,7 @@ export async function signMessage(
             return result;
           } catch (error) {
             const raw = errorMessage(error);
-            // "Can not sign for input" = BIP-322 key-tweak mismatch — try next variant
+            // "Can not sign for input" = BIP-322 Taproot key-tweak mismatch — try next variant
             if (/can not sign for input/i.test(raw)) {
               lastError = raw;
               continue;
@@ -448,12 +442,12 @@ export async function signMessage(
           }
         }
 
-        // All variants exhausted with BIP-322 key mismatch — surface actionable message
+        // All variants exhausted with BIP-322 key-tweak mismatch
         if (lastError) {
           throw new Error(
-            "OP_WALLET could not sign the authentication message (BIP-322 key mismatch). " +
-            "This is a known OP_WALLET limitation with Taproot addresses. " +
-            "Tap 'Enter address' below, paste your wallet address, and use manual sign-in instead.",
+            "OP_WALLET could not sign the authentication message (BIP-322 Taproot key mismatch). " +
+            "This is a known limitation. Use 'Enter address' below, paste your wallet address, " +
+            "and connect manually instead.",
           );
         }
       }
@@ -462,10 +456,6 @@ export async function signMessage(
       if (typeof requestFn === "function") {
         const request = requestFn as LooseFn;
         const requestVariants: unknown[] = [
-          ...(address ? [
-            { method: "signMessage", params: [message, "bip322-simple", address] },
-            { method: "signMessage", params: { message, type: "bip322-simple", address } },
-          ] : []),
           { method: "signMessage", params: [message, "bip322-simple"] },
           { method: "signMessage", params: [message] },
         ];
