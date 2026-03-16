@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useWallet } from "./WalletProvider";
-import { getWalletVerificationIssue, truncateAddress } from "@/lib/wallet";
+import { truncateAddress } from "@/lib/wallet";
 
 function WalletIcon() {
   return (
@@ -31,7 +31,7 @@ export function WalletButton({ variant = "default" }: { variant?: "default" | "m
   const [showMenu, setShowMenu] = useState(false);
   const [showManual, setShowManual] = useState(false);
   const [manualAddress, setManualAddress] = useState("");
-  const verificationIssue = wallet ? getWalletVerificationIssue(wallet) : null;
+  const verificationIssue = null; // walletAddress is now always the P2TR BTC address — no conversion needed
 
   async function handleVerifyClick() {
     const ok = await verify();
