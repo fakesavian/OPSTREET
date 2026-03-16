@@ -62,7 +62,10 @@ async function readErrorMessage(res: Response, fallback: string): Promise<string
   const contentType = res.headers.get("content-type") || "";
   if (contentType.includes("application/json")) {
     const payload = await res.json().catch(() => null) as { error?: string; message?: string } | null;
-    if (payload?.error) return payload.error;
+    if (payload?.error) {
+      const detail = (payload as { details?: string }).details;
+      return detail ? `${payload.error} [${detail}]` : payload.error;
+    }
     if (payload?.message) return payload.message;
   }
 
