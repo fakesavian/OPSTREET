@@ -334,13 +334,13 @@ function txBlockHeight(raw: unknown): number | undefined {
 }
 
 function buildPreparedInteraction(
-  offlineBuffer: Buffer,
+  offlineBuffer: Uint8Array,
   refundTo: string,
   maximumAllowedSatToSpend: bigint,
   feeRate: number,
 ): PreparedInteraction {
   return {
-    offlineBufferHex: offlineBuffer.toString("hex"),
+    offlineBufferHex: Buffer.from(offlineBuffer).toString("hex"),
     refundTo,
     maximumAllowedSatToSpend: maximumAllowedSatToSpend.toString(),
     feeRate,
@@ -352,7 +352,7 @@ export function getProvider(): JSONRpcProvider {
 
   if (provider && providerUrl === OPNET_RPC_URL) return provider;
 
-  provider = new JSONRpcProvider(OPNET_RPC_URL, OPNET_NETWORK, OPNET_PROVIDER_TIMEOUT_MS);
+  provider = new JSONRpcProvider({ url: OPNET_RPC_URL, network: OPNET_NETWORK, timeout: OPNET_PROVIDER_TIMEOUT_MS });
   providerUrl = OPNET_RPC_URL;
   return provider;
 }

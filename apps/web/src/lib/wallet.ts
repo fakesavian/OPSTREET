@@ -69,8 +69,9 @@ export interface OpnetLiquidityFundingRequest {
   toAddress: string;
   amountSats: number;
   memo?: string;
-  /** Connected wallet address (sender). Required for PSBT fallback. */
   senderAddress?: string;
+  /** Raw walletInstance from useWalletConnect() — preferred over window.bitcoin fallback */
+  walletInstance?: Record<string, unknown> | null;
 }
 
 export interface OpnetPreparedInteraction {
@@ -1378,7 +1379,10 @@ export async function submitOpnetLiquidityFundingWithWallet(
   payload: OpnetLiquidityFundingRequest,
 ): Promise<{ txId: string; raw?: unknown } | null> {
   if (provider !== "opnet") return null;
-  const opnet = getOPNet();
+
+  // Prefer walletInstance from useWalletConnect() — it's the authenticated provider object.
+  // Fall back to window.bitcoin/opnet for backwards compat.
+  const opnet = (payload.walletInstance as OPNetProvider | null | undefined) ?? getOPNet();
   if (!opnet) throw new Error("OPNet wallet extension not found.");
 
   await ensureOPNetTestnet(opnet);
@@ -1498,38 +1502,11 @@ export async function submitOpnetLiquidityFundingWithWallet(
     }
   }
 
-  // ── PSBT fallback: build tx ourselves, wallet only signs ─────────────────
-  // sendBitcoin failed (wallet can't find its own UTXOs). Fetch UTXOs via
-  // server-side proxy (avoids CORS), build P2TR PSBT, ask wallet to sign + push.
-  let psbtError: string | undefined;
-  try {
-    // Use explicitly passed senderAddress first, then try reading from provider
-    const connectedAddr =
-      payload.senderAddress?.trim() ||
-      opnet.selectedAddress ||
-      (Array.isArray(opnet.accounts) ? opnet.accounts[0] : undefined) ||
-      (await opnet.getAccounts?.())?.[0] ||
-      (await opnet.getCurrentAddress?.());
-
-    if (connectedAddr) {
-      const psbtResult = await tryPsbtTransfer(opnet, connectedAddr, rawAddr, sats);
-      if (psbtResult?.txId) return psbtResult;
-      psbtError = "PSBT signing did not return a transaction ID.";
-    } else {
-      psbtError = "Connected address not available for PSBT signing.";
-    }
-  } catch (err) {
-    psbtError = normalizeWalletError(errorMessage(err));
-  }
-
-  // psbtError is now always more specific (from throws in tryPsbtTransfer).
-  // Prefer it over the generic sendBitcoin UTXO error so user sees a useful message.
   const userError = failures.find((f) => !f.startsWith("__internal_"));
-  console.debug("[wallet] sendBitcoin failures:", failures, "psbtError:", psbtError);
+  console.debug("[wallet] sendBitcoin failures:", failures);
   throw new Error(
-    psbtError ??
-      userError ??
-      "OP_WALLET did not return a transaction ID for the BTC transfer. Ensure your wallet is on OPNet Testnet and has confirmed BTC UTXOs on its Taproot address.",
+    userError ??
+      "OP_WALLET could not send BTC. Ensure your wallet is on OPNet Testnet and has confirmed BTC UTXOs on its Taproot address.",
   );
 }
 

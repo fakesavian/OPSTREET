@@ -81,7 +81,7 @@ function validateStep0(form: {
 
 export default function CreatePage() {
   const router = useRouter();
-  const { wallet } = useWallet();
+  const { wallet, walletInstance } = useWallet();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [step, setStep] = useState<Step>(0);
@@ -149,6 +149,7 @@ export default function CreatePage() {
           amountSats: fundingPreview.totalSats,
           memo: `OpStreet liquidity ${form.ticker}`,
           senderAddress: wallet.address,
+          walletInstance: walletInstance as Record<string, unknown> | null,
         });
         if (!funding?.txId) {
           throw new Error("Liquidity funding transaction was not returned by wallet.");
