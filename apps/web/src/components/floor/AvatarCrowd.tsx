@@ -169,7 +169,7 @@ export function AvatarCrowd({
 
         {/* ── CROWD AREA (bottom 62%) — pixel floor ────────────────────── */}
         <div
-          className="relative w-full overflow-hidden"
+          className="relative w-full overflow-hidden bg-[#111]"
           style={{ height: `${crowdHeight}px` }}
         >
           {/* Pixel-art tiled floor + animated NPC traders */}

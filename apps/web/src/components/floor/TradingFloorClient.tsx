@@ -386,7 +386,7 @@ export function TradingFloorClient() {
           <button
             type="button"
             onClick={() => setOpenMobilePanels((c) => ({ ...c, chart: !c.chart }))}
-            className="flex w-full items-center justify-between rounded-[20px] border-[3px] border-ink bg-opYellow px-4 py-3 shadow-[4px_4px_0_#111] transition-all active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0_#111]"
+            className="flex w-full items-center justify-between rounded-[20px] border-[3px] border-ink bg-[linear-gradient(180deg,#f7e6be_0%,#e6bd78_48%,#c07b3f_100%)] px-4 py-3 shadow-[4px_4px_0_#111] transition-all active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0_#111]"
           >
             <span className="flex items-center gap-2 text-sm font-black text-ink">
               <span aria-hidden>📈</span> Chart
@@ -410,7 +410,7 @@ export function TradingFloorClient() {
           <button
             type="button"
             onClick={() => setOpenMobilePanels((c) => ({ ...c, callouts: !c.callouts }))}
-            className="flex w-full items-center justify-between rounded-[20px] border-[3px] border-ink bg-opYellow px-4 py-3 shadow-[4px_4px_0_#111] transition-all active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0_#111]"
+            className="flex w-full items-center justify-between rounded-[20px] border-[3px] border-ink bg-[linear-gradient(180deg,#f7e6be_0%,#e6bd78_48%,#c07b3f_100%)] px-4 py-3 shadow-[4px_4px_0_#111] transition-all active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0_#111]"
           >
             <span className="flex items-center gap-2 text-sm font-black text-ink">
               <span aria-hidden>📡</span> Alpha Callouts
@@ -441,7 +441,7 @@ export function TradingFloorClient() {
           <button
             type="button"
             onClick={() => setOpenMobilePanels((c) => ({ ...c, chat: !c.chat }))}
-            className="flex w-full items-center justify-between rounded-[20px] border-[3px] border-ink bg-opYellow px-4 py-3 shadow-[4px_4px_0_#111] transition-all active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0_#111]"
+            className="flex w-full items-center justify-between rounded-[20px] border-[3px] border-ink bg-[linear-gradient(180deg,#f7e6be_0%,#e6bd78_48%,#c07b3f_100%)] px-4 py-3 shadow-[4px_4px_0_#111] transition-all active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0_#111]"
           >
             <span className="flex items-center gap-2 text-sm font-black text-ink">
               <span aria-hidden>💬</span> Trollbox

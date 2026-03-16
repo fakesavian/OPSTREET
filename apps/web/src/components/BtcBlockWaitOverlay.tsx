@@ -5,15 +5,37 @@ import { useEffect, useRef, useState, useCallback } from "react";
 // OPNet testnet mempool explorer
 const MEMPOOL_BASE = "https://mempool.opnet.org/testnet4/tx";
 
+// ── Sound ────────────────────────────────────────────────────────────────────
+function playCoinsDrop() {
+  if (typeof window === "undefined") return;
+  try {
+    const soundEnabled = localStorage.getItem("opstreet_sound") !== "off";
+    if (!soundEnabled) return;
+    const audio = new Audio("/sounds/coins-drop.mp3");
+    audio.volume = 0.8;
+    void audio.play();
+  } catch {
+    // Ignore audio errors
+  }
+}
+
 // ── Pixel art isometric cube (SVG) ──────────────────────────────────────────
 function PixelCube({
   size = 36,
   highlight = false,
   pulse = false,
+  explode = false,
+  explodeX = 0,
+  explodeY = 0,
+  explodeRot = 0,
 }: {
   size?: number;
   highlight?: boolean;
   pulse?: boolean;
+  explode?: boolean;
+  explodeX?: number;
+  explodeY?: number;
+  explodeRot?: number;
 }) {
   const w = size;
   const h = Math.round(size * 1.15);
@@ -27,16 +49,23 @@ function PixelCube({
   const rightFill = highlight ? "#A07000" : "#6B4E06";
   const stroke = "#111111";
 
+  const baseStyle: React.CSSProperties = {
+    imageRendering: "pixelated",
+    animation: pulse && !explode ? "cubePulse 1.2s ease-in-out infinite" : undefined,
+    filter: highlight ? "drop-shadow(0 0 4px #FFD70088)" : undefined,
+    transition: explode ? "transform 0.6s cubic-bezier(0.2, 0, 0.8, 1), opacity 0.6s ease" : undefined,
+    transform: explode
+      ? `translate(${explodeX}px, ${explodeY}px) rotate(${explodeRot}deg) scale(0.3)`
+      : "translate(0,0) rotate(0deg) scale(1)",
+    opacity: explode ? 0 : 1,
+  };
+
   return (
     <svg
       width={w}
       height={h}
       viewBox={`0 0 ${w} ${h}`}
-      style={{
-        imageRendering: "pixelated",
-        animation: pulse ? "cubePulse 1.2s ease-in-out infinite" : undefined,
-        filter: highlight ? "drop-shadow(0 0 4px #FFD70088)" : undefined,
-      }}
+      style={baseStyle}
     >
       {/* Top face */}
       <polygon
@@ -63,6 +92,40 @@ function PixelCube({
   );
 }
 
+// ── Pixel particles that burst on confirm ────────────────────────────────────
+const PARTICLES = Array.from({ length: 16 }, (_, i) => ({
+  id: i,
+  angle: (i / 16) * Math.PI * 2,
+  dist: 60 + Math.random() * 80,
+  color: ["#FFD700", "#FF8C00", "#FFA500", "#FFEC00", "#fff"][i % 5]!,
+  size: 4 + Math.round(Math.random() * 6),
+}));
+
+function ConfirmBurst() {
+  return (
+    <>
+      {PARTICLES.map((p) => (
+        <div
+          key={p.id}
+          className="pointer-events-none absolute"
+          style={{
+            left: "50%",
+            top: "40%",
+            width: p.size,
+            height: p.size,
+            background: p.color,
+            imageRendering: "pixelated",
+            animation: `particleBurst 0.7s cubic-bezier(0.2,0,0.5,1) forwards`,
+            animationDelay: `${p.id * 15}ms`,
+            "--dx": `${Math.cos(p.angle) * p.dist}px`,
+            "--dy": `${Math.sin(p.angle) * p.dist}px`,
+          } as React.CSSProperties}
+        />
+      ))}
+    </>
+  );
+}
+
 // ── Timer ────────────────────────────────────────────────────────────────────
 function useElapsed(running: boolean) {
   const [seconds, setSeconds] = useState(0);
@@ -81,15 +144,19 @@ function useElapsed(running: boolean) {
 // ── Main overlay ──────────────────────────────────────────────────────────────
 interface Props {
   txId: string;
+  confirmed?: boolean;
   onDismiss?: () => void;
 }
 
-export function BtcBlockWaitOverlay({ txId, onDismiss }: Props) {
+export function BtcBlockWaitOverlay({ txId, confirmed = false, onDismiss }: Props) {
   const [minimized, setMinimized] = useState(false);
   const [copied, setCopied] = useState(false);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const [pulseIdx, setPulseIdx] = useState(1);
-  const elapsed = useElapsed(true);
+  const [exploded, setExploded] = useState(false);
+  const [showBurst, setShowBurst] = useState(false);
+  const elapsed = useElapsed(!confirmed);
+  const soundPlayedRef = useRef(false);
 
   const panelRef = useRef<HTMLDivElement>(null);
   const dragStart = useRef<{ mx: number; my: number; px: number; py: number } | null>(null);
@@ -101,11 +168,23 @@ export function BtcBlockWaitOverlay({ txId, onDismiss }: Props) {
     setPos({ x: Math.max(8, vw - 380), y: Math.max(8, vh - 320) });
   }, []);
 
-  // Cycle pulse cube index every 800ms
+  // Cycle pulse cube index every 800ms (only while not confirmed)
   useEffect(() => {
+    if (confirmed) return;
     const id = setInterval(() => setPulseIdx((i) => (i + 1) % 3), 800);
     return () => clearInterval(id);
-  }, []);
+  }, [confirmed]);
+
+  // Trigger explosion + sound when confirmed
+  useEffect(() => {
+    if (!confirmed || soundPlayedRef.current) return;
+    soundPlayedRef.current = true;
+    playCoinsDrop();
+    setShowBurst(true);
+    // Slight delay so the burst renders first, then cubes explode
+    const t = setTimeout(() => setExploded(true), 80);
+    return () => clearTimeout(t);
+  }, [confirmed]);
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     if (!panelRef.current) return;
@@ -155,6 +234,15 @@ export function BtcBlockWaitOverlay({ txId, onDismiss }: Props) {
           0%, 100% { transform: translateY(0); opacity: 1; }
           50%       { transform: translateY(-5px); opacity: 0.85; }
         }
+        @keyframes particleBurst {
+          0%   { transform: translate(-50%, -50%) translate(0, 0) scale(1); opacity: 1; }
+          100% { transform: translate(-50%, -50%) translate(var(--dx), var(--dy)) scale(0); opacity: 0; }
+        }
+        @keyframes confirmPop {
+          0%   { transform: scale(0.85); opacity: 0; }
+          60%  { transform: scale(1.08); opacity: 1; }
+          100% { transform: scale(1); opacity: 1; }
+        }
       `}</style>
 
       <div
@@ -164,12 +252,16 @@ export function BtcBlockWaitOverlay({ txId, onDismiss }: Props) {
       >
         {/* ── Header (drag handle) ────────────────────────────────────── */}
         <div
-          className="flex cursor-grab items-center justify-between rounded-t-[16px] border-[3px] border-b-0 border-ink bg-opYellow px-3 py-2 shadow-[4px_0px_0_#111,0px_-4px_0_#111]"
+          className={`flex cursor-grab items-center justify-between rounded-t-[16px] border-[3px] border-b-0 border-ink px-3 py-2 shadow-[4px_0px_0_#111,0px_-4px_0_#111] ${
+            confirmed
+              ? "bg-[linear-gradient(90deg,#4ade80,#22c55e)]"
+              : "bg-opYellow"
+          }`}
           onMouseDown={onMouseDown}
         >
           <div className="flex items-center gap-2">
             <span className="font-mono text-[10px] font-black tracking-[0.2em] text-ink">
-              ⛏ AWAITING BLOCK
+              {confirmed ? "✓ CONFIRMED" : "⛏ AWAITING BLOCK"}
             </span>
           </div>
           <div className="flex items-center gap-1">
@@ -196,7 +288,10 @@ export function BtcBlockWaitOverlay({ txId, onDismiss }: Props) {
 
         {/* ── Body ────────────────────────────────────────────────────── */}
         {!minimized && (
-          <div className="rounded-b-[16px] border-[3px] border-ink bg-[#fff7e8] px-4 pb-4 pt-3 shadow-[4px_4px_0_#111]">
+          <div className="relative rounded-b-[16px] border-[3px] border-ink bg-[#fff7e8] px-4 pb-4 pt-3 shadow-[4px_4px_0_#111] overflow-hidden">
+            {/* Particle burst on confirm */}
+            {showBurst && <ConfirmBurst />}
+
             {/* Pixel cubes — mempool blocks */}
             <div className="mb-3 flex items-end justify-center gap-3">
               {[0, 1, 2].map((i) => (
@@ -204,14 +299,32 @@ export function BtcBlockWaitOverlay({ txId, onDismiss }: Props) {
                   <PixelCube
                     size={i === 1 ? 40 : 30}
                     highlight={i === 1}
-                    pulse={pulseIdx === i}
+                    pulse={!confirmed && pulseIdx === i}
+                    explode={exploded}
+                    explodeX={[-55, 0, 55][i] ?? 0}
+                    explodeY={[30, -70, 20][i] ?? 0}
+                    explodeRot={[-40, 15, 60][i] ?? 0}
                   />
-                  <span className="font-mono text-[8px] font-black text-ink/50">
-                    {i === 1 ? "PENDING" : i === 0 ? "PREV" : "NEXT"}
-                  </span>
+                  {!exploded && (
+                    <span className="font-mono text-[8px] font-black text-ink/50">
+                      {i === 1 ? (confirmed ? "DONE" : "PENDING") : i === 0 ? "PREV" : "NEXT"}
+                    </span>
+                  )}
                 </div>
               ))}
             </div>
+
+            {/* Confirmed banner */}
+            {confirmed && (
+              <div
+                className="mb-3 rounded-[10px] border-[2px] border-[#16a34a] bg-[#dcfce7] px-3 py-2 text-center"
+                style={{ animation: "confirmPop 0.4s ease forwards" }}
+              >
+                <p className="font-mono text-[11px] font-black text-[#15803d]">
+                  Block confirmed! Transaction on-chain.
+                </p>
+              </div>
+            )}
 
             {/* TxId */}
             <div className="mb-2 rounded-[10px] border-[2px] border-ink bg-ink px-3 py-2">
@@ -242,7 +355,7 @@ export function BtcBlockWaitOverlay({ txId, onDismiss }: Props) {
             <div className="flex items-center justify-between">
               <div>
                 <div className="font-mono text-[9px] font-bold uppercase tracking-widest text-ink/50">
-                  Elapsed
+                  {confirmed ? "Elapsed" : "Elapsed"}
                 </div>
                 <div className="font-mono text-[22px] font-black leading-none text-ink">
                   {elapsed}
@@ -250,25 +363,30 @@ export function BtcBlockWaitOverlay({ txId, onDismiss }: Props) {
               </div>
               <div className="text-right">
                 <div className="font-mono text-[9px] font-bold uppercase tracking-widest text-ink/50">
-                  Avg block time
+                  {confirmed ? "Status" : "Avg block time"}
                 </div>
-                <div className="font-mono text-[13px] font-black text-ink">~10 min</div>
+                <div className="font-mono text-[13px] font-black text-ink">
+                  {confirmed ? "✓ Live" : "~10 min"}
+                </div>
               </div>
             </div>
 
-            <p className="mt-2 font-mono text-[10px] font-bold leading-relaxed text-ink/60">
-              Your transaction is in the mempool.
-              <br />
-              Waiting for 1 Bitcoin block confirmation.
-            </p>
+            {!confirmed && (
+              <p className="mt-2 font-mono text-[10px] font-bold leading-relaxed text-ink/60">
+                Your transaction is in the mempool.
+                <br />
+                Waiting for 1 Bitcoin block confirmation.
+              </p>
+            )}
           </div>
         )}
 
         {/* Minimized pill shows timer */}
         {minimized && (
-          <div className="rounded-b-[10px] border-[3px] border-t-0 border-ink bg-[#fff7e8] px-3 py-1.5 shadow-[4px_4px_0_#111]">
+          <div className={`rounded-b-[10px] border-[3px] border-t-0 border-ink px-3 py-1.5 shadow-[4px_4px_0_#111] ${confirmed ? "bg-[#dcfce7]" : "bg-[#fff7e8]"}`}>
             <span className="font-mono text-[11px] font-black text-ink">{elapsed}</span>
             <span className="ml-2 font-mono text-[9px] text-ink/50">{short}</span>
+            {confirmed && <span className="ml-2 font-mono text-[9px] font-black text-[#16a34a]">✓</span>}
           </div>
         )}
       </div>

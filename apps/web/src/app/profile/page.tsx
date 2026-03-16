@@ -401,6 +401,9 @@ export default function ProfilePage() {
               <Link href="/create" className="block">
                 <ActionTile label="Create" caption="Launch a token" asChild tone="yellow" />
               </Link>
+              <Link href="/settings" className="block">
+                <ActionTile label="Settings" caption="Sound & preferences" asChild />
+              </Link>
             </div>
 
             {activeWalletAction && (

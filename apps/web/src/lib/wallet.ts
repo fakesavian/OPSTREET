@@ -917,43 +917,62 @@ export async function submitOpnetLiquidityFundingWithWallet(
   }
 
   // OP_WALLET documented API: sendBitcoin(toAddress: string, satoshis: number, options?)
-  // Try positional args first (correct per docs), then request-style fallbacks.
+  // Try multiple address formats and option variants to work around UTXO lookup quirks.
   const failures: string[] = [];
+
+  // Also try the original tb1/bcrt1 format in case the wallet resolves UTXOs under that HRP
+  const rawAddrLower = rawAddr.toLowerCase();
+  const altAddr =
+    rawAddrLower.startsWith("opt1") ? convertBech32Hrp(rawAddr, "tb1") ?? rawAddr : rawAddr;
+
+  const sendOptions = [
+    { feeRate: 5, memo, usePendingUTXO: true },
+    { feeRate: 5, memo },
+    { memo },
+  ];
 
   for (const target of targets) {
     if (typeof target["sendBitcoin"] !== "function") continue;
     const fn = target["sendBitcoin"] as LooseFn;
 
-    // Positional variants: (addr, sats, opts), (addr, sats), (addr, BigInt(sats), opts)
-    const directVariants: unknown[][] = [
-      [addr, sats, { feeRate: 5, memo }],
-      [addr, sats],
-      [addr, BigInt(sats), { feeRate: 5, memo }],
-      [addr, BigInt(sats)],
-    ];
-
-    for (const args of directVariants) {
-      try {
-        const result = await fn(...args);
-        const parsed = parseSubmitResult(result);
-        if (parsed?.txId) return { txId: parsed.txId, raw: parsed.raw };
-        if (typeof result === "string" && result.length > 8) return { txId: result, raw: result };
-      } catch (error) {
-        const normalized = normalizeWalletError(errorMessage(error));
-        if (isFatalWalletError(normalized)) throw new Error(normalized);
-        failures.push(normalized);
+    for (const tryAddr of [addr, altAddr]) {
+      for (const opts of sendOptions) {
+        const directVariants: unknown[][] = [
+          [tryAddr, sats, opts],
+          [tryAddr, BigInt(sats), opts],
+          [tryAddr, sats],
+          [tryAddr, BigInt(sats)],
+        ];
+        for (const args of directVariants) {
+          try {
+            const result = await fn(...args);
+            const parsed = parseSubmitResult(result);
+            if (parsed?.txId) return { txId: parsed.txId, raw: parsed.raw };
+            if (typeof result === "string" && result.length > 8) return { txId: result, raw: result };
+          } catch (error) {
+            const normalized = normalizeWalletError(errorMessage(error));
+            if (isFatalWalletError(normalized)) throw new Error(normalized);
+            failures.push(normalized);
+          }
+        }
       }
     }
   }
 
-  // request()-style fallbacks
+  // request()-style fallbacks with both address formats
   for (const target of targets) {
     if (typeof target["request"] !== "function") continue;
     const req = target["request"] as LooseFn;
 
     const requestVariants = [
+      { method: "sendBitcoin", params: [addr, sats, { feeRate: 5, memo, usePendingUTXO: true }] },
       { method: "sendBitcoin", params: [addr, sats, { feeRate: 5, memo }] },
+      { method: "sendBitcoin", params: [altAddr, sats, { feeRate: 5, memo, usePendingUTXO: true }] },
+      { method: "sendBitcoin", params: { to: addr, amount: sats, feeRate: 5, memo, usePendingUTXO: true } },
       { method: "sendBitcoin", params: { to: addr, amount: sats, feeRate: 5, memo } },
+      // Some wallets expose transfer or send instead
+      { method: "transfer", params: { to: addr, amount: BigInt(sats), token: "BTC" } },
+      { method: "btc_sendTransaction", params: [{ to: addr, value: sats }] },
     ];
 
     for (const reqPayload of requestVariants) {
@@ -966,6 +985,23 @@ export async function submitOpnetLiquidityFundingWithWallet(
         const normalized = normalizeWalletError(errorMessage(error));
         if (isFatalWalletError(normalized)) throw new Error(normalized);
         failures.push(normalized);
+      }
+    }
+  }
+
+  // Last resort: try other direct method names
+  const altMethods = ["transfer", "send", "btcSend", "sendTransaction"];
+  for (const target of targets) {
+    for (const methodName of altMethods) {
+      if (typeof target[methodName] !== "function") continue;
+      const fn = target[methodName] as LooseFn;
+      try {
+        const result = await fn(addr, BigInt(sats), { feeRate: 5 });
+        const parsed = parseSubmitResult(result);
+        if (parsed?.txId) return { txId: parsed.txId, raw: parsed.raw };
+        if (typeof result === "string" && result.length > 8) return { txId: result, raw: result };
+      } catch (error) {
+        failures.push(normalizeWalletError(errorMessage(error)));
       }
     }
   }
