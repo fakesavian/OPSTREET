@@ -6,6 +6,7 @@ import { createProject, fetchWalletBalance } from "@/lib/api";
 import { DEFAULT_GAME_PAYMENT_TOKEN, GAME_PAYMENT_TOKENS } from "@opfun/shared";
 import { useWallet } from "@/components/WalletProvider";
 import { submitOpnetLiquidityFundingWithWallet } from "@/lib/wallet";
+import { BtcBlockWaitOverlay } from "@/components/BtcBlockWaitOverlay";
 
 const STEPS = ["Token Info", "Links", "Review"] as const;
 type Step = 0 | 1 | 2;
@@ -91,6 +92,7 @@ export default function CreatePage() {
   });
   const [touched, setTouched] = useState<TouchedFields>({});
   const [submitAttempted, setSubmitAttempted] = useState(false);
+  const [pendingTxId, setPendingTxId] = useState<string | null>(null);
 
   const step0Errors = validateStep0(form);
   const fundingPreview = getLiquidityFundingPreview(form.liquidityToken, form.liquidityAmount);
@@ -146,6 +148,9 @@ export default function CreatePage() {
         throw new Error("Liquidity funding transaction was not returned by wallet.");
       }
 
+      // Show block-wait overlay immediately — Bitcoin tx is now in mempool
+      setPendingTxId(funding.txId);
+
       const links: Record<string, string> = {};
       if (form.website) links["website"] = form.website;
       if (form.twitter) links["twitter"] = form.twitter;
@@ -181,6 +186,12 @@ export default function CreatePage() {
 
   return (
     <div className="mx-auto max-w-2xl py-6">
+      {pendingTxId && (
+        <BtcBlockWaitOverlay
+          txId={pendingTxId}
+          onDismiss={() => setPendingTxId(null)}
+        />
+      )}
       {/* Header */}
       <div className="op-panel mb-8 space-y-3 p-5">
         <h1 className="text-3xl font-black text-ink">Launch a Token</h1>
