@@ -94,6 +94,7 @@ export default function CreatePage() {
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [pendingTxId, setPendingTxId] = useState<string | null>(null);
   const [utxoCheck, setUtxoCheck] = useState<{ count: number; totalSats: string; loading: boolean } | null>(null);
+  const [skipFunding, setSkipFunding] = useState(false);
 
   // When entering Review step, pre-flight check UTXOs so user knows before clicking Launch
   useEffect(() => {
@@ -131,42 +132,50 @@ export default function CreatePage() {
     setLoading(true);
     try {
       if (!wallet) throw new Error("Connect an OP_WALLET first.");
-      if (wallet.provider !== "opnet") throw new Error("OP_WALLET is required to fund initial liquidity.");
       if (!fundingPreview.valid) {
         throw new Error("Liquidity amount must be greater than zero.");
       }
 
-      const walletBalance = await fetchWalletBalance(wallet.address).catch(() => null);
-      if (walletBalance) {
-        const confirmedSats = Math.max(0, walletBalance.confirmedSats);
-        if (confirmedSats < fundingPreview.totalSats) {
-          const pendingHint =
-            walletBalance.unconfirmedSats > 0
-              ? ` ${formatSats(walletBalance.unconfirmedSats)} sats are still unconfirmed.`
-              : "";
-          if (confirmedSats <= 0) {
+      let fundingTxId: string;
+
+      if (skipFunding) {
+        // Testnet skip: no BTC transfer — create project with placeholder tx
+        fundingTxId = `testnet-skip-${Date.now()}`;
+      } else {
+        if (wallet.provider !== "opnet") throw new Error("OP_WALLET is required to fund initial liquidity.");
+
+        const walletBalance = await fetchWalletBalance(wallet.address).catch(() => null);
+        if (walletBalance) {
+          const confirmedSats = Math.max(0, walletBalance.confirmedSats);
+          if (confirmedSats < fundingPreview.totalSats) {
+            const pendingHint =
+              walletBalance.unconfirmedSats > 0
+                ? ` ${formatSats(walletBalance.unconfirmedSats)} sats are still unconfirmed.`
+                : "";
+            if (confirmedSats <= 0) {
+              throw new Error(
+                `Connected OP_WALLET has no confirmed UTXOs yet. Fund the wallet first, then retry.${pendingHint}`,
+              );
+            }
             throw new Error(
-              `Connected OP_WALLET has no confirmed UTXOs yet. Fund the wallet first, then retry.${pendingHint}`,
+              `Need at least ${formatSats(fundingPreview.totalSats)} confirmed sats before network fees. Current confirmed balance is ${formatSats(confirmedSats)} sats.${pendingHint}`,
             );
           }
-          throw new Error(
-            `Need at least ${formatSats(fundingPreview.totalSats)} confirmed sats before network fees. Current confirmed balance is ${formatSats(confirmedSats)} sats.${pendingHint}`,
-          );
         }
-      }
 
-      const funding = await submitOpnetLiquidityFundingWithWallet(wallet.provider, {
-        toAddress: LIQUIDITY_VAULT_ADDRESS,
-        amountSats: fundingPreview.totalSats,
-        memo: `OpStreet liquidity ${form.ticker}`,
-        senderAddress: wallet.address,
-      });
-      if (!funding?.txId) {
-        throw new Error("Liquidity funding transaction was not returned by wallet.");
+        const funding = await submitOpnetLiquidityFundingWithWallet(wallet.provider, {
+          toAddress: LIQUIDITY_VAULT_ADDRESS,
+          amountSats: fundingPreview.totalSats,
+          memo: `OpStreet liquidity ${form.ticker}`,
+          senderAddress: wallet.address,
+        });
+        if (!funding?.txId) {
+          throw new Error("Liquidity funding transaction was not returned by wallet.");
+        }
+        fundingTxId = funding.txId;
+        // Show block-wait overlay immediately — Bitcoin tx is now in mempool
+        setPendingTxId(fundingTxId);
       }
-
-      // Show block-wait overlay immediately — Bitcoin tx is now in mempool
-      setPendingTxId(funding.txId);
 
       const links: Record<string, string> = {};
       if (form.website) links["website"] = form.website;
@@ -178,7 +187,7 @@ export default function CreatePage() {
         iconUrl: form.iconUrl || undefined, sourceRepoUrl: form.sourceRepoUrl || undefined,
         liquidityToken: form.liquidityToken,
         liquidityAmount: form.liquidityAmount,
-        liquidityFundingTx: funding.txId,
+        liquidityFundingTx: fundingTxId,
       });
       router.push(`/p/${project.slug}`);
     } catch (err) {
@@ -441,6 +450,28 @@ export default function CreatePage() {
             </ul>
           </div>
 
+          {/* Skip funding toggle — shown when no spendable UTXOs */}
+          {utxoCheck && !utxoCheck.loading && utxoCheck.count === 0 && (
+            <div className="rounded-xl border-2 border-ink bg-[#FFF7E8] px-4 py-3 space-y-3">
+              <p className="text-xs font-black text-ink uppercase tracking-wider">Testnet: Skip BTC Funding</p>
+              <p className="text-xs text-ink/70">
+                Your BTC is CSV time-locked. Enable this to create the token record now and fund liquidity later once your BTC unlocks.
+              </p>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={skipFunding}
+                  onClick={() => setSkipFunding((v) => !v)}
+                  className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border-[3px] border-ink transition-colors ${skipFunding ? "bg-[#4ade80]" : "bg-[#d4d4d4]"}`}
+                >
+                  <span className={`h-4 w-4 rounded-full border-[2px] border-ink bg-white shadow-sm transition-transform ${skipFunding ? "translate-x-[22px]" : "translate-x-[2px]"}`} />
+                </button>
+                <span className="text-sm font-black text-ink">{skipFunding ? "Skip enabled — no BTC transfer" : "Skip disabled — BTC transfer required"}</span>
+              </label>
+            </div>
+          )}
+
           {/* UTXO pre-flight diagnostic */}
           {utxoCheck && (
             <div className={`rounded-xl border-2 px-4 py-3 text-xs font-bold ${
@@ -468,7 +499,7 @@ export default function CreatePage() {
           <div className="flex gap-3">
             <button type="button" onClick={() => setStep(1)} className="op-btn-outline flex-1 py-3">&larr; Back</button>
             <button type="submit" disabled={loading} className="op-btn-primary flex-1 py-3 text-base disabled:opacity-50">
-              {loading ? "Creating..." : "Launch Token \u2192"}
+              {loading ? "Creating..." : skipFunding ? "Create Token (no BTC transfer) →" : "Launch Token →"}
             </button>
           </div>
         </form>
