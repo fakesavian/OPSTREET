@@ -6,6 +6,7 @@ settings:
 
 overrides:
   '@noble/hashes': 1.8.0
+  '@noble/curves': 2.0.1
   postcss: 8.5.6
 
 importers:
@@ -97,19 +98,19 @@ importers:
         version: 6.5.6(@types/node@20.19.35)(typescript@5.9.3)(webpack@5.105.3)
       '@btc-vision/walletconnect':
         specifier: ^1.10.4
-        version: 1.10.4(@babel/core@7.29.0)(@noble/curves@2.0.1)(@types/node@20.19.35)(eslint@8.57.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3)(webpack@5.105.3)
+        version: 1.10.4(@babel/core@7.29.0(supports-color@9.4.0))(@noble/curves@2.0.1)(@types/node@20.19.35)(eslint@8.57.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3)(webpack@5.105.3)
       '@opfun/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@vercel/speed-insights':
         specifier: ^2.0.0
-        version: 2.0.0(next@14.2.4(@babel/core@7.29.0)(@playwright/test@1.58.2)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react@18.3.1)
+        version: 2.0.0(next@14.2.4(@babel/core@7.29.0(supports-color@9.4.0))(@playwright/test@1.58.2)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react@18.3.1)
       next:
         specifier: 14.2.4
-        version: 14.2.4(@babel/core@7.29.0)(@playwright/test@1.58.2)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+        version: 14.2.4(@babel/core@7.29.0(supports-color@9.4.0))(@playwright/test@1.58.2)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       opnet:
         specifier: ^1.8.0
-        version: 1.8.0(@babel/core@7.29.0)(@types/node@20.19.35)(eslint@8.57.1)(typedoc@0.28.17(typescript@5.9.3))(typescript@5.9.3)(webpack@5.105.3)
+        version: 1.8.0(@babel/core@7.29.0(supports-color@9.4.0))(@types/node@20.19.35)(eslint@8.57.1)(typedoc@0.28.17(typescript@5.9.3))(typescript@5.9.3)(webpack@5.105.3)
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -158,13 +159,13 @@ importers:
         version: 4.0.5(@noble/curves@2.0.1)
       '@btc-vision/transaction':
         specifier: ^1.7.31
-        version: 1.7.31(@babel/core@7.29.0)(@types/node@20.19.35)(eslint@8.57.1)(webpack@5.105.3)
+        version: 1.7.31(@babel/core@7.29.0(supports-color@9.4.0))(@types/node@20.19.35)(eslint@8.57.1)(webpack@5.105.3)
       '@opfun/shared':
         specifier: workspace:*
         version: link:../shared
       opnet:
         specifier: ^1.8.0
-        version: 1.8.0(@babel/core@7.29.0)(@types/node@20.19.35)(eslint@8.57.1)(typedoc@0.28.17(typescript@5.9.3))(typescript@5.9.3)(webpack@5.105.3)
+        version: 1.8.0(@babel/core@7.29.0(supports-color@9.4.0))(@types/node@20.19.35)(eslint@8.57.1)(typedoc@0.28.17(typescript@5.9.3))(typescript@5.9.3)(webpack@5.105.3)
     devDependencies:
       '@types/node':
         specifier: ^20.14.2
@@ -323,7 +324,7 @@ packages:
     resolution: {integrity: sha512-edkoJJFU7tAAfwsYW+05030tNtG5Rg+qt0/zuIwvmnkaFAWqVTngNE29viwMkttMFbrtZHAVcPYWcn5qelstMA==}
     engines: {node: '>=24.0.0'}
     peerDependencies:
-      '@noble/curves': '>=2.0.0'
+      '@noble/curves': 2.0.1
     peerDependenciesMeta:
       '@noble/curves':
         optional: true
@@ -859,10 +860,6 @@ packages:
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
-
-  '@noble/curves@1.9.7':
-    resolution: {integrity: sha512-gbKGcRUYIjA3/zCCNaWDciTMFI0dCkvou3TL8Zmy5Nc7sJ47a0jtOeZoTaMxkuqRo9cRhjOdZJXegxYE5FN/xw==}
-    engines: {node: ^14.21.3 || >=16}
 
   '@noble/curves@2.0.1':
     resolution: {integrity: sha512-vs1Az2OOTBiP4q0pwjW5aF0xp9n4MxVrmkFBxc6EKZc6ddYx5gaZiAsZoq0uRRXWbi3AT/sBqn05eRPtn1JCPw==}
@@ -3739,7 +3736,7 @@ snapshots:
 
   '@bitcoinerlab/secp256k1@1.2.0':
     dependencies:
-      '@noble/curves': 1.9.7
+      '@noble/curves': 2.0.1
 
   '@btc-vision/bip32@6.1.0(typescript@5.9.3)':
     dependencies:
@@ -3763,7 +3760,7 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/curves'
 
-  '@btc-vision/bitcoin-rpc@1.1.0(@babel/core@7.29.0)(@types/node@20.19.35)(eslint@8.57.1)(typescript@5.9.3)(webpack@5.105.3)':
+  '@btc-vision/bitcoin-rpc@1.1.0(@babel/core@7.29.0(supports-color@9.4.0))(@types/node@20.19.35)(eslint@8.57.1)(typescript@5.9.3)(webpack@5.105.3)':
     dependencies:
       '@btc-vision/bsi-common': 1.2.1(@babel/core@7.29.0(supports-color@9.4.0))(@types/node@20.19.35)(typescript@5.9.3)(webpack@5.105.3)
       '@eslint/js': 10.0.1(eslint@8.57.1)
@@ -3786,7 +3783,7 @@ snapshots:
       - typescript
       - webpack
 
-  '@btc-vision/bitcoin-rpc@1.1.2(@babel/core@7.29.0)(@types/node@20.19.35)(eslint@8.57.1)(typescript@5.9.3)(webpack@5.105.3)':
+  '@btc-vision/bitcoin-rpc@1.1.2(@babel/core@7.29.0(supports-color@9.4.0))(@types/node@20.19.35)(eslint@8.57.1)(typescript@5.9.3)(webpack@5.105.3)':
     dependencies:
       '@btc-vision/bsi-common': 1.2.1(@babel/core@7.29.0(supports-color@9.4.0))(@types/node@20.19.35)(typescript@5.9.3)(webpack@5.105.3)
       '@eslint/js': 10.0.1(eslint@8.57.1)
@@ -3861,7 +3858,7 @@ snapshots:
     dependencies:
       '@btc-vision/logger': 1.0.8(@types/node@20.19.35)(typescript@5.9.3)(webpack@5.105.3)
       '@eslint/js': 9.39.3
-      babel-plugin-transform-import-meta: 2.3.3(@babel/core@7.29.0)
+      babel-plugin-transform-import-meta: 2.3.3(@babel/core@7.29.0(supports-color@9.4.0))
       mongodb: 7.1.0
       toml: 3.0.0
       ts-node: 10.9.2(@types/node@20.19.35)(typescript@5.9.3)
@@ -3892,9 +3889,9 @@ snapshots:
       '@eslint/js': 9.38.0
       assert: 2.1.0
       babel-loader: 9.2.1(@babel/core@7.29.0(supports-color@9.4.0))(webpack@5.105.3)
-      babel-plugin-transform-import-meta: 2.3.3(@babel/core@7.29.0)
+      babel-plugin-transform-import-meta: 2.3.3(@babel/core@7.29.0(supports-color@9.4.0))
       babel-preset-react: 6.24.1
-      babelify: 10.0.0(@babel/core@7.29.0)
+      babelify: 10.0.0(@babel/core@7.29.0(supports-color@9.4.0))
       chalk: 5.6.2
       supports-color: 9.4.0
       ts-loader: 9.5.4(typescript@5.9.3)(webpack@5.105.3)
@@ -3911,23 +3908,23 @@ snapshots:
       '@noble/curves': 2.0.1
       '@noble/hashes': 1.8.0
 
-  '@btc-vision/transaction@1.7.31(@babel/core@7.29.0)(@types/node@20.19.35)(eslint@8.57.1)(webpack@5.105.3)':
+  '@btc-vision/transaction@1.7.31(@babel/core@7.29.0(supports-color@9.4.0))(@types/node@20.19.35)(eslint@8.57.1)(webpack@5.105.3)':
     dependencies:
       '@babel/plugin-proposal-object-rest-spread': 7.20.7(@babel/core@7.29.0(supports-color@9.4.0))
       '@bitcoinerlab/secp256k1': 1.2.0
       '@btc-vision/bip32': 6.1.0(typescript@5.9.3)
       '@btc-vision/bitcoin': 6.5.6(@types/node@20.19.35)(typescript@5.9.3)(webpack@5.105.3)
-      '@btc-vision/bitcoin-rpc': 1.1.0(@babel/core@7.29.0)(@types/node@20.19.35)(eslint@8.57.1)(typescript@5.9.3)(webpack@5.105.3)
+      '@btc-vision/bitcoin-rpc': 1.1.0(@babel/core@7.29.0(supports-color@9.4.0))(@types/node@20.19.35)(eslint@8.57.1)(typescript@5.9.3)(webpack@5.105.3)
       '@btc-vision/logger': 1.0.8(@types/node@20.19.35)(typescript@5.9.3)(webpack@5.105.3)
       '@btc-vision/post-quantum': 0.5.3
       '@eslint/js': 9.39.3
-      '@noble/curves': 1.9.7
+      '@noble/curves': 2.0.1
       '@noble/secp256k1': 3.0.0
       assert: 2.1.0
       babel-loader: 10.0.0(@babel/core@7.29.0(supports-color@9.4.0))(webpack@5.105.3)
-      babel-plugin-transform-import-meta: 2.3.3(@babel/core@7.29.0)
+      babel-plugin-transform-import-meta: 2.3.3(@babel/core@7.29.0(supports-color@9.4.0))
       babel-preset-react: 6.24.1
-      babelify: 10.0.0(@babel/core@7.29.0)
+      babelify: 10.0.0(@babel/core@7.29.0(supports-color@9.4.0))
       bech32: 2.0.0
       bip174: 2.1.1
       bip39: 3.1.0
@@ -3955,11 +3952,11 @@ snapshots:
       - socks
       - webpack
 
-  '@btc-vision/transaction@1.8.2(@babel/core@7.29.0)(@types/node@20.19.35)(eslint@8.57.1)(webpack@5.105.3)':
+  '@btc-vision/transaction@1.8.2(@babel/core@7.29.0(supports-color@9.4.0))(@types/node@20.19.35)(eslint@8.57.1)(webpack@5.105.3)':
     dependencies:
       '@btc-vision/bip32': 7.1.2(@noble/curves@2.0.1)
       '@btc-vision/bitcoin': 7.0.0(@noble/curves@2.0.1)(@types/node@20.19.35)(typescript@5.9.3)(webpack@5.105.3)
-      '@btc-vision/bitcoin-rpc': 1.1.2(@babel/core@7.29.0)(@types/node@20.19.35)(eslint@8.57.1)(typescript@5.9.3)(webpack@5.105.3)
+      '@btc-vision/bitcoin-rpc': 1.1.2(@babel/core@7.29.0(supports-color@9.4.0))(@types/node@20.19.35)(eslint@8.57.1)(typescript@5.9.3)(webpack@5.105.3)
       '@btc-vision/ecpair': 4.0.5(@noble/curves@2.0.1)
       '@btc-vision/logger': 1.0.8(@types/node@20.19.35)(typescript@5.9.3)(webpack@5.105.3)
       '@eslint/js': 10.0.1(eslint@8.57.1)
@@ -3989,13 +3986,13 @@ snapshots:
       - socks
       - webpack
 
-  '@btc-vision/walletconnect@1.10.4(@babel/core@7.29.0)(@noble/curves@2.0.1)(@types/node@20.19.35)(eslint@8.57.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3)(webpack@5.105.3)':
+  '@btc-vision/walletconnect@1.10.4(@babel/core@7.29.0(supports-color@9.4.0))(@noble/curves@2.0.1)(@types/node@20.19.35)(eslint@8.57.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3)(webpack@5.105.3)':
     dependencies:
       '@btc-vision/bip32': 7.1.2(@noble/curves@2.0.1)
       '@btc-vision/bitcoin': 7.0.0(@noble/curves@2.0.1)(@types/node@20.19.35)(typescript@5.9.3)(webpack@5.105.3)
       '@btc-vision/ecpair': 4.0.5(@noble/curves@2.0.1)
-      '@btc-vision/transaction': 1.8.2(@babel/core@7.29.0)(@types/node@20.19.35)(eslint@8.57.1)(webpack@5.105.3)
-      opnet: 1.8.5(@babel/core@7.29.0)(@noble/curves@2.0.1)(@types/node@20.19.35)(eslint@8.57.1)(typescript@5.9.3)(webpack@5.105.3)
+      '@btc-vision/transaction': 1.8.2(@babel/core@7.29.0(supports-color@9.4.0))(@types/node@20.19.35)(eslint@8.57.1)(webpack@5.105.3)
+      opnet: 1.8.5(@babel/core@7.29.0(supports-color@9.4.0))(@noble/curves@2.0.1)(@types/node@20.19.35)(eslint@8.57.1)(typescript@5.9.3)(webpack@5.105.3)
       react: 18.3.1
       react-dom: 18.3.1(react@18.3.1)
     transitivePeerDependencies:
@@ -4381,10 +4378,6 @@ snapshots:
   '@next/swc-win32-x64-msvc@14.2.4':
     optional: true
 
-  '@noble/curves@1.9.7':
-    dependencies:
-      '@noble/hashes': 1.8.0
-
   '@noble/curves@2.0.1':
     dependencies:
       '@noble/hashes': 1.8.0
@@ -4654,9 +4647,9 @@ snapshots:
   '@unrs/resolver-binding-win32-x64-msvc@1.11.1':
     optional: true
 
-  '@vercel/speed-insights@2.0.0(next@14.2.4(@babel/core@7.29.0)(@playwright/test@1.58.2)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react@18.3.1)':
+  '@vercel/speed-insights@2.0.0(next@14.2.4(@babel/core@7.29.0(supports-color@9.4.0))(@playwright/test@1.58.2)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react@18.3.1)':
     optionalDependencies:
-      next: 14.2.4(@babel/core@7.29.0)(@playwright/test@1.58.2)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      next: 14.2.4(@babel/core@7.29.0(supports-color@9.4.0))(@playwright/test@1.58.2)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       react: 18.3.1
 
   '@webassemblyjs/ast@1.14.1':
@@ -4947,7 +4940,7 @@ snapshots:
       babel-plugin-syntax-flow: 6.18.0
       babel-runtime: 6.26.0
 
-  babel-plugin-transform-import-meta@2.3.3(@babel/core@7.29.0):
+  babel-plugin-transform-import-meta@2.3.3(@babel/core@7.29.0(supports-color@9.4.0)):
     dependencies:
       '@babel/core': 7.29.0(supports-color@9.4.0)
       '@babel/template': 7.28.6
@@ -4998,7 +4991,7 @@ snapshots:
       lodash: 4.17.23
       to-fast-properties: 1.0.3
 
-  babelify@10.0.0(@babel/core@7.29.0):
+  babelify@10.0.0(@babel/core@7.29.0(supports-color@9.4.0)):
     dependencies:
       '@babel/core': 7.29.0(supports-color@9.4.0)
 
@@ -6418,7 +6411,7 @@ snapshots:
 
   neo-async@2.6.2: {}
 
-  next@14.2.4(@babel/core@7.29.0)(@playwright/test@1.58.2)(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
+  next@14.2.4(@babel/core@7.29.0(supports-color@9.4.0))(@playwright/test@1.58.2)(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
     dependencies:
       '@next/env': 14.2.4
       '@swc/helpers': 0.5.5
@@ -6428,7 +6421,7 @@ snapshots:
       postcss: 8.5.6
       react: 18.3.1
       react-dom: 18.3.1(react@18.3.1)
-      styled-jsx: 5.1.1(@babel/core@7.29.0)(react@18.3.1)
+      styled-jsx: 5.1.1(@babel/core@7.29.0(supports-color@9.4.0))(react@18.3.1)
     optionalDependencies:
       '@next/swc-darwin-arm64': 14.2.4
       '@next/swc-darwin-x64': 14.2.4
@@ -6516,15 +6509,15 @@ snapshots:
     dependencies:
       wrappy: 1.0.2
 
-  opnet@1.8.0(@babel/core@7.29.0)(@types/node@20.19.35)(eslint@8.57.1)(typedoc@0.28.17(typescript@5.9.3))(typescript@5.9.3)(webpack@5.105.3):
+  opnet@1.8.0(@babel/core@7.29.0(supports-color@9.4.0))(@types/node@20.19.35)(eslint@8.57.1)(typedoc@0.28.17(typescript@5.9.3))(typescript@5.9.3)(webpack@5.105.3):
     dependencies:
       '@bitcoinerlab/secp256k1': 1.2.0
       '@btc-vision/bip32': 6.1.0(typescript@5.9.3)
       '@btc-vision/bitcoin': 6.5.6(@types/node@20.19.35)(typescript@5.9.3)(webpack@5.105.3)
-      '@btc-vision/bitcoin-rpc': 1.1.0(@babel/core@7.29.0)(@types/node@20.19.35)(eslint@8.57.1)(typescript@5.9.3)(webpack@5.105.3)
+      '@btc-vision/bitcoin-rpc': 1.1.0(@babel/core@7.29.0(supports-color@9.4.0))(@types/node@20.19.35)(eslint@8.57.1)(typescript@5.9.3)(webpack@5.105.3)
       '@btc-vision/logger': 1.0.8(@types/node@20.19.35)(typescript@5.9.3)(webpack@5.105.3)
       '@btc-vision/post-quantum': 0.5.3
-      '@btc-vision/transaction': 1.7.31(@babel/core@7.29.0)(@types/node@20.19.35)(eslint@8.57.1)(webpack@5.105.3)
+      '@btc-vision/transaction': 1.7.31(@babel/core@7.29.0(supports-color@9.4.0))(@types/node@20.19.35)(eslint@8.57.1)(webpack@5.105.3)
       '@noble/hashes': 1.8.0
       bignumber.js: 9.3.1
       buffer: 6.0.3
@@ -6551,14 +6544,14 @@ snapshots:
       - typescript
       - webpack
 
-  opnet@1.8.5(@babel/core@7.29.0)(@noble/curves@2.0.1)(@types/node@20.19.35)(eslint@8.57.1)(typescript@5.9.3)(webpack@5.105.3):
+  opnet@1.8.5(@babel/core@7.29.0(supports-color@9.4.0))(@noble/curves@2.0.1)(@types/node@20.19.35)(eslint@8.57.1)(typescript@5.9.3)(webpack@5.105.3):
     dependencies:
       '@btc-vision/bip32': 7.1.2(@noble/curves@2.0.1)
       '@btc-vision/bitcoin': 7.0.0(@noble/curves@2.0.1)(@types/node@20.19.35)(typescript@5.9.3)(webpack@5.105.3)
-      '@btc-vision/bitcoin-rpc': 1.1.2(@babel/core@7.29.0)(@types/node@20.19.35)(eslint@8.57.1)(typescript@5.9.3)(webpack@5.105.3)
+      '@btc-vision/bitcoin-rpc': 1.1.2(@babel/core@7.29.0(supports-color@9.4.0))(@types/node@20.19.35)(eslint@8.57.1)(typescript@5.9.3)(webpack@5.105.3)
       '@btc-vision/ecpair': 4.0.5(@noble/curves@2.0.1)
       '@btc-vision/logger': 1.0.8(@types/node@20.19.35)(typescript@5.9.3)(webpack@5.105.3)
-      '@btc-vision/transaction': 1.8.2(@babel/core@7.29.0)(@types/node@20.19.35)(eslint@8.57.1)(webpack@5.105.3)
+      '@btc-vision/transaction': 1.8.2(@babel/core@7.29.0(supports-color@9.4.0))(@types/node@20.19.35)(eslint@8.57.1)(webpack@5.105.3)
       '@noble/hashes': 1.8.0
       bignumber.js: 10.0.2
       long: 5.3.2
@@ -7135,7 +7128,7 @@ snapshots:
 
   strip-json-comments@3.1.1: {}
 
-  styled-jsx@5.1.1(@babel/core@7.29.0)(react@18.3.1):
+  styled-jsx@5.1.1(@babel/core@7.29.0(supports-color@9.4.0))(react@18.3.1):
     dependencies:
       client-only: 0.0.1
       react: 18.3.1
