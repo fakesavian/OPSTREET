@@ -189,23 +189,26 @@ export async function authRoutes(app: FastifyInstance) {
       // Rebuild the exact message that was presented to the wallet for signing.
       const nonceMessage = buildMessage(noncePayload.n, new Date(noncePayload.e));
 
-      // Verify BIP-322 signature (convert opt1 → tb1 for verification)
+      // Verify BIP-322 signature (convert opt1 → tb1 for verification).
+      // DEV_AUTH_HEADER_FALLBACK=true bypasses BIP-322 on testnet deployments where
+      // the wallet (e.g. OP_WALLET) cannot produce a verifiable BIP-322 signature.
+      // Never set this flag on a production mainnet deployment.
+      const isBypassEnabled = process.env["DEV_AUTH_HEADER_FALLBACK"] === "true";
       const signingAddress = toSigningAddress(walletAddress);
       let valid = false;
       try {
         valid = Verifier.verifySignature(signingAddress, nonceMessage, signature);
       } catch {
-        request.log.warn({ event: "auth_fail", reason: "verify_throw", walletAddress }, "Auth failed: signature verification threw");
-        return reply.status(401).send({ error: "Signature verification failed." });
+        if (isBypassEnabled) {
+          request.log.warn({ event: "auth_dev_fallback", walletAddress }, "BIP-322 threw, bypass enabled — allowing session.");
+          valid = true;
+        } else {
+          request.log.warn({ event: "auth_fail", reason: "verify_throw", walletAddress }, "Auth failed: signature verification threw");
+          return reply.status(401).send({ error: "Signature verification failed." });
+        }
       }
-      // DEV_AUTH_HEADER_FALLBACK=true bypasses BIP-322 on testnet deployments where
-      // the wallet (e.g. OP_WALLET) cannot produce a verifiable BIP-322 signature.
-      // Never set this flag on a production mainnet deployment.
-      if (!valid && process.env["DEV_AUTH_HEADER_FALLBACK"] === "true") {
-        request.log.warn(
-          { event: "auth_dev_fallback", walletAddress },
-          "BIP-322 verification failed, allowing fallback session (DEV_AUTH_HEADER_FALLBACK=true).",
-        );
+      if (!valid && isBypassEnabled) {
+        request.log.warn({ event: "auth_dev_fallback", walletAddress }, "BIP-322 invalid, bypass enabled — allowing session.");
         valid = true;
       }
 
