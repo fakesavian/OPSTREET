@@ -182,15 +182,16 @@ async function proxyRequest(
   const targetUrl = buildTargetUrl(request, context.params.path, origin);
   const headers = buildForwardHeaders(request);
   const method = request.method.toUpperCase();
-  // Read body bytes once. Node.js Buffer is immune to undici's TypedArray buffer
-  // transfer/markAsUncloneable path — it goes through Buffer.concat() instead.
-  // Pre-create both copies before ANY fetch so undici cannot detach the source.
-  const bodyBytes =
+  // Read the body as a plain string. Strings are JS primitives — immutable and
+  // never subject to ArrayBuffer transfer/detachment by undici or the V8 engine.
+  // All prior attempts using ArrayBuffer / Uint8Array.slice() / Buffer.from()
+  // failed because undici ultimately touches the underlying ArrayBuffer pool.
+  // A string body works for all text-based content types (JSON, form-encoded).
+  const bodyText =
     method === "GET" || method === "HEAD"
       ? null
-      : Buffer.from(new Uint8Array(await request.arrayBuffer()));
-  const primaryBody = bodyBytes !== null ? Buffer.from(bodyBytes) : null;
-  const fallbackBody = bodyBytes !== null ? Buffer.from(bodyBytes) : null;
+      : await request.text();
+  const makeBody = () => (bodyText !== null ? bodyText : undefined);
 
   const apiOrigin = new URL(origin).origin;
 
@@ -198,7 +199,7 @@ async function proxyRequest(
     let upstream = await fetch(targetUrl, {
       method,
       headers,
-      body: primaryBody ?? undefined,
+      body: makeBody(),
       cache: "no-store",
       redirect: "follow",
     });
@@ -221,7 +222,7 @@ async function proxyRequest(
       const fallback = await fetch(fallbackUrl, {
         method,
         headers,
-        body: fallbackBody ?? undefined,
+        body: makeBody(),
         cache: "no-store",
         redirect: "follow",
       });
