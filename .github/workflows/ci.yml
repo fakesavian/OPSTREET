@@ -32,6 +32,11 @@ jobs:
       - name: Build opnet (required before typecheck)
         run: pnpm --filter @opfun/opnet build
 
+      - name: Generate Prisma client (required before typecheck)
+        run: pnpm --filter api db:generate
+        env:
+          DATABASE_URL: file:./test.db
+
       - name: Typecheck
         run: pnpm typecheck
 
