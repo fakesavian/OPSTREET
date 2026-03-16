@@ -125,7 +125,7 @@ export async function floorRoutes(app: FastifyInstance) {
       create: {
         walletAddress,
         displayName: cleanName || walletAddress.slice(0, 8),
-        activeAvatarId: avatarId ?? "default-free-1",
+        activeAvatarId: avatarId ?? "sprite-adam",
       },
     });
 

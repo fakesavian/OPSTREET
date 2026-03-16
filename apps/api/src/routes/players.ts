@@ -44,11 +44,11 @@ function spritePreviewFor(id: string): { label: string; imageUrl: string | null 
   };
 }
 
-function normalizeSelectedSpriteId(value: string | null | undefined): (typeof SPRITE_IDS)[number] {
+function normalizeSelectedSpriteId(value: string | null | undefined): (typeof SPRITE_IDS)[number] | null {
   if (value && (SPRITE_IDS as readonly string[]).includes(value)) {
     return value as (typeof SPRITE_IDS)[number];
   }
-  return "sprite-adam";
+  return null;
 }
 
 async function readSocialCounts(walletAddress: string): Promise<{ followerCount: number; followingCount: number }> {

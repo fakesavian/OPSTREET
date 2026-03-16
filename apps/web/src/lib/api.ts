@@ -82,8 +82,11 @@ export interface PaginatedProjects {
 export async function fetchProjects(sort: "new" | "trending" = "new", cursor?: string): Promise<PaginatedProjects> {
   const params = new URLSearchParams({ sort });
   if (cursor) params.set("cursor", cursor);
-  const res = await fetch(`${BASE}/projects?${params}`, { next: { revalidate: 10 } });
-  if (!res.ok) throw new Error("Failed to fetch projects");
+  const res = await fetchOrExplain(`${BASE}/projects?${params}`, { cache: "no-store" }, "fetching projects");
+  if (!res.ok) {
+    const msg = await readErrorMessage(res, "Failed to fetch projects");
+    throw new Error(msg);
+  }
   const data = await res.json();
   // Backward compatibility: if backend still returns a bare array, wrap it
   if (Array.isArray(data)) return { items: data, nextCursor: null, hasMore: false };
@@ -519,8 +522,11 @@ export async function fetchPlayerProfile(playerId: string): Promise<PlayerProfil
 export async function fetchPlayerSearch(query: string, limit: number = 12): Promise<PlayerSearchResult[]> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (query.trim()) params.set("q", query.trim());
-  const res = await fetch(`${BASE}/players/search?${params}`, { cache: "no-store" });
-  if (!res.ok) throw new Error("Failed to search players");
+  const res = await fetchOrExplain(`${BASE}/players/search?${params}`, { cache: "no-store" }, "searching players");
+  if (!res.ok) {
+    const msg = await readErrorMessage(res, "Failed to search players");
+    throw new Error(msg);
+  }
   return res.json() as Promise<PlayerSearchResult[]>;
 }
 
@@ -552,7 +558,7 @@ export interface PlayerMeProfile {
   walletAddress: string;
   displayName: string;
   bio: string;
-  selectedSpriteId: string;
+  selectedSpriteId: string | null;
   followerCount: number;
   followingCount: number;
   spriteOptions: PlayerMeSpriteOption[];

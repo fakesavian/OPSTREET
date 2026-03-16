@@ -139,8 +139,8 @@ export function AvatarFigure({ entry, latestCallout, size = "md", posX, posY, ca
         </div>
       )}
 
-      {/* Character — pixel sprite for sprite-* IDs, emoji figure otherwise */}
-      {entry.avatarId.startsWith("sprite-") ? (
+      {/* Character — pixel sprite for sprite-* and default-free-* IDs, emoji figure otherwise */}
+      {(entry.avatarId.startsWith("sprite-") || entry.avatarId.startsWith("default-free-")) ? (
         <PixelAvatarPreview
           avatarId={entry.avatarId}
           walletAddress={entry.walletAddress}
