@@ -1444,7 +1444,7 @@ export async function submitOpnetLiquidityFundingWithWallet(
           { from: fromAddr, to: toAddr, amount: BigInt(sats), utxos: [], feeRate: 1 },
         ]) {
           try {
-            const result = await fn(params);
+            const result = await fn.call(w3, params);
             if (result && typeof result === "object") {
               const r = result as Record<string, unknown>;
               const txVal = r["tx"];
