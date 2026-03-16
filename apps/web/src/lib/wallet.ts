@@ -1412,8 +1412,6 @@ export async function submitOpnetLiquidityFundingWithWallet(
     if (sub && typeof sub === "object") targets.push(sub as Record<string, unknown>);
   }
 
-  // OP_WALLET documented API: sendBitcoin(toAddress: string, satoshis: number, options?)
-  // Try multiple address formats and option variants to work around UTXO lookup quirks.
   const failures: string[] = [];
 
   // Also try the original tb1/bcrt1 format in case the wallet resolves UTXOs under that HRP
@@ -1421,6 +1419,88 @@ export async function submitOpnetLiquidityFundingWithWallet(
   const altAddr =
     rawAddrLower.startsWith("opt1") ? convertBech32Hrp(rawAddr, "tb") ?? rawAddr : rawAddr;
 
+  // ── First: OP_WALLET structured API ──────────────────────────────────────
+  // OP_WALLET's sendBitcoin takes IFundingTransactionParametersWithoutSigner =
+  //   { from?, to?, utxos: UTXO[], amount: bigint, feeRate? }
+  // It does NOT accept positional (address, sats, opts) — that is Unisat's API.
+  // Returns BitcoinTransferBase = { tx: string, estimatedFees, nextUTXOs, inputUtxos }
+  // where tx is the transaction hex/id (we treat it as the txId for tracking).
+  try {
+    // Fetch UTXOs from wallet or RPC proxy
+    let rawUtxos: OPNetUTXO[] = [];
+    for (const target of targets) {
+      const fn = target["getBitcoinUtxos"] as LooseFn | undefined;
+      if (typeof fn !== "function") continue;
+      try {
+        const res = await fn(0, 100);
+        let arr: unknown[] | undefined;
+        if (Array.isArray(res)) { arr = res; }
+        else if (res && typeof res === "object") {
+          const obj2 = res as Record<string, unknown>;
+          arr = (obj2["utxos"] ?? obj2["confirmed"] ?? obj2["data"]) as unknown[] | undefined;
+        }
+        if (Array.isArray(arr) && arr.length) { rawUtxos = arr as OPNetUTXO[]; break; }
+      } catch { /* try next target */ }
+    }
+
+    // Fallback: fetch UTXOs via server proxy
+    if (!rawUtxos.length) {
+      for (const tryAddr of [payload.senderAddress, addr, altAddr].filter(Boolean) as string[]) {
+        try {
+          const resp = await fetch(`/api/opnet-utxos?address=${encodeURIComponent(tryAddr)}`);
+          if (!resp.ok) continue;
+          const data = (await resp.json()) as { confirmed?: OPNetUTXO[]; raw?: OPNetUTXO[] };
+          const pick = data.confirmed?.length ? data.confirmed : (data.raw ?? []);
+          if (pick.length) { rawUtxos = pick; break; }
+        } catch { /* try next */ }
+      }
+    }
+
+    if (rawUtxos.length) {
+      const utxos = rawUtxos
+        .map(normalizeUTXO)
+        .filter((u): u is NonNullable<ReturnType<typeof normalizeUTXO>> => u !== null)
+        .map((u) => ({ txid: u.txid, vout: u.vout, value: u.sats }));
+
+      if (utxos.length) {
+        for (const target of targets) {
+          if (typeof target["sendBitcoin"] !== "function") continue;
+          const fn = target["sendBitcoin"] as LooseFn;
+          const fromAddr = payload.senderAddress ?? addr;
+          const structuredParams = {
+            from: fromAddr,
+            to: addr,
+            amount: BigInt(sats),
+            utxos,
+            feeRate: 5,
+          };
+          try {
+            const result = await fn(structuredParams);
+            // result.tx is the txId (BitcoinTransferBase)
+            if (result && typeof result === "object") {
+              const r = result as Record<string, unknown>;
+              const txVal = r["tx"];
+              if (typeof txVal === "string" && txVal.length >= 32) {
+                return { txId: txVal, raw: result };
+              }
+            }
+            const parsed = parseSubmitResult(result);
+            if (parsed?.txId) return { txId: parsed.txId, raw: parsed.raw };
+          } catch (error) {
+            const normalized = normalizeWalletError(errorMessage(error));
+            if (isFatalWalletError(normalized)) throw new Error(normalized);
+            failures.push(`structured:${normalized}`);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    const normalized = normalizeWalletError(errorMessage(error));
+    if (isFatalWalletError(normalized)) throw new Error(normalized);
+    failures.push(`utxo-fetch:${normalized}`);
+  }
+
+  // ── Fallback: positional API (Unisat and other wallets) ──────────────────
   const sendOptions = [
     { feeRate: 5, memo, usePendingUTXO: true },
     { feeRate: 5, memo },
