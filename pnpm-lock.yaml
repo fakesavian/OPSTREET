@@ -159,6 +159,9 @@ importers:
       '@btc-vision/transaction':
         specifier: ^1.8.2
         version: 1.8.2(@babel/core@7.29.0(supports-color@9.4.0))(@types/node@20.19.35)(eslint@8.57.1)(webpack@5.105.3)
+      '@noble/hashes':
+        specifier: ^2.0.1
+        version: 2.0.1
       '@opfun/shared':
         specifier: workspace:*
         version: link:../shared

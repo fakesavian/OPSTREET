@@ -504,7 +504,7 @@ async function computeSelector(signature: string): Promise<number> {
   // The result is baked as a numeric literal into the generated contract source.
   try {
     // Try to use @noble/hashes which is transitively available via @btc-vision/bitcoin
-    const { keccak_256 } = (await import("@noble/hashes/sha3")) as {
+    const { keccak_256 } = (await import("@noble/hashes/sha3.js")) as {
       keccak_256: (input: Uint8Array) => Uint8Array;
     };
     const bytes = Buffer.from(signature, "utf8");
