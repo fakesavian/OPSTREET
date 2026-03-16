@@ -29,6 +29,9 @@ jobs:
       - name: Build shared (required before typecheck)
         run: pnpm --filter @opfun/shared build
 
+      - name: Build opnet (required before typecheck)
+        run: pnpm --filter @opfun/opnet build
+
       - name: Typecheck
         run: pnpm typecheck
 
