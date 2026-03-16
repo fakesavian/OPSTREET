@@ -12,6 +12,11 @@ async function getApp(): Promise<FastifyInstance> {
       .then(({ buildApp }) => buildApp({ skipWarmRuntime: true }))
       .then(async (app) => {
         await app.ready();
+        // Warm the Neon DB connection in the background so the first DB-touching
+        // route (auth/verify, project creation, etc.) doesn't hit a cold connection.
+        import("../src/db.js")
+          .then(({ prisma }) => prisma.$queryRaw`SELECT 1`)
+          .catch(() => { /* non-fatal — DB will connect on first real query */ });
         return app;
       });
   }

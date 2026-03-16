@@ -128,6 +128,8 @@ function toSigningAddress(address: string): string {
 
 export async function authRoutes(app: FastifyInstance) {
   // POST /auth/nonce
+  // Stateless: nonce is embedded in a short-lived JWT so no DB write is needed.
+  // This avoids cold-start DB latency on the very first auth request.
   app.post<{ Body: { walletAddress: string } }>("/auth/nonce", {
     config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
   }, async (request, reply) => {
@@ -140,23 +142,15 @@ export async function authRoutes(app: FastifyInstance) {
     const expiresAt = new Date(Date.now() + NONCE_TTL_MS);
     const message = buildMessage(nonce, expiresAt);
 
-    await prisma.nonce.upsert({
-      where: { walletAddress },
-      create: {
-        walletAddress,
-        nonce,
-        message,
-        expiresAt,
-      },
-      update: {
-        nonce,
-        message,
-        expiresAt,
-      },
-    });
+    // Sign a compact token containing the nonce + exact expiry ISO string.
+    // The verify endpoint decodes this token instead of hitting the DB.
+    const nonceToken = app.jwt.sign(
+      { n: nonce, e: expiresAt.toISOString(), w: walletAddress },
+      { expiresIn: `${Math.ceil(NONCE_TTL_MS / 1000)}s` },
+    );
 
     request.log.info({ event: "nonce_issued", walletAddress }, "Nonce issued");
-    return reply.send({ nonce, message, expiresAt: expiresAt.toISOString() });
+    return reply.send({ nonce: nonceToken, message, expiresAt: expiresAt.toISOString() });
   });
 
   // POST /auth/verify
@@ -173,26 +167,33 @@ export async function authRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: "walletAddress, signature, nonce required" });
       }
 
-      // Single-use: look up from DB, then delete after verification
-      const stored = await prisma.nonce.findUnique({ where: { walletAddress } });
+      // Decode the stateless nonce JWT (issued by /auth/nonce — no DB lookup needed).
+      let noncePayload: { n: string; e: string; w: string } | null = null;
+      try {
+        noncePayload = app.jwt.verify<{ n: string; e: string; w: string }>(nonce);
+      } catch {
+        request.log.warn({ event: "auth_fail", reason: "nonce_invalid", walletAddress }, "Auth failed: nonce JWT invalid or expired");
+        return reply.status(401).send({ error: "Nonce expired or invalid. Request a new one." });
+      }
 
-      if (!stored || stored.expiresAt < new Date()) {
-        // Clean up expired nonce if it exists
-        if (stored) await prisma.nonce.delete({ where: { walletAddress } }).catch(() => undefined);
-        request.log.warn({ event: "auth_fail", reason: "nonce_expired", walletAddress }, "Auth failed: nonce expired or not found");
-        return reply.status(401).send({ error: "Nonce expired or not found. Request a new one." });
+      if (!noncePayload || new Date(noncePayload.e) < new Date()) {
+        request.log.warn({ event: "auth_fail", reason: "nonce_expired", walletAddress }, "Auth failed: nonce expired");
+        return reply.status(401).send({ error: "Nonce expired. Request a new one." });
       }
-      if (stored.nonce !== nonce) {
-        await prisma.nonce.delete({ where: { walletAddress } });
-        request.log.warn({ event: "auth_fail", reason: "nonce_mismatch", walletAddress }, "Auth failed: nonce mismatch");
-        return reply.status(401).send({ error: "Nonce mismatch." });
+
+      if (noncePayload.w !== walletAddress) {
+        request.log.warn({ event: "auth_fail", reason: "nonce_wallet_mismatch", walletAddress }, "Auth failed: nonce wallet mismatch");
+        return reply.status(401).send({ error: "Nonce was issued for a different wallet." });
       }
+
+      // Rebuild the exact message that was presented to the wallet for signing.
+      const nonceMessage = buildMessage(noncePayload.n, new Date(noncePayload.e));
 
       // Verify BIP-322 signature (convert opt1 → tb1 for verification)
       const signingAddress = toSigningAddress(walletAddress);
       let valid = false;
       try {
-        valid = Verifier.verifySignature(signingAddress, stored.message, signature);
+        valid = Verifier.verifySignature(signingAddress, nonceMessage, signature);
       } catch {
         request.log.warn({ event: "auth_fail", reason: "verify_throw", walletAddress }, "Auth failed: signature verification threw");
         return reply.status(401).send({ error: "Signature verification failed." });
@@ -210,8 +211,7 @@ export async function authRoutes(app: FastifyInstance) {
         return reply.status(401).send({ error: "Invalid signature." });
       }
 
-      // Delete nonce after successful verification (single-use)
-      await prisma.nonce.delete({ where: { walletAddress } });
+      // Stateless nonces are single-use by expiry — no DB delete needed.
 
       // Issue JWT
       const token = app.jwt.sign(
