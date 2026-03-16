@@ -1005,9 +1005,7 @@ function buildP2TRPsbt(
   const outputMaps = outputs.map(() => Uint8Array.from([0x00]));
 
   const psbt = concatU8(magic, globalTx, ...inputMaps, ...outputMaps);
-  let binary = "";
-  psbt.forEach((b) => { binary += String.fromCharCode(b); });
-  return btoa(binary);
+  return Array.from(psbt).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /**
@@ -1033,7 +1031,9 @@ async function tryPsbtTransfer(
       const resp = await fetch(proxyUrl);
       if (!resp.ok) continue;
       const data = (await resp.json()) as { confirmed?: OPNetUTXO[]; pending?: OPNetUTXO[] };
-      utxos = [...(data.confirmed ?? []), ...(data.pending ?? [])];
+      // Prefer confirmed UTXOs only — pending ones may already be in the mempool
+      utxos = data.confirmed ?? [];
+      if (!utxos.length) utxos = [...(data.confirmed ?? []), ...(data.pending ?? [])];
       if (utxos.length) break;
     } catch { /* try next */ }
   }
@@ -1066,11 +1066,15 @@ async function tryPsbtTransfer(
   ];
   if (change > BigInt(546)) outputs.push({ script: senderScript, value: Number(change) });
 
-  // 4. Build PSBT
-  const psbtBase64 = buildP2TRPsbt(
+  // 4. Build PSBT (returns hex — OP_WALLET signPsbt expects hex, not base64)
+  const psbtHex = buildP2TRPsbt(
     selected.map((u) => ({ txid: u.transactionId, vout: u.outputIndex, value: u.value, senderScript: senderScript! })),
     outputs,
   );
+
+  // toSignInputs: one entry per input specifying the sender address so the
+  // wallet can match the correct key path for Taproot signing.
+  const toSignInputs = selected.map((_, i) => ({ index: i, address: connectedAddr }));
 
   // 5. Have wallet sign and broadcast
   const root = opnet as Record<string, unknown>;
@@ -1084,18 +1088,19 @@ async function tryPsbtTransfer(
     if (typeof signFn !== "function") continue;
 
     try {
-      // Try different signPsbt option shapes used by different wallet versions
-      const signVariants = [
-        [psbtBase64, { autoFinalized: true, broadcast: true }],
-        [psbtBase64, { autoFinalized: true }],
-        [psbtBase64],
+      // Try sign variants from most to least specific.
+      // OP_WALLET signPsbt(psbtHex, { autoFinalized, toSignInputs }) follows Unisat API.
+      const signVariants: unknown[][] = [
+        [psbtHex, { autoFinalized: true, toSignInputs }],
+        [psbtHex, { autoFinalized: true }],
+        [psbtHex],
       ];
       for (const args of signVariants) {
         let signed: unknown;
         try { signed = await signFn(...args); } catch { continue; }
         if (!signed) continue;
 
-        // If broadcast:true returned a txId directly
+        // Some wallets return a 64-char txid directly when they also broadcast
         if (typeof signed === "string" && /^[0-9a-f]{64}$/i.test(signed)) return { txId: signed, raw: signed };
         if (typeof signed === "object" && signed !== null) {
           const s = signed as Record<string, unknown>;
@@ -1103,15 +1108,18 @@ async function tryPsbtTransfer(
           if (typeof txId === "string" && txId.length >= 32) return { txId, raw: signed };
         }
 
-        // signed PSBT — now push it
+        // Signed (and optionally finalized) PSBT hex — push it.
+        // pushPsbt(psbtHex) is the Unisat/OP_WALLET API for broadcasting a signed PSBT.
         const signedHex = typeof signed === "string" ? signed : null;
         if (!signedHex) continue;
 
-        for (const pushName of ["pushTx", "broadcastTransaction", "broadcast", "sendRawTransaction"]) {
+        for (const pushName of ["pushPsbt", "pushTx", "broadcastTransaction", "broadcast"]) {
           const pushFn = target[pushName] as LooseFn | undefined;
           if (typeof pushFn !== "function") continue;
           try {
-            const pushed = await pushFn(signedHex);
+            // pushPsbt(hex) / pushTx({ rawtx: hex })
+            const pushArg = pushName === "pushTx" ? { rawtx: signedHex } : signedHex;
+            const pushed = await pushFn(pushArg);
             if (typeof pushed === "string" && pushed.length >= 32) return { txId: pushed, raw: pushed };
             if (typeof pushed === "object" && pushed !== null) {
               const p = pushed as Record<string, unknown>;
@@ -1255,6 +1263,7 @@ export async function submitOpnetLiquidityFundingWithWallet(
   // ── PSBT fallback: build tx ourselves, wallet only signs ─────────────────
   // sendBitcoin failed (wallet can't find its own UTXOs). Fetch UTXOs via
   // server-side proxy (avoids CORS), build P2TR PSBT, ask wallet to sign + push.
+  let psbtError: string | undefined;
   try {
     // Use explicitly passed senderAddress first, then try reading from provider
     const connectedAddr =
@@ -1267,12 +1276,18 @@ export async function submitOpnetLiquidityFundingWithWallet(
     if (connectedAddr) {
       const psbtResult = await tryPsbtTransfer(opnet, connectedAddr, rawAddr, sats);
       if (psbtResult?.txId) return psbtResult;
+      psbtError = "PSBT signing did not return a transaction ID.";
+    } else {
+      psbtError = "Connected address not available for PSBT signing.";
     }
-  } catch { /* PSBT fallback failed — fall through to error */ }
+  } catch (err) {
+    psbtError = normalizeWalletError(errorMessage(err));
+  }
 
   const userError = failures.find((f) => !f.startsWith("__internal_"));
   throw new Error(
     userError ??
+      psbtError ??
       "OP_WALLET did not return a transaction ID for the BTC transfer. Ensure your wallet is on OPNet Testnet and has confirmed BTC UTXOs on its Taproot address.",
   );
 }
