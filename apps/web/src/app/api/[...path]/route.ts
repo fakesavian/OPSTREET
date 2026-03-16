@@ -182,16 +182,15 @@ async function proxyRequest(
   const targetUrl = buildTargetUrl(request, context.params.path, origin);
   const headers = buildForwardHeaders(request);
   const method = request.method.toUpperCase();
-  // Read the body once and store as Uint8Array.
-  // Uint8Array.prototype.slice() creates a NEW independent ArrayBuffer each
-  // call, so the 404-fallback retry can pass fresh bytes to a second fetch
-  // without hitting the "detached ArrayBuffer" error that occurs when undici
-  // transfers/detaches the buffer after the first fetch call.
+  // Read body bytes once. Node.js Buffer is immune to undici's TypedArray buffer
+  // transfer/markAsUncloneable path — it goes through Buffer.concat() instead.
+  // Pre-create both copies before ANY fetch so undici cannot detach the source.
   const bodyBytes =
     method === "GET" || method === "HEAD"
       ? null
-      : new Uint8Array(await request.arrayBuffer());
-  const makeBody = () => (bodyBytes !== null ? bodyBytes.slice() : undefined);
+      : Buffer.from(new Uint8Array(await request.arrayBuffer()));
+  const primaryBody = bodyBytes !== null ? Buffer.from(bodyBytes) : null;
+  const fallbackBody = bodyBytes !== null ? Buffer.from(bodyBytes) : null;
 
   const apiOrigin = new URL(origin).origin;
 
@@ -199,7 +198,7 @@ async function proxyRequest(
     let upstream = await fetch(targetUrl, {
       method,
       headers,
-      body: makeBody(),
+      body: primaryBody ?? undefined,
       cache: "no-store",
       redirect: "follow",
     });
@@ -222,7 +221,7 @@ async function proxyRequest(
       const fallback = await fetch(fallbackUrl, {
         method,
         headers,
-        body: makeBody(),
+        body: fallbackBody ?? undefined,
         cache: "no-store",
         redirect: "follow",
       });
