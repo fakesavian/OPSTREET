@@ -6,7 +6,6 @@ settings:
 
 overrides:
   '@btc-vision/transaction': ^1.8.2
-  '@noble/curves': 2.0.1
   postcss: 8.5.6
 
 importers:
@@ -302,7 +301,7 @@ packages:
     resolution: {integrity: sha512-edkoJJFU7tAAfwsYW+05030tNtG5Rg+qt0/zuIwvmnkaFAWqVTngNE29viwMkttMFbrtZHAVcPYWcn5qelstMA==}
     engines: {node: '>=24.0.0'}
     peerDependencies:
-      '@noble/curves': 2.0.1
+      '@noble/curves': '>=2.0.0'
     peerDependenciesMeta:
       '@noble/curves':
         optional: true
@@ -828,6 +827,10 @@ packages:
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
+
+  '@noble/curves@1.9.7':
+    resolution: {integrity: sha512-gbKGcRUYIjA3/zCCNaWDciTMFI0dCkvou3TL8Zmy5Nc7sJ47a0jtOeZoTaMxkuqRo9cRhjOdZJXegxYE5FN/xw==}
+    engines: {node: ^14.21.3 || >=16}
 
   '@noble/curves@2.0.1':
     resolution: {integrity: sha512-vs1Az2OOTBiP4q0pwjW5aF0xp9n4MxVrmkFBxc6EKZc6ddYx5gaZiAsZoq0uRRXWbi3AT/sBqn05eRPtn1JCPw==}
@@ -3611,7 +3614,7 @@ snapshots:
 
   '@bitcoinerlab/secp256k1@1.2.0':
     dependencies:
-      '@noble/curves': 2.0.1
+      '@noble/curves': 1.9.7
 
   '@btc-vision/bip32@6.1.0(typescript@5.9.3)':
     dependencies:
@@ -4175,6 +4178,10 @@ snapshots:
 
   '@next/swc-win32-x64-msvc@14.2.4':
     optional: true
+
+  '@noble/curves@1.9.7':
+    dependencies:
+      '@noble/hashes': 1.8.0
 
   '@noble/curves@2.0.1':
     dependencies:
