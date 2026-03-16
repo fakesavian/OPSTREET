@@ -951,15 +951,43 @@ function concatU8(...arrs: Uint8Array[]): Uint8Array {
   return out;
 }
 
-interface OPNetUTXO { transactionId: string; outputIndex: number; value: number; }
+interface OPNetUTXO { transactionId: string; outputIndex: number; value: number | string | bigint; }
 
 /**
- * Builds a minimal PSBTv0 for a P2TR-to-P2TR transfer and returns base64.
- * No crypto libs needed — signing is delegated to the wallet.
+ * Get the 32-byte x-only public key from the wallet for use as TAP_INTERNAL_KEY.
+ * Compressed pubkey (33 bytes) → strip first byte → 32-byte x-only.
+ */
+async function getWalletXOnlyPubKey(opnet: OPNetProvider): Promise<Uint8Array | null> {
+  const root = opnet as Record<string, unknown>;
+  const candidates = [root, root["bitcoin"], root["opnet"]].filter(
+    (v): v is Record<string, unknown> => Boolean(v && typeof v === "object"),
+  );
+  for (const target of candidates) {
+    const getPK = target["getPublicKey"] as LooseFn | undefined;
+    if (typeof getPK !== "function") continue;
+    try {
+      const pk = await getPK();
+      if (typeof pk !== "string" || pk.length < 64) continue;
+      const hex = pk.startsWith("0x") ? pk.slice(2) : pk;
+      // 33-byte compressed (66 hex chars): strip 02/03 prefix → 32-byte x-only
+      if (hex.length === 66) return hexToBytes(hex.slice(2));
+      // Already 32-byte x-only (64 hex chars)
+      if (hex.length === 64) return hexToBytes(hex);
+    } catch { /* try next */ }
+  }
+  return null;
+}
+
+/**
+ * Builds a PSBTv0 for a P2TR-to-P2TR transfer and returns hex.
+ * No crypto libs needed — signing is delegated to the wallet via signPsbt().
+ * tapInternalKey (32-byte x-only pubkey) is included as TAP_INTERNAL_KEY (0x15)
+ * so Taproot-aware wallets can derive the tweaked key and sign correctly.
  */
 function buildP2TRPsbt(
   inputs: Array<{ txid: string; vout: number; value: number; senderScript: Uint8Array }>,
   outputs: Array<{ script: Uint8Array; value: number }>,
+  tapInternalKey?: Uint8Array,
 ): string {
   // ── unsigned transaction ──────────────────────────────────────────────────
   const txInputs = inputs.map((inp) => {
@@ -987,18 +1015,27 @@ function buildP2TRPsbt(
     Uint8Array.from([0x00]), // global map end
   );
 
-  // Per-input maps: WITNESS_UTXO (key type 0x01) = value (8 bytes LE) + script
+  // Per-input maps: WITNESS_UTXO (0x01) + optional TAP_INTERNAL_KEY (0x15)
   const inputMaps = inputs.map((inp) => {
     const witnessVal = concatU8(
       writeLE64(BigInt(inp.value)),
       writeVarInt(inp.senderScript.length),
       inp.senderScript,
     );
-    return concatU8(
+    const witnessEntry = concatU8(
       writeVarInt(1), Uint8Array.from([0x01]),
       writeVarInt(witnessVal.length), witnessVal,
-      Uint8Array.from([0x00]), // input map end
     );
+    // TAP_INTERNAL_KEY (PSBT key type 0x15): 32-byte x-only pubkey.
+    // Required for wallets to sign P2TR inputs via key path spend.
+    const tapKeyEntry =
+      tapInternalKey && tapInternalKey.length === 32
+        ? concatU8(
+            writeVarInt(1), Uint8Array.from([0x15]),
+            writeVarInt(32), tapInternalKey,
+          )
+        : new Uint8Array(0);
+    return concatU8(witnessEntry, tapKeyEntry, Uint8Array.from([0x00]));
   });
 
   // Per-output maps: empty
@@ -1049,13 +1086,20 @@ async function tryPsbtTransfer(
   if (!recipientScript) return null;
 
   // 3. Greedy UTXO selection (fee ~2500 sat estimate for P2TR tx)
+  // value can be number, string, or bigint depending on the JSON-RPC response
+  const toSats = (v: number | string | bigint): bigint => {
+    if (typeof v === "bigint") return v;
+    if (typeof v === "string") return BigInt(v);
+    return BigInt(Math.round(v));
+  };
+
   const feeEstimate = BigInt(2500);
   const totalNeeded = BigInt(amountSats) + feeEstimate;
   const selected: OPNetUTXO[] = [];
   let totalIn = BigInt(0);
-  for (const utxo of utxos.sort((a, b) => b.value - a.value)) {
+  for (const utxo of [...utxos].sort((a, b) => Number(toSats(b.value) - toSats(a.value)))) {
     selected.push(utxo);
-    totalIn += BigInt(utxo.value);
+    totalIn += toSats(utxo.value);
     if (totalIn >= totalNeeded) break;
   }
   if (totalIn < totalNeeded) return null;
@@ -1066,17 +1110,21 @@ async function tryPsbtTransfer(
   ];
   if (change > BigInt(546)) outputs.push({ script: senderScript, value: Number(change) });
 
-  // 4. Build PSBT (returns hex — OP_WALLET signPsbt expects hex, not base64)
+  // 4. Get wallet's x-only public key for TAP_INTERNAL_KEY (best-effort)
+  const tapInternalKey = await getWalletXOnlyPubKey(opnet).catch(() => null) ?? undefined;
+
+  // 5. Build PSBT (returns hex — OP_WALLET signPsbt expects hex, not base64)
   const psbtHex = buildP2TRPsbt(
-    selected.map((u) => ({ txid: u.transactionId, vout: u.outputIndex, value: u.value, senderScript: senderScript! })),
+    selected.map((u) => ({ txid: u.transactionId, vout: u.outputIndex, value: Number(toSats(u.value)), senderScript: senderScript! })),
     outputs,
+    tapInternalKey,
   );
 
   // toSignInputs: one entry per input specifying the sender address so the
   // wallet can match the correct key path for Taproot signing.
   const toSignInputs = selected.map((_, i) => ({ index: i, address: connectedAddr }));
 
-  // 5. Have wallet sign and broadcast
+  // 6. Have wallet sign and broadcast
   const root = opnet as Record<string, unknown>;
   const targets: Array<Record<string, unknown>> = [root];
   for (const k of ["bitcoin", "opnet"] as const) {
