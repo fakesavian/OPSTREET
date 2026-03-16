@@ -5,6 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
+  '@btc-vision/transaction': ^1.8.2
   '@noble/curves': 2.0.1
   postcss: 8.5.6
 
