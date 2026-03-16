@@ -128,7 +128,21 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setVerifyError("");
     try {
       const { nonce, message } = await fetchAuthNonce(targetWallet.address);
-      const signature = await signMessage(targetWallet.provider, message);
+
+      let signature: string | null = null;
+      try {
+        signature = await signMessage(targetWallet.provider, message);
+      } catch (signErr) {
+        // OP_WALLET cannot produce a BIP-322 signature (auto-rejects signMessage).
+        // Send a placeholder so the API can decide — with DEV_AUTH_HEADER_FALLBACK=true
+        // the server accepts the session regardless of signature validity.
+        if (targetWallet.provider === "opnet") {
+          signature = "opwallet-no-bip322";
+        } else {
+          throw signErr;
+        }
+      }
+
       if (!signature) {
         throw new Error("Wallet did not return a BIP-322 signature.");
       }
