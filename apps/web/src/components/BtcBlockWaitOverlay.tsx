@@ -127,8 +127,9 @@ function ConfirmBurst() {
 }
 
 // ── Timer ────────────────────────────────────────────────────────────────────
-function useElapsed(running: boolean) {
-  const [seconds, setSeconds] = useState(0);
+function useElapsed(running: boolean, startedAt?: number | null) {
+  const initial = startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0;
+  const [seconds, setSeconds] = useState(initial);
   useEffect(() => {
     if (!running) return;
     const id = setInterval(() => setSeconds((s) => s + 1), 1000);
@@ -146,16 +147,18 @@ interface Props {
   txId: string;
   confirmed?: boolean;
   onDismiss?: () => void;
+  /** epoch ms when the tx was first submitted — persists correct elapsed time across navigation */
+  startedAt?: number | null;
 }
 
-export function BtcBlockWaitOverlay({ txId, confirmed = false, onDismiss }: Props) {
+export function BtcBlockWaitOverlay({ txId, confirmed = false, onDismiss, startedAt }: Props) {
   const [minimized, setMinimized] = useState(false);
   const [copied, setCopied] = useState(false);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const [pulseIdx, setPulseIdx] = useState(1);
   const [exploded, setExploded] = useState(false);
   const [showBurst, setShowBurst] = useState(false);
-  const elapsed = useElapsed(!confirmed);
+  const elapsed = useElapsed(!confirmed, startedAt);
   const soundPlayedRef = useRef(false);
 
   const panelRef = useRef<HTMLDivElement>(null);

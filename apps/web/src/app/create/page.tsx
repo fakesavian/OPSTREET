@@ -6,7 +6,7 @@ import { createProject } from "@/lib/api";
 import { DEFAULT_GAME_PAYMENT_TOKEN, GAME_PAYMENT_TOKENS } from "@opfun/shared";
 import { useWallet } from "@/components/WalletProvider";
 import { submitOpnetLiquidityFundingWithWallet, checkWalletUtxos } from "@/lib/wallet";
-import { BtcBlockWaitOverlay } from "@/components/BtcBlockWaitOverlay";
+import { usePendingTx } from "@/context/PendingTxContext";
 
 const STEPS = ["Token Info", "Links", "Review"] as const;
 type Step = 0 | 1 | 2;
@@ -82,6 +82,7 @@ function validateStep0(form: {
 export default function CreatePage() {
   const router = useRouter();
   const { wallet, walletInstance } = useWallet();
+  const { setPendingTx } = usePendingTx();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [step, setStep] = useState<Step>(0);
@@ -92,7 +93,6 @@ export default function CreatePage() {
   });
   const [touched, setTouched] = useState<TouchedFields>({});
   const [submitAttempted, setSubmitAttempted] = useState(false);
-  const [pendingTxId, setPendingTxId] = useState<string | null>(null);
   const [utxoCheck, setUtxoCheck] = useState<{ count: number; totalSats: string; loading: boolean } | null>(null);
   const [skipFunding, setSkipFunding] = useState(false);
 
@@ -155,8 +155,8 @@ export default function CreatePage() {
           throw new Error("Liquidity funding transaction was not returned by wallet.");
         }
         fundingTxId = funding.txId;
-        // Show block-wait overlay immediately — Bitcoin tx is now in mempool
-        setPendingTxId(fundingTxId);
+        // Show block-wait overlay globally — persists across page navigation
+        setPendingTx(fundingTxId);
       }
 
       const links: Record<string, string> = {};
@@ -191,12 +191,6 @@ export default function CreatePage() {
 
   return (
     <div className="mx-auto max-w-2xl py-6">
-      {pendingTxId && (
-        <BtcBlockWaitOverlay
-          txId={pendingTxId}
-          onDismiss={() => setPendingTxId(null)}
-        />
-      )}
       {/* Header */}
       <div className="op-panel mb-8 space-y-3 p-5">
         <h1 className="text-3xl font-black text-ink">Launch a Token</h1>
