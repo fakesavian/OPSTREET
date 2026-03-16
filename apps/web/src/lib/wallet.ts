@@ -1079,65 +1079,88 @@ async function tryPsbtTransfer(
   vaultAddress: string,
   amountSats: number,
 ): Promise<{ txId: string; raw?: unknown } | null> {
-  // 1. Fetch UTXOs — try wallet's own getBitcoinUtxos() first, then our RPC proxy
-  let rawUtxos: OPNetUTXO[] = [];
-
-  // 1a. Ask OP_WALLET directly for its UTXOs (no network call needed)
+  // 1. Collect all candidate addresses to try — the wallet may have a separate BTC
+  //    address distinct from the account/MLDSA address returned by requestAccounts().
+  const addrCandidates = new Set<string>([connectedAddr]);
   try {
     const root = opnet as Record<string, unknown>;
-    const getUtxosFn = (root["getBitcoinUtxos"] ?? (root["bitcoin"] as Record<string, unknown> | undefined)?.["getBitcoinUtxos"]) as LooseFn | undefined;
-    if (typeof getUtxosFn === "function") {
-      const walletUtxos = await getUtxosFn(0, 100) as OPNetUTXO[] | undefined;
-      if (Array.isArray(walletUtxos) && walletUtxos.length) {
-        rawUtxos = walletUtxos;
-        console.debug("[PSBT] getBitcoinUtxos():", walletUtxos.length, "raw UTXOs from wallet");
-      }
+    // opnet.accounts may contain both MLDSA addr and BTC addr
+    const walletAccounts = root["accounts"];
+    if (Array.isArray(walletAccounts)) walletAccounts.forEach((a) => { if (typeof a === "string" && a) addrCandidates.add(a); });
+    // selectedAddress often differs from requestAccounts()[0]
+    if (typeof root["selectedAddress"] === "string" && root["selectedAddress"]) addrCandidates.add(root["selectedAddress"]);
+    const btcSub = root["bitcoin"] as Record<string, unknown> | undefined;
+    if (btcSub) {
+      if (typeof btcSub["selectedAddress"] === "string") addrCandidates.add(btcSub["selectedAddress"] as string);
+      const btcAccounts = btcSub["accounts"];
+      if (Array.isArray(btcAccounts)) btcAccounts.forEach((a) => { if (typeof a === "string" && a) addrCandidates.add(a); });
     }
-  } catch (e) {
-    console.debug("[PSBT] getBitcoinUtxos() failed:", e);
+  } catch { /* ignore */ }
+  // Also add tb1 equivalents for each opt1 address (OPNet RPC may index by either)
+  for (const a of Array.from(addrCandidates)) {
+    const tb1 = convertBech32Hrp(a, "tb");
+    if (tb1 && tb1 !== a) addrCandidates.add(tb1);
   }
+  console.debug("[PSBT] Address candidates:", Array.from(addrCandidates));
 
-  // 1b. Server-side proxy using JSON-RPC btc_getUTXOs (avoids CORS)
-  if (!rawUtxos.length) {
-    const addrsToTry = [connectedAddr];
-    const tb1Version = convertBech32Hrp(connectedAddr, "tb");
-    if (tb1Version && tb1Version !== connectedAddr) addrsToTry.push(tb1Version);
-
-    for (const addr of addrsToTry) {
+  // 2a. Ask OP_WALLET directly for its UTXOs via getBitcoinUtxos()
+  //     Unisat API returns { utxos: [...], total: N } — NOT a bare array.
+  let rawUtxos: OPNetUTXO[] = [];
+  let spendingAddr = connectedAddr; // which address the UTXOs belong to
+  try {
+    const root = opnet as Record<string, unknown>;
+    const candidates = [root, root["bitcoin"]].filter((v): v is Record<string, unknown> => Boolean(v && typeof v === "object"));
+    for (const target of candidates) {
+      const fn = target["getBitcoinUtxos"] as LooseFn | undefined;
+      if (typeof fn !== "function") continue;
       try {
-        const proxyUrl = `/api/opnet-utxos?address=${encodeURIComponent(addr)}`;
-        console.debug("[PSBT] Fetching UTXOs via proxy for:", addr);
-        const resp = await fetch(proxyUrl);
-        if (!resp.ok) { console.debug("[PSBT] Proxy returned", resp.status); continue; }
+        const res = await fn(0, 100);
+        let arr: unknown[] | undefined;
+        if (Array.isArray(res)) { arr = res; }
+        else if (res && typeof res === "object") {
+          const obj = res as Record<string, unknown>;
+          // Unisat: { utxos: [...] } — totalUnavailable = CSV-locked (excluded from utxos)
+          arr = (obj["utxos"] ?? obj["confirmed"] ?? obj["data"]) as unknown[] | undefined;
+          if (Array.isArray(arr)) console.debug("[PSBT] getBitcoinUtxos obj.utxos:", arr.length, "totalUnavailable(CSV):", obj["totalUnavailable"]);
+        }
+        if (Array.isArray(arr) && arr.length) { rawUtxos = arr as OPNetUTXO[]; break; }
+      } catch (e) { console.debug("[PSBT] getBitcoinUtxos threw:", e); }
+    }
+  } catch { /* fall through */ }
+
+  // 2b. Server-side proxy using JSON-RPC btc_getUTXOs (avoids CORS)
+  //     Try every candidate address — wallet may have a different BTC address.
+  if (!rawUtxos.length) {
+    for (const addr of Array.from(addrCandidates)) {
+      try {
+        const resp = await fetch(`/api/opnet-utxos?address=${encodeURIComponent(addr)}`);
+        if (!resp.ok) { console.debug("[PSBT] Proxy", resp.status, "for", addr); continue; }
         const data = (await resp.json()) as { confirmed?: OPNetUTXO[]; pending?: OPNetUTXO[]; raw?: OPNetUTXO[] };
-        console.debug("[PSBT] Proxy response — confirmed:", data.confirmed?.length ?? 0, "pending:", data.pending?.length ?? 0, "raw:", data.raw?.length ?? 0);
-        // Prefer confirmed; fall back to raw (includes all UTXOs)
-        const candidates = data.confirmed?.length ? data.confirmed
-          : (data.raw?.length ? data.raw : data.pending ?? []);
-        if (candidates.length) { rawUtxos = candidates; break; }
-      } catch (e) {
-        console.debug("[PSBT] Proxy fetch error:", e);
-      }
+        console.debug("[PSBT] Proxy:", addr, "confirmed:", data.confirmed?.length ?? 0, "raw:", data.raw?.length ?? 0);
+        const pick = data.confirmed?.length ? data.confirmed : (data.raw?.length ? data.raw : data.pending ?? []);
+        if (pick.length) { rawUtxos = pick; spendingAddr = addr; break; }
+      } catch (e) { console.debug("[PSBT] Proxy error:", e); }
     }
   }
 
   // Normalize to a consistent format (handles both OPNet RPC and Unisat wallet formats)
   const utxos = rawUtxos.map(normalizeUTXO).filter((u): u is NonNullable<ReturnType<typeof normalizeUTXO>> => u !== null);
-  console.debug("[PSBT] Normalized UTXOs:", utxos.length, "of", rawUtxos.length, "raw");
+  console.debug("[PSBT] Normalized UTXOs:", utxos.length, "of", rawUtxos.length, "raw, spendingAddr:", spendingAddr);
 
   if (!utxos.length) {
-    console.debug("[PSBT] No usable UTXOs — raw sample:", JSON.stringify(rawUtxos.slice(0, 2)));
+    const csvHint = rawUtxos.length > 0 ? "UTXOs were found but none had a valid txid/value (unexpected format)." :
+      "No UTXOs returned by OPNet RPC or wallet for any discovered address.";
     throw new Error(
-      `No spendable UTXOs found for ${connectedAddr.slice(0, 14)}… (checked OPNet RPC and wallet). ` +
-      `If your balance appears under "+ CSV Balances", those funds are time-locked and cannot be spent yet — ` +
-      `fund this address with fresh tBTC from the signet faucet, then retry.`,
+      `No spendable UTXOs found (${csvHint}) ` +
+      `If your balance appears only under "+ CSV Balances", those funds are time-locked. ` +
+      `Use the Faucet button inside OP_WALLET to get fresh spendable tBTC, then retry.`,
     );
   }
 
-  // 2. Derive scripts
-  const senderScript = addressToP2TRScript(connectedAddr);
+  // 3. Derive scripts — use spendingAddr (the address UTXOs were found under)
+  const senderScript = addressToP2TRScript(spendingAddr);
   if (!senderScript) {
-    throw new Error(`Cannot derive P2TR script for sender address: ${connectedAddr.slice(0, 20)}…`);
+    throw new Error(`Cannot derive P2TR script for sender address: ${spendingAddr.slice(0, 20)}…`);
   }
 
   // Also try vault with both HRPs
@@ -1185,9 +1208,9 @@ async function tryPsbtTransfer(
   );
   console.debug("[PSBT] Built PSBT hex length:", psbtHex.length);
 
-  // toSignInputs: one entry per input specifying the sender address so the
-  // wallet can match the correct key path for Taproot signing.
-  const toSignInputs = selected.map((_, i) => ({ index: i, address: connectedAddr }));
+  // toSignInputs: one entry per input specifying the address so the wallet
+  // can match the correct key path. Use spendingAddr (has the UTXOs).
+  const toSignInputs = selected.map((_, i) => ({ index: i, address: spendingAddr }));
 
   // 6. Have wallet sign and broadcast
   const root = opnet as Record<string, unknown>;
@@ -1263,9 +1286,25 @@ export async function checkWalletUtxos(address: string): Promise<{
   totalSats: bigint;
   source: string;
 }> {
-  const addrsToTry = [address];
-  const tb1 = convertBech32Hrp(address, "tb");
-  if (tb1 && tb1 !== address) addrsToTry.push(tb1);
+  const addrSet = new Set([address]);
+  // Also check any other addresses the wallet exposes (BTC addr may differ from account addr)
+  const opnet = getOPNet();
+  if (opnet) {
+    const root = opnet as Record<string, unknown>;
+    const accs = root["accounts"];
+    if (Array.isArray(accs)) accs.forEach((a) => { if (typeof a === "string" && a) addrSet.add(a); });
+    if (typeof root["selectedAddress"] === "string") addrSet.add(root["selectedAddress"] as string);
+    const btcSub = root["bitcoin"] as Record<string, unknown> | undefined;
+    if (btcSub) {
+      if (typeof btcSub["selectedAddress"] === "string") addrSet.add(btcSub["selectedAddress"] as string);
+    }
+  }
+  // Add tb1 equivalents
+  for (const a of Array.from(addrSet)) {
+    const tb1 = convertBech32Hrp(a, "tb");
+    if (tb1 && tb1 !== a) addrSet.add(tb1);
+  }
+  const addrsToTry = Array.from(addrSet);
 
   for (const addr of addrsToTry) {
     try {
