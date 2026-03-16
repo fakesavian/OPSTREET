@@ -449,35 +449,57 @@ export default function CreatePage() {
           )}
 
           {/* UTXO pre-flight diagnostic */}
-          {utxoCheck && (
-            <div className={`rounded-xl border-2 px-4 py-3 text-xs font-bold ${
-              utxoCheck.loading ? "border-ink/30 bg-[#F5F5F0] text-ink/60"
-              : utxoCheck.count > 0 ? "border-[#15803D] bg-[#D1FAE5] text-[#166534]"
-              : "border-[#B45309] bg-[#FEF3C7] text-[#92400E]"
-            }`}>
-              {utxoCheck.loading && "⟳ Checking spendable UTXOs on OPNet RPC…"}
-              {!utxoCheck.loading && utxoCheck.count > 0 && (
-                <>&#10003; {utxoCheck.count} spendable UTXO{utxoCheck.count > 1 ? "s" : ""} found — {(Number(utxoCheck.totalSats) / 1e8).toFixed(8)} tBTC available</>
-              )}
-              {!utxoCheck.loading && utxoCheck.count === 0 && (
-                <>&#9888; No spendable UTXOs found for your address on OPNet RPC. If your balance shows only under &ldquo;+ CSV Balances&rdquo; in OP_WALLET, those funds are time-locked — fund this address with fresh tBTC from the signet faucet first.</>
-              )}
-              {!utxoCheck.loading && utxoCheck.count === -1 && (
-                <>⚠ Could not reach OPNet RPC to check UTXOs. Proceeding anyway.</>
-              )}
-            </div>
-          )}
+          {utxoCheck && (() => {
+            const availSats = BigInt(utxoCheck.totalSats);
+            const needSats = BigInt(fundingPreview.totalSats);
+            const hasEnough = availSats >= needSats;
+            const shortfall = needSats - availSats;
+            return (
+              <div className={`rounded-xl border-2 px-4 py-3 text-xs font-bold ${
+                utxoCheck.loading ? "border-ink/30 bg-[#F5F5F0] text-ink/60"
+                : utxoCheck.count > 0 && hasEnough ? "border-[#15803D] bg-[#D1FAE5] text-[#166534]"
+                : utxoCheck.count > 0 && !hasEnough ? "border-[#EF4444] bg-[#FEE2E2] text-[#B91C1C]"
+                : "border-[#B45309] bg-[#FEF3C7] text-[#92400E]"
+              }`}>
+                {utxoCheck.loading && "⟳ Checking spendable UTXOs on OPNet RPC…"}
+                {!utxoCheck.loading && utxoCheck.count > 0 && hasEnough && (
+                  <>&#10003; {utxoCheck.count} spendable UTXO{utxoCheck.count > 1 ? "s" : ""} found — {(Number(utxoCheck.totalSats) / 1e8).toFixed(8)} tBTC available</>
+                )}
+                {!utxoCheck.loading && utxoCheck.count > 0 && !hasEnough && (
+                  <>&#9888; Only {(Number(utxoCheck.totalSats) / 1e8).toFixed(8)} tBTC available but {(Number(needSats) / 1e8).toFixed(8)} tBTC needed. Need {shortfall.toLocaleString()} more sats — use the Faucet inside OP_WALLET or reduce the liquidity amount.</>
+                )}
+                {!utxoCheck.loading && utxoCheck.count === 0 && (
+                  <>&#9888; No spendable UTXOs found for your address on OPNet RPC. If your balance shows only under &ldquo;+ CSV Balances&rdquo; in OP_WALLET, those funds are time-locked — fund this address with fresh tBTC from the signet faucet first.</>
+                )}
+                {!utxoCheck.loading && utxoCheck.count === -1 && (
+                  <>⚠ Could not reach OPNet RPC to check UTXOs. Proceeding anyway.</>
+                )}
+              </div>
+            );
+          })()}
 
           {error && (
             <div className="rounded-xl border-2 border-[#EF4444] bg-[#FEE2E2] px-4 py-3 text-sm font-bold text-[#B91C1C]">&#9888; {error}</div>
           )}
 
-          <div className="flex gap-3">
-            <button type="button" onClick={() => setStep(1)} className="op-btn-outline flex-1 py-3">&larr; Back</button>
-            <button type="submit" disabled={loading} className="op-btn-primary flex-1 py-3 text-base disabled:opacity-50">
-              {loading ? "Creating..." : skipFunding ? "Create Token (no BTC transfer) →" : "Launch Token →"}
-            </button>
-          </div>
+          {(() => {
+            const insufficientBalance = !skipFunding && utxoCheck && !utxoCheck.loading
+              && utxoCheck.count > 0
+              && BigInt(utxoCheck.totalSats) < BigInt(fundingPreview.totalSats);
+            return (
+              <div className="flex gap-3">
+                <button type="button" onClick={() => setStep(1)} className="op-btn-outline flex-1 py-3">&larr; Back</button>
+                <button
+                  type="submit"
+                  disabled={loading || !!insufficientBalance}
+                  title={insufficientBalance ? `Need ${fundingPreview.totalSats.toLocaleString()} sats but only ${Number(utxoCheck!.totalSats).toLocaleString()} available` : undefined}
+                  className="op-btn-primary flex-1 py-3 text-base disabled:opacity-50"
+                >
+                  {loading ? "Creating..." : skipFunding ? "Create Token (no BTC transfer) →" : "Launch Token →"}
+                </button>
+              </div>
+            );
+          })()}
         </form>
       )}
     </div>
