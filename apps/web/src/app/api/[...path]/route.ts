@@ -179,7 +179,12 @@ async function proxyRequest(
   const targetUrl = buildTargetUrl(request, context.params.path, origin);
   const headers = buildForwardHeaders(request);
   const method = request.method.toUpperCase();
-  const body = method === "GET" || method === "HEAD" ? undefined : await request.arrayBuffer();
+  // Read the body as a Node.js Buffer instead of ArrayBuffer.
+  // Undici (Node.js built-in fetch) transfers/detaches ArrayBuffers after the
+  // first fetch call, making them unusable for the 404-fallback retry.
+  // Buffer is not a transferable and can be passed to multiple fetch calls.
+  const bodyRaw = method === "GET" || method === "HEAD" ? undefined : await request.arrayBuffer();
+  const body = bodyRaw !== undefined ? Buffer.from(bodyRaw) : undefined;
 
   const apiOrigin = new URL(origin).origin;
 
