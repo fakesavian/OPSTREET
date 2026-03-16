@@ -135,9 +135,12 @@ export async function fetchProject(slug: string): Promise<ProjectDTO & {
   checkRuns: CheckRun[];
   watchEvents: WatchEvent[];
 }> {
-  const res = await fetch(`${BASE}/projects/${slug}`, { next: { revalidate: 5 } });
+  const res = await fetchOrExplain(`${BASE}/projects/${slug}`, { cache: "no-store" }, "fetching project");
   if (res.status === 404) throw new Error("NOT_FOUND");
-  if (!res.ok) throw new Error("Failed to fetch project");
+  if (!res.ok) {
+    const msg = await readErrorMessage(res, "Failed to fetch project");
+    throw new Error(msg);
+  }
   return res.json();
 }
 
@@ -421,9 +424,7 @@ export async function fetchLeaderboard(
   type: "earners" | "callouts" | "trending",
   range: string,
 ): Promise<{ range: string; items: LeaderboardRow[] }> {
-  const res = await fetch(`${BASE}/leaderboards/${type}?range=${encodeURIComponent(range)}`, {
-    cache: "no-store",
-  });
+  const res = await fetchOrExplain(`${BASE}/leaderboards/${type}?range=${encodeURIComponent(range)}`, { cache: "no-store" }, `fetching ${type} leaderboard`);
   if (!res.ok) throw new Error(`Failed to fetch ${type} leaderboard`);
   return res.json() as Promise<{ range: string; items: LeaderboardRow[] }>;
 }
@@ -716,19 +717,19 @@ export interface OpnetDiagnosticsResponse {
 }
 
 export async function fetchBlockStatus(): Promise<BlockStatus> {
-  const res = await fetch(`${BASE}/opnet/block-status`, { cache: "no-store" });
+  const res = await fetchOrExplain(`${BASE}/opnet/block-status`, { cache: "no-store" }, "fetching block status");
   if (!res.ok) throw new Error("Failed to fetch block status");
   return res.json() as Promise<BlockStatus>;
 }
 
 export async function fetchPrices(): Promise<PriceData> {
-  const res = await fetch(`${BASE}/opnet/prices`, { cache: "no-store" });
+  const res = await fetchOrExplain(`${BASE}/opnet/prices`, { cache: "no-store" }, "fetching prices");
   if (!res.ok) throw new Error("Failed to fetch prices");
   return res.json() as Promise<PriceData>;
 }
 
 export async function fetchBtcPrice(): Promise<{ usd: number }> {
-  const res = await fetch(`${BASE}/opnet/btc-price`, { cache: "no-store" });
+  const res = await fetchOrExplain(`${BASE}/opnet/btc-price`, { cache: "no-store" }, "fetching BTC price");
   if (!res.ok) throw new Error("BTC price unavailable");
   return res.json() as Promise<{ usd: number }>;
 }
