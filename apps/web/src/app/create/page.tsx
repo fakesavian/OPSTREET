@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { createProject, fetchWalletBalance } from "@/lib/api";
+import { createProject } from "@/lib/api";
 import { DEFAULT_GAME_PAYMENT_TOKEN, GAME_PAYMENT_TOKENS } from "@opfun/shared";
 import { useWallet } from "@/components/WalletProvider";
 import { submitOpnetLiquidityFundingWithWallet, checkWalletUtxos } from "@/lib/wallet";
@@ -143,25 +143,6 @@ export default function CreatePage() {
         fundingTxId = `testnet-skip-${Date.now()}`;
       } else {
         if (wallet.provider !== "opnet") throw new Error("OP_WALLET is required to fund initial liquidity.");
-
-        const walletBalance = await fetchWalletBalance(wallet.address).catch(() => null);
-        if (walletBalance) {
-          const confirmedSats = Math.max(0, walletBalance.confirmedSats);
-          if (confirmedSats < fundingPreview.totalSats) {
-            const pendingHint =
-              walletBalance.unconfirmedSats > 0
-                ? ` ${formatSats(walletBalance.unconfirmedSats)} sats are still unconfirmed.`
-                : "";
-            if (confirmedSats <= 0) {
-              throw new Error(
-                `Connected OP_WALLET has no confirmed UTXOs yet. Fund the wallet first, then retry.${pendingHint}`,
-              );
-            }
-            throw new Error(
-              `Need at least ${formatSats(fundingPreview.totalSats)} confirmed sats before network fees. Current confirmed balance is ${formatSats(confirmedSats)} sats.${pendingHint}`,
-            );
-          }
-        }
 
         const funding = await submitOpnetLiquidityFundingWithWallet(wallet.provider, {
           toAddress: LIQUIDITY_VAULT_ADDRESS,
@@ -451,7 +432,7 @@ export default function CreatePage() {
           </div>
 
           {/* Skip funding toggle — shown when no spendable UTXOs */}
-          {utxoCheck && !utxoCheck.loading && utxoCheck.count === 0 && (
+          {utxoCheck && !utxoCheck.loading && utxoCheck.count <= 0 && (
             <div className="rounded-xl border-2 border-ink bg-[#FFF7E8] px-4 py-3 space-y-3">
               <p className="text-xs font-black text-ink uppercase tracking-wider">Testnet: Skip BTC Funding</p>
               <p className="text-xs text-ink/70">

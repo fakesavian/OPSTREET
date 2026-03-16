@@ -1306,6 +1306,8 @@ export async function checkWalletUtxos(address: string): Promise<{
     const btcSub = root["bitcoin"] as Record<string, unknown> | undefined;
     if (btcSub) {
       if (typeof btcSub["selectedAddress"] === "string") addrSet.add(btcSub["selectedAddress"] as string);
+      const btcAccs = btcSub["accounts"];
+      if (Array.isArray(btcAccs)) btcAccs.forEach((a) => { if (typeof a === "string" && a) addrSet.add(a); });
     }
   }
   // Add tb1 equivalents
@@ -1313,8 +1315,37 @@ export async function checkWalletUtxos(address: string): Promise<{
     const tb1 = convertBech32Hrp(a, "tb");
     if (tb1 && tb1 !== a) addrSet.add(tb1);
   }
-  const addrsToTry = Array.from(addrSet);
 
+  // 1. Ask the wallet extension directly via getBitcoinUtxos() — fastest, no CORS
+  if (opnet) {
+    const root = opnet as Record<string, unknown>;
+    const candidates = [root, root["bitcoin"]].filter((v): v is Record<string, unknown> => Boolean(v && typeof v === "object"));
+    for (const target of candidates) {
+      const fn = target["getBitcoinUtxos"] as LooseFn | undefined;
+      if (typeof fn !== "function") continue;
+      try {
+        const res = await fn(0, 100);
+        let arr: unknown[] | undefined;
+        if (Array.isArray(res)) { arr = res; }
+        else if (res && typeof res === "object") {
+          const obj = res as Record<string, unknown>;
+          arr = (obj["utxos"] ?? obj["confirmed"] ?? obj["data"]) as unknown[] | undefined;
+        }
+        if (!Array.isArray(arr) || !arr.length) continue;
+        const utxos = (arr as OPNetUTXO[]).map(normalizeUTXO).filter((u): u is NonNullable<ReturnType<typeof normalizeUTXO>> => u !== null);
+        if (utxos.length > 0) {
+          return {
+            count: utxos.length,
+            totalSats: utxos.reduce((s, u) => s + u.sats, BigInt(0)),
+            source: "wallet:getBitcoinUtxos",
+          };
+        }
+      } catch { /* try next */ }
+    }
+  }
+
+  // 2. OPNet RPC proxy (server-side, avoids CORS) — try each candidate address
+  const addrsToTry = Array.from(addrSet);
   for (const addr of addrsToTry) {
     try {
       const resp = await fetch(`/api/opnet-utxos?address=${encodeURIComponent(addr)}`);
@@ -1384,7 +1415,7 @@ export async function submitOpnetLiquidityFundingWithWallet(
   // Also try the original tb1/bcrt1 format in case the wallet resolves UTXOs under that HRP
   const rawAddrLower = rawAddr.toLowerCase();
   const altAddr =
-    rawAddrLower.startsWith("opt1") ? convertBech32Hrp(rawAddr, "tb1") ?? rawAddr : rawAddr;
+    rawAddrLower.startsWith("opt1") ? convertBech32Hrp(rawAddr, "tb") ?? rawAddr : rawAddr;
 
   const sendOptions = [
     { feeRate: 5, memo, usePendingUTXO: true },
