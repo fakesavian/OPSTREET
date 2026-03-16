@@ -12,6 +12,9 @@ const HOP_BY_HOP_HEADERS = [
   "trailer",
   "transfer-encoding",
   "upgrade",
+  // The browser Origin is not relevant for server-to-server proxy calls — forwarding
+  // it would trip the API's CORS origin guard when CORS_ORIGIN differs from the web URL.
+  "origin",
   // Vercel infrastructure headers — forwarding these causes the API's Vercel edge
   // to see a mismatched host and issue a 308 redirect back to the web domain.
   "x-forwarded-host",
