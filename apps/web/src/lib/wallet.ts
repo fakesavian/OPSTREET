@@ -371,10 +371,12 @@ export function getWalletVerificationIssue(wallet: WalletState): string | null {
 /**
  * Sign a message using BIP-322 simple proof.
  * Returns null for manual address (cannot sign) or unsupported wallets.
+ * address is passed as a hint to OP_WALLET so it can select the correct key.
  */
 export async function signMessage(
   provider: WalletProviderType,
   message: string,
+  address?: string,
 ): Promise<string | null> {
   if (provider === "manual") return null;
 
@@ -388,7 +390,10 @@ export async function signMessage(
     return okx.signMessage(message, "bip322-simple");
   }
 
-  // OPNet wallet — attempt if signMessage is available
+  // OPNet wallet — attempt if signMessage is available.
+  // OP_WALLET may fail BIP-322 for Taproot addresses with "Can not sign for input #0"
+  // (a key-tweak mismatch in its internal bitcoinjs-lib usage). We try several call
+  // signatures to maximise the chance of getting a valid signature back.
   const opnet = getOPNet();
   if (provider === "opnet" && opnet) {
     const candidateObjects: Array<Record<string, unknown>> = [
@@ -400,22 +405,55 @@ export async function signMessage(
       const signFn = obj["signMessage"];
       if (typeof signFn === "function") {
         const fn = signFn as LooseFn;
-        try {
-          const result = await withTimeout(
-            Promise.resolve(fn(message, "bip322-simple")).then((value) => {
-              if (typeof value === "string" && value.length > 0) return value;
-              throw new Error("OP_WALLET returned an empty signature.");
-            }),
-            OPNET_SIGN_TIMEOUT_MS,
-            "OP_WALLET did not complete the signature request. Close any blank wallet popup and try again.",
-          );
-          return result;
-        } catch (error) {
-          const detail = normalizeWalletError(errorMessage(error));
+
+        // Try multiple call signatures. OP_WALLET may need the address as a
+        // third arg so it can look up the correct tweaked key for BIP-322.
+        const callVariants: unknown[][] = [
+          // Address-aware variants first (best chance for P2TR key resolution)
+          ...(address ? [
+            [message, "bip322-simple", address],
+            [address, message, "bip322-simple"],
+            [message, address, "bip322-simple"],
+          ] : []),
+          // Standard variants
+          [message, "bip322-simple"],
+          [message],
+        ];
+
+        let lastError: string | undefined;
+        for (const args of callVariants) {
+          try {
+            const result = await withTimeout(
+              Promise.resolve(fn(...args)).then((value) => {
+                if (typeof value === "string" && value.length > 0) return value;
+                throw new Error("OP_WALLET returned an empty signature.");
+              }),
+              OPNET_SIGN_TIMEOUT_MS,
+              "OP_WALLET did not complete the signature request. Close any blank wallet popup and try again.",
+            );
+            return result;
+          } catch (error) {
+            const raw = errorMessage(error);
+            // "Can not sign for input" = BIP-322 key-tweak mismatch — try next variant
+            if (/can not sign for input/i.test(raw)) {
+              lastError = raw;
+              continue;
+            }
+            const detail = normalizeWalletError(raw);
+            throw new Error(
+              detail.startsWith("__internal_")
+                ? "OP_WALLET could not complete message signing in this build."
+                : detail,
+            );
+          }
+        }
+
+        // All variants exhausted with BIP-322 key mismatch — surface actionable message
+        if (lastError) {
           throw new Error(
-            detail.startsWith("__internal_")
-              ? "OP_WALLET could not complete message signing in this build."
-              : detail,
+            "OP_WALLET could not sign the authentication message (BIP-322 key mismatch). " +
+            "This is a known OP_WALLET limitation with Taproot addresses. " +
+            "Tap 'Enter address' below, paste your wallet address, and use manual sign-in instead.",
           );
         }
       }
@@ -423,24 +461,46 @@ export async function signMessage(
       const requestFn = obj["request"];
       if (typeof requestFn === "function") {
         const request = requestFn as LooseFn;
-        try {
-          const result = await withTimeout(
-            Promise.resolve(
-              request({ method: "signMessage", params: [message, "bip322-simple"] }),
-            ).then((value) => {
-              if (typeof value === "string" && value.length > 0) return value;
-              throw new Error("OP_WALLET returned an empty signature.");
-            }),
-            OPNET_SIGN_TIMEOUT_MS,
-            "OP_WALLET did not complete the signature request. Close any blank wallet popup and try again.",
-          );
-          return result;
-        } catch (error) {
-          const detail = normalizeWalletError(errorMessage(error));
+        const requestVariants: unknown[] = [
+          ...(address ? [
+            { method: "signMessage", params: [message, "bip322-simple", address] },
+            { method: "signMessage", params: { message, type: "bip322-simple", address } },
+          ] : []),
+          { method: "signMessage", params: [message, "bip322-simple"] },
+          { method: "signMessage", params: [message] },
+        ];
+
+        let lastError: string | undefined;
+        for (const payload of requestVariants) {
+          try {
+            const result = await withTimeout(
+              Promise.resolve(request(payload)).then((value) => {
+                if (typeof value === "string" && value.length > 0) return value;
+                throw new Error("OP_WALLET returned an empty signature.");
+              }),
+              OPNET_SIGN_TIMEOUT_MS,
+              "OP_WALLET did not complete the signature request. Close any blank wallet popup and try again.",
+            );
+            return result;
+          } catch (error) {
+            const raw = errorMessage(error);
+            if (/can not sign for input/i.test(raw)) {
+              lastError = raw;
+              continue;
+            }
+            const detail = normalizeWalletError(raw);
+            throw new Error(
+              detail.startsWith("__internal_")
+                ? "OP_WALLET could not complete message signing in this build."
+                : detail,
+            );
+          }
+        }
+
+        if (lastError) {
           throw new Error(
-            detail.startsWith("__internal_")
-              ? "OP_WALLET could not complete message signing in this build."
-              : detail,
+            "OP_WALLET could not sign the authentication message (BIP-322 key mismatch). " +
+            "Tap 'Enter address' below, paste your wallet address, and use manual sign-in instead.",
           );
         }
       }

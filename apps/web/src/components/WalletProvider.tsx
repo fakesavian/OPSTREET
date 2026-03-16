@@ -128,7 +128,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setVerifyError("");
     try {
       const { nonce, message } = await fetchAuthNonce(targetWallet.address);
-      const signature = await signMessage(targetWallet.provider, message);
+      const signature = await signMessage(targetWallet.provider, message, targetWallet.address);
       if (!signature) {
         throw new Error("Wallet did not return a BIP-322 signature.");
       }
