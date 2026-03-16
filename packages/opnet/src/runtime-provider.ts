@@ -1,24 +1,28 @@
-// NOTE: @btc-vision/bitcoin and @btc-vision/transaction are intentionally NOT imported
-// at the top level. They are loaded lazily (inside functions) via dynamic import() to
-// prevent ERR_PACKAGE_PATH_NOT_EXPORTED crashes on Vercel if a stale cached version of
-// these packages (e.g. @btc-vision/transaction@1.7.31) is present at lambda startup.
+// NOTE: @btc-vision/* AND the opnet SDK are intentionally NOT imported at the top level.
+// They are loaded lazily (inside functions) via dynamic import() to prevent
+// ERR_PACKAGE_PATH_NOT_EXPORTED / module-init crashes on Vercel when a stale cached
+// version of @btc-vision/transaction is present at lambda startup.
 import { GAME_PAYMENT_TOKENS, type LiquidityToken } from "@opfun/shared";
-import {
-  ABIDataTypes,
-  BitcoinAbiTypes,
-  JSONRpcProvider,
-  MotoswapPoolAbi,
-  MotoSwapFactoryAbi,
-  OP_721_ABI,
-  type AbstractRpcProvider,
-  type BitcoinInterfaceAbi,
-  getContract,
-} from "opnet";
+
+// Type-only imports — erased at compile time, no runtime cost.
 import type {
+  JSONRpcProvider,
+  AbstractRpcProvider,
+  BitcoinInterfaceAbi,
   IMotoswapFactoryContract,
   IMotoswapPoolContract,
   IOP721Contract,
 } from "opnet";
+
+// Lazy opnet SDK loader — populated on first real use.
+type OpnetSdkModule = typeof import("opnet");
+let _opnetSdk: OpnetSdkModule | null = null;
+async function getOpnetSdk(): Promise<OpnetSdkModule> {
+  if (!_opnetSdk) {
+    _opnetSdk = (await import("opnet")) as OpnetSdkModule;
+  }
+  return _opnetSdk;
+}
 
 const OPNET_RPC_URL = (process.env["OPNET_RPC_URL"] ?? "").trim() || "https://testnet.opnet.org";
 const OPNET_PROVIDER_TIMEOUT_MS = Number(process.env["OPNET_PROVIDER_TIMEOUT_MS"] ?? 15_000);
@@ -62,18 +66,8 @@ export const MOTOSWAP_ROUTER_ADDRESS = process.env["MOTOSWAP_ROUTER_ADDRESS"] ??
 export const SHOP_OP721_COLLECTION_ADDRESS = process.env["SHOP_OP721_COLLECTION"] ?? "";
 const TBTC_CONTRACT_ADDRESS = process.env["OPNET_TBTC_CONTRACT_ADDRESS"] ?? "";
 
-const SHOP_OP721_MINT_ABI: BitcoinInterfaceAbi = [
-  {
-    name: "mint",
-    type: BitcoinAbiTypes.Function,
-    inputs: [
-      { name: "tokenId", type: ABIDataTypes.UINT256 },
-      { name: "to", type: ABIDataTypes.ADDRESS },
-    ],
-    outputs: [],
-  },
-  ...OP_721_ABI,
-];
+// SHOP_OP721_MINT_ABI is built lazily inside prepareShopMint() to avoid opnet SDK
+// loading at module init time.
 
 let provider: JSONRpcProvider | null = null;
 let providerUrl = "";
@@ -386,8 +380,11 @@ export async function getProvider(): Promise<JSONRpcProvider> {
 
   if (provider && providerUrl === OPNET_RPC_URL) return provider;
 
-  const network = await getOpnetNetworkObj();
-  provider = new JSONRpcProvider({ url: OPNET_RPC_URL, network: network as never, timeout: OPNET_PROVIDER_TIMEOUT_MS });
+  const [{ JSONRpcProvider: ProviderClass }, network] = await Promise.all([
+    getOpnetSdk(),
+    getOpnetNetworkObj(),
+  ]);
+  provider = new ProviderClass({ url: OPNET_RPC_URL, network: network as never, timeout: OPNET_PROVIDER_TIMEOUT_MS });
   providerUrl = OPNET_RPC_URL;
   return provider;
 }
@@ -459,10 +456,11 @@ export async function fetchLivePoolState(poolAddress: string): Promise<LivePoolS
   if (!poolAddress) return null;
 
   try {
-    const [contractAddress, rpcProvider, network] = await Promise.all([
+    const [contractAddress, rpcProvider, network, { MotoswapPoolAbi, getContract }] = await Promise.all([
       toContractAddress(poolAddress, "pool address"),
       getRpcProvider(),
       getOpnetNetworkObj(),
+      getOpnetSdk(),
     ]);
     const pool = getContract<IMotoswapPoolContract>(
       contractAddress as never,
@@ -516,12 +514,13 @@ export async function fetchLivePoolReserves(poolAddress: string): Promise<LivePo
 export async function findPoolAddress(token0: string, token1: string): Promise<string | null> {
   ensureRequirements({ requireFactory: true });
 
-  const [factoryAddr, token0Addr, token1Addr, rpcProvider, network] = await Promise.all([
+  const [factoryAddr, token0Addr, token1Addr, rpcProvider, network, { MotoSwapFactoryAbi, getContract }] = await Promise.all([
     toContractAddress(MOTOSWAP_FACTORY_ADDRESS, "MOTOSWAP_FACTORY_ADDRESS"),
     toContractAddress(token0, "token0 address"),
     toContractAddress(token1, "token1 address"),
     getRpcProvider(),
     getOpnetNetworkObj(),
+    getOpnetSdk(),
   ]);
 
   const factory = getContract<IMotoswapFactoryContract>(
@@ -560,12 +559,13 @@ export async function preparePoolCreation(
   const maximumAllowedSatToSpend = options?.maximumAllowedSatToSpend ?? DEFAULT_INTERACTION_MAX_SPEND;
   const feeRate = options?.feeRate ?? DEFAULT_INTERACTION_FEE_RATE;
 
-  const [factoryAddr, token0Addr, token1Addr, rpcProvider, network] = await Promise.all([
+  const [factoryAddr, token0Addr, token1Addr, rpcProvider, network, { MotoSwapFactoryAbi, getContract }] = await Promise.all([
     toContractAddress(MOTOSWAP_FACTORY_ADDRESS, "MOTOSWAP_FACTORY_ADDRESS"),
     toContractAddress(token0, "token0 address"),
     toContractAddress(token1, "token1 address"),
     getRpcProvider(),
     getOpnetNetworkObj(),
+    getOpnetSdk(),
   ]);
 
   const factory = getContract<IMotoswapFactoryContract>(
@@ -612,12 +612,26 @@ export async function prepareShopMint(
   const maximumAllowedSatToSpend = options?.maximumAllowedSatToSpend ?? DEFAULT_INTERACTION_MAX_SPEND;
   const feeRate = options?.feeRate ?? DEFAULT_INTERACTION_FEE_RATE;
 
-  const [collectionAddr, walletAddr, rpcProvider, network] = await Promise.all([
+  const [collectionAddr, walletAddr, rpcProvider, network, { BitcoinAbiTypes, ABIDataTypes, OP_721_ABI, getContract }] = await Promise.all([
     toContractAddress(SHOP_OP721_COLLECTION_ADDRESS, "SHOP_OP721_COLLECTION"),
     toContractAddress(walletAddress, "wallet address"),
     getRpcProvider(),
     getOpnetNetworkObj(),
+    getOpnetSdk(),
   ]);
+
+  const SHOP_OP721_MINT_ABI: BitcoinInterfaceAbi = [
+    {
+      name: "mint",
+      type: BitcoinAbiTypes.Function,
+      inputs: [
+        { name: "tokenId", type: ABIDataTypes.UINT256 },
+        { name: "to", type: ABIDataTypes.ADDRESS },
+      ],
+      outputs: [],
+    },
+    ...OP_721_ABI,
+  ];
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- opnet getContract proxies ABI methods at runtime
   const collection = getContract(
@@ -674,6 +688,13 @@ export async function prepareCurveInitialization(
   const maximumAllowedSatToSpend = options?.maximumAllowedSatToSpend ?? DEFAULT_INTERACTION_MAX_SPEND;
   const feeRate = options?.feeRate ?? DEFAULT_INTERACTION_FEE_RATE;
 
+  const [curveAddr, rpcProvider, network, { BitcoinAbiTypes, ABIDataTypes, getContract }] = await Promise.all([
+    toContractAddress(curveAddress, "curveAddress"),
+    getRpcProvider(),
+    getOpnetNetworkObj(),
+    getOpnetSdk(),
+  ]);
+
   // ABI for BondingCurve.initialize() — no inputs, returns bool
   const CURVE_INIT_ABI: BitcoinInterfaceAbi = [
     {
@@ -683,12 +704,6 @@ export async function prepareCurveInitialization(
       outputs: [{ name: "success", type: ABIDataTypes.BOOL }],
     },
   ];
-
-  const [curveAddr, rpcProvider, network] = await Promise.all([
-    toContractAddress(curveAddress, "curveAddress"),
-    getRpcProvider(),
-    getOpnetNetworkObj(),
-  ]);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- opnet getContract proxies ABI at runtime
   const curve = getContract(
@@ -896,10 +911,11 @@ export async function checkOp721Ownership(
   if (!collectionAddress || !expectedOwner.trim()) return false;
 
   try {
-    const [collectionAddr, rpcProvider, network] = await Promise.all([
+    const [collectionAddr, rpcProvider, network, { OP_721_ABI, getContract }] = await Promise.all([
       toContractAddress(collectionAddress, "collection address"),
       getRpcProvider(),
       getOpnetNetworkObj(),
+      getOpnetSdk(),
     ]);
     const collection = getContract<IOP721Contract>(
       collectionAddr as never,

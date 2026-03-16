@@ -1449,7 +1449,13 @@ export async function submitOpnetLiquidityFundingWithWallet(
               const r = result as Record<string, unknown>;
               const txVal = r["tx"];
               if (typeof txVal === "string" && txVal.length >= 32) {
-                return { txId: txVal, raw: result };
+                // If txVal is exactly 64 hex chars it's already a txid.
+                // If longer it's a raw signed tx — double-SHA256 to get the real txid.
+                if (/^[0-9a-fA-F]{64}$/.test(txVal)) {
+                  return { txId: txVal, raw: result };
+                }
+                const derived = await deriveTxIdFromRawHex(txVal);
+                if (derived) return { txId: derived, raw: result };
               }
             }
             const parsed = parseSubmitResult(result);
