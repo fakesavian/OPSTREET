@@ -1170,17 +1170,26 @@ async function tryPsbtTransfer(
     throw new Error(`Cannot derive P2TR script for vault address: ${vaultAddress.slice(0, 20)}…`);
   }
 
-  // 3. Greedy UTXO selection (fee ~2500 sat estimate for P2TR tx)
-  const feeEstimate = BigInt(2500);
-  const totalNeeded = BigInt(amountSats) + feeEstimate;
+  // 4. Greedy UTXO selection with dynamic fee estimate.
+  //    P2TR input ≈ 57.5 vbytes, P2TR output ≈ 43 vbytes, overhead ≈ 11 vbytes.
+  //    We don't know input count yet so do two passes: estimate with 1 input first,
+  //    then recalculate once the real count is known.
+  const FEE_RATE = 3; // sat/vbyte — conservative for testnet
+  const estimateFee = (nInputs: number) => BigInt(Math.ceil((nInputs * 58 + 2 * 43 + 11) * FEE_RATE));
+
+  // First pass: select enough UTXOs to cover amount + pessimistic fee
+  const sorted = [...utxos].sort((a, b) => Number(b.sats - a.sats));
   const selected: typeof utxos = [];
   let totalIn = BigInt(0);
-  for (const utxo of [...utxos].sort((a, b) => Number(b.sats - a.sats))) {
+  for (const utxo of sorted) {
     selected.push(utxo);
     totalIn += utxo.sats;
-    if (totalIn >= totalNeeded) break;
+    const fee = estimateFee(selected.length);
+    if (totalIn >= BigInt(amountSats) + fee) break;
   }
-  console.debug("[PSBT] Selected", selected.length, "UTXOs, totalIn:", totalIn.toString(), "needed:", totalNeeded.toString());
+  const feeEstimate = estimateFee(selected.length);
+  const totalNeeded = BigInt(amountSats) + feeEstimate;
+  console.debug("[PSBT] Selected", selected.length, "UTXOs, totalIn:", totalIn.toString(), "fee:", feeEstimate.toString(), "needed:", totalNeeded.toString());
   if (totalIn < totalNeeded) {
     const totalSats = utxos.reduce((s, u) => s + u.sats, BigInt(0));
     throw new Error(
