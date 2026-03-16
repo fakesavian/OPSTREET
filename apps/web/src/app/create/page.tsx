@@ -143,6 +143,7 @@ export default function CreatePage() {
         toAddress: LIQUIDITY_VAULT_ADDRESS,
         amountSats: fundingPreview.totalSats,
         memo: `OpStreet liquidity ${form.ticker}`,
+        senderAddress: wallet.address,
       });
       if (!funding?.txId) {
         throw new Error("Liquidity funding transaction was not returned by wallet.");

@@ -69,6 +69,8 @@ export interface OpnetLiquidityFundingRequest {
   toAddress: string;
   amountSats: number;
   memo?: string;
+  /** Connected wallet address (sender). Required for PSBT fallback. */
+  senderAddress?: string;
 }
 
 export interface OpnetPreparedInteraction {
@@ -1018,7 +1020,8 @@ async function tryPsbtTransfer(
   vaultAddress: string,
   amountSats: number,
 ): Promise<{ txId: string; raw?: unknown } | null> {
-  // 1. Fetch UTXOs — try both address formats
+  // 1. Fetch UTXOs via server-side proxy (avoids browser CORS restrictions)
+  // Try opt1 format first, then tb1 as fallback
   const addrsToTry = [connectedAddr];
   const tb1Version = convertBech32Hrp(connectedAddr, "tb1");
   if (tb1Version && tb1Version !== connectedAddr) addrsToTry.push(tb1Version);
@@ -1026,8 +1029,8 @@ async function tryPsbtTransfer(
   let utxos: OPNetUTXO[] = [];
   for (const addr of addrsToTry) {
     try {
-      const url = `https://testnet.opnet.org/api/v1/address/utxos?address=${encodeURIComponent(addr)}&optimize=false`;
-      const resp = await fetch(url);
+      const proxyUrl = `/api/opnet-utxos?address=${encodeURIComponent(addr)}`;
+      const resp = await fetch(proxyUrl);
       if (!resp.ok) continue;
       const data = (await resp.json()) as { confirmed?: OPNetUTXO[]; pending?: OPNetUTXO[] };
       utxos = [...(data.confirmed ?? []), ...(data.pending ?? [])];
@@ -1250,13 +1253,15 @@ export async function submitOpnetLiquidityFundingWithWallet(
   }
 
   // ── PSBT fallback: build tx ourselves, wallet only signs ─────────────────
-  // sendBitcoin failed (wallet can't find its own UTXOs). We fetch UTXOs directly
-  // from the OPNet RPC, build a P2TR PSBT, and ask the wallet to sign + broadcast.
+  // sendBitcoin failed (wallet can't find its own UTXOs). Fetch UTXOs via
+  // server-side proxy (avoids CORS), build P2TR PSBT, ask wallet to sign + push.
   try {
+    // Use explicitly passed senderAddress first, then try reading from provider
     const connectedAddr =
-      opnet.selectedAddress ??
-      (Array.isArray(opnet.accounts) ? opnet.accounts[0] : undefined) ??
-      (await opnet.getAccounts?.())?.[0] ??
+      payload.senderAddress?.trim() ||
+      opnet.selectedAddress ||
+      (Array.isArray(opnet.accounts) ? opnet.accounts[0] : undefined) ||
+      (await opnet.getAccounts?.())?.[0] ||
       (await opnet.getCurrentAddress?.());
 
     if (connectedAddr) {

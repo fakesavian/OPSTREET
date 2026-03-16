@@ -294,6 +294,7 @@ export default function ProfilePage() {
         toAddress,
         amountSats: Math.round(amountSats),
         memo: sendMemo.trim() || undefined,
+        senderAddress: walletAddress,
       });
       if (!funding?.txId) {
         throw new Error("Wallet did not return a transaction id.");
