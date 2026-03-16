@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { FloorCalloutDTO, FloorPresenceDTO } from "@opfun/shared";
+import { PixelAvatarPreview } from "./PixelAvatarPreview";
 
 // Map avatar ID → emoji + color (matches seed data)
 const AVATAR_MAP: Record<string, { emoji: string; bg: string }> = {
@@ -138,24 +139,36 @@ export function AvatarFigure({ entry, latestCallout, size = "md", posX, posY, ca
         </div>
       )}
 
-      {/* HEAD — emoji circle */}
-      <div
-        className={`${headClass} ${bg} flex items-center justify-center rounded-full border border-white/10 font-bold`}
-      >
-        {emoji}
-      </div>
+      {/* Character — pixel sprite for sprite-* IDs, emoji figure otherwise */}
+      {entry.avatarId.startsWith("sprite-") ? (
+        <PixelAvatarPreview
+          avatarId={entry.avatarId}
+          walletAddress={entry.walletAddress}
+          frameWidth={size === "sm" ? 20 : 26}
+          showShadow={false}
+        />
+      ) : (
+        <>
+          {/* HEAD — emoji circle */}
+          <div
+            className={`${headClass} ${bg} flex items-center justify-center rounded-full border border-white/10 font-bold`}
+          >
+            {emoji}
+          </div>
 
-      {/* BODY — rectangle */}
-      <div
-        className={`${bg} border border-white/5`}
-        style={{ width: body.w, height: body.h, filter: "brightness(0.85)" }}
-      />
+          {/* BODY — rectangle */}
+          <div
+            className={`${bg} border border-white/5`}
+            style={{ width: body.w, height: body.h, filter: "brightness(0.85)" }}
+          />
 
-      {/* LEGS — two side-by-side rectangles */}
-      <div className="flex gap-px">
-        <div className={bg} style={{ width: leg.w, height: leg.h, filter: "brightness(0.7)" }} />
-        <div className={bg} style={{ width: leg.w, height: leg.h, filter: "brightness(0.7)" }} />
-      </div>
+          {/* LEGS — two side-by-side rectangles */}
+          <div className="flex gap-px">
+            <div className={bg} style={{ width: leg.w, height: leg.h, filter: "brightness(0.7)" }} />
+            <div className={bg} style={{ width: leg.w, height: leg.h, filter: "brightness(0.7)" }} />
+          </div>
+        </>
+      )}
 
       {/* Display name */}
       <span className="mt-0.5 max-w-[60px] truncate rounded bg-zinc-900/80 px-1 text-[9px] text-zinc-300">

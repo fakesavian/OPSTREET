@@ -53,7 +53,7 @@ export function PixelAvatarPreview({
     height: frameHeight,
     backgroundImage: `url(/sprites/characters/${spriteName}_idle_16x16.png)`,
     backgroundSize: `${frameWidth * 4}px ${frameHeight}px`,
-    backgroundPosition: `${-frameWidth * 3}px 0`,
+    backgroundPosition: "0px 0",
     backgroundRepeat: "no-repeat",
     imageRendering: "pixelated",
   };
