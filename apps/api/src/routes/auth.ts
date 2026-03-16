@@ -189,27 +189,30 @@ export async function authRoutes(app: FastifyInstance) {
       // Rebuild the exact message that was presented to the wallet for signing.
       const nonceMessage = buildMessage(noncePayload.n, new Date(noncePayload.e));
 
-      // Verify BIP-322 signature (convert opt1 → tb1 for verification).
-      // DEV_AUTH_HEADER_FALLBACK=true bypasses BIP-322 on testnet deployments where
-      // the wallet (e.g. OP_WALLET) cannot produce a verifiable BIP-322 signature.
-      // Never set this flag on a production mainnet deployment.
-      const isBypassEnabled = process.env["DEV_AUTH_HEADER_FALLBACK"] === "true";
+      // OP_WALLET cannot produce BIP-322 signatures and sends a known placeholder.
+      // Accept it for opt1 addresses (OPNet testnet only — no mainnet opt1 addresses exist).
+      const isOpWalletPlaceholder =
+        signature === "opwallet-no-bip322" &&
+        walletAddress.toLowerCase().startsWith("opt1");
+
       const signingAddress = toSigningAddress(walletAddress);
       let valid = false;
-      try {
-        valid = Verifier.verifySignature(signingAddress, nonceMessage, signature);
-      } catch {
-        if (isBypassEnabled) {
-          request.log.warn({ event: "auth_dev_fallback", walletAddress }, "BIP-322 threw, bypass enabled — allowing session.");
-          valid = true;
-        } else {
+
+      if (isOpWalletPlaceholder) {
+        request.log.warn({ event: "auth_opwallet_bypass", walletAddress }, "OP_WALLET placeholder — bypassing BIP-322 for OPNet testnet address.");
+        valid = true;
+      } else {
+        try {
+          valid = Verifier.verifySignature(signingAddress, nonceMessage, signature);
+        } catch {
           request.log.warn({ event: "auth_fail", reason: "verify_throw", walletAddress }, "Auth failed: signature verification threw");
           return reply.status(401).send({ error: "Signature verification failed." });
         }
-      }
-      if (!valid && isBypassEnabled) {
-        request.log.warn({ event: "auth_dev_fallback", walletAddress }, "BIP-322 invalid, bypass enabled — allowing session.");
-        valid = true;
+        // DEV_AUTH_HEADER_FALLBACK=true as a secondary escape hatch (non-opt1 wallets, dev mode).
+        if (!valid && process.env["DEV_AUTH_HEADER_FALLBACK"] === "true") {
+          request.log.warn({ event: "auth_dev_fallback", walletAddress }, "BIP-322 invalid, DEV_AUTH_HEADER_FALLBACK — allowing session.");
+          valid = true;
+        }
       }
 
       if (!valid) {
