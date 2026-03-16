@@ -358,9 +358,11 @@ export function TradingFloorClient() {
         </div>
       </div>
 
-      <div className="pb-24 md:hidden">
+      {/* ── Mobile layout ─────────────────────────────────────── */}
+      <div className="pb-28 md:hidden">
         <TickerTape items={ticker} />
 
+        {/* Floor */}
         <div className="px-4 pt-3">
           <div className="overflow-hidden rounded-[28px] border-[3px] border-ink bg-[var(--panel-cream)] shadow-[6px_6px_0_#111]">
             <AvatarCrowd
@@ -379,76 +381,90 @@ export function TradingFloorClient() {
           <FloorStats stats={stats} />
         </div>
 
-        <div className="grid grid-cols-3 gap-2 px-4 py-3">
-          {([
-            { key: "chart", label: "Chart" },
-            { key: "callouts", label: "Callouts" },
-            { key: "chat", label: "Trollbox" },
-          ] as Array<{ key: MobilePanelKey; label: string }>).map((panel) => (
-            <button
-              key={panel.key}
-              type="button"
-              onClick={() => setOpenMobilePanels((current) => ({ ...current, [panel.key]: true }))}
-              className="rounded-[18px] border-[3px] border-ink bg-opYellow px-3 py-3 text-sm font-black text-ink shadow-[4px_4px_0_#111]"
-            >
-              {panel.label}
-            </button>
-          ))}
-        </div>
-
-        {openMobilePanels.chart && (
-          <FloatingFloorPanel
-            fixed
-            title="Chart"
-            initialRect={{ x: 12, y: 124, width: Math.min(360, typeof window === "undefined" ? 320 : window.innerWidth - 24), height: 360 }}
-            minWidth={250}
-            minHeight={260}
-            onClose={() => setOpenMobilePanels((current) => ({ ...current, chart: false }))}
+        {/* Chart accordion */}
+        <div className="px-4 pt-3">
+          <button
+            type="button"
+            onClick={() => setOpenMobilePanels((c) => ({ ...c, chart: !c.chart }))}
+            className="flex w-full items-center justify-between rounded-[20px] border-[3px] border-ink bg-opYellow px-4 py-3 shadow-[4px_4px_0_#111] transition-all active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0_#111]"
           >
-            <div className="min-h-0 flex-1">
+            <span className="flex items-center gap-2 text-sm font-black text-ink">
+              <span aria-hidden>📈</span> Chart
+            </span>
+            <span
+              className="text-xs font-black text-ink transition-transform duration-200"
+              style={{ display: "inline-block", transform: openMobilePanels.chart ? "rotate(180deg)" : "rotate(0deg)" }}
+            >
+              ▼
+            </span>
+          </button>
+          {openMobilePanels.chart && (
+            <div className="mt-2 overflow-hidden rounded-[20px] border-[3px] border-ink bg-[var(--panel-cream)] shadow-[4px_4px_0_#111]">
               <ChartPanel ticker={ticker} walletAddress={walletAddress} />
             </div>
-          </FloatingFloorPanel>
-        )}
+          )}
+        </div>
 
-        {openMobilePanels.callouts && (
-          <FloatingFloorPanel
-            fixed
-            title="Alpha Callouts"
-            initialRect={{ x: 12, y: 144, width: Math.min(360, typeof window === "undefined" ? 320 : window.innerWidth - 24), height: 380 }}
-            minWidth={250}
-            minHeight={260}
-            onClose={() => setOpenMobilePanels((current) => ({ ...current, callouts: false }))}
+        {/* Alpha Callouts accordion */}
+        <div className="px-4 pt-3">
+          <button
+            type="button"
+            onClick={() => setOpenMobilePanels((c) => ({ ...c, callouts: !c.callouts }))}
+            className="flex w-full items-center justify-between rounded-[20px] border-[3px] border-ink bg-opYellow px-4 py-3 shadow-[4px_4px_0_#111] transition-all active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0_#111]"
           >
-            <CalloutFeed
-              callouts={callouts}
-              walletAddress={walletAddress}
-              ticker={ticker}
-              onCalloutPosted={fetchCalloutData}
-              onReacted={fetchCalloutData}
-              className="h-full"
-            />
-          </FloatingFloorPanel>
-        )}
+            <span className="flex items-center gap-2 text-sm font-black text-ink">
+              <span aria-hidden>📡</span> Alpha Callouts
+            </span>
+            <span
+              className="text-xs font-black text-ink transition-transform duration-200"
+              style={{ display: "inline-block", transform: openMobilePanels.callouts ? "rotate(180deg)" : "rotate(0deg)" }}
+            >
+              ▼
+            </span>
+          </button>
+          {openMobilePanels.callouts && (
+            <div className="mt-2 overflow-hidden rounded-[20px] border-[3px] border-ink bg-[var(--panel-cream)] shadow-[4px_4px_0_#111]" style={{ height: 400 }}>
+              <CalloutFeed
+                callouts={callouts}
+                walletAddress={walletAddress}
+                ticker={ticker}
+                onCalloutPosted={fetchCalloutData}
+                onReacted={fetchCalloutData}
+                className="h-full"
+              />
+            </div>
+          )}
+        </div>
 
-        {openMobilePanels.chat && (
-          <FloatingFloorPanel
-            fixed
-            title="Trollbox"
-            initialRect={{ x: 12, y: 164, width: Math.min(360, typeof window === "undefined" ? 320 : window.innerWidth - 24), height: 380 }}
-            minWidth={250}
-            minHeight={260}
-            onClose={() => setOpenMobilePanels((current) => ({ ...current, chat: false }))}
+        {/* Trollbox accordion */}
+        <div className="px-4 pt-3">
+          <button
+            type="button"
+            onClick={() => setOpenMobilePanels((c) => ({ ...c, chat: !c.chat }))}
+            className="flex w-full items-center justify-between rounded-[20px] border-[3px] border-ink bg-opYellow px-4 py-3 shadow-[4px_4px_0_#111] transition-all active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0_#111]"
           >
-            <ChatBox
-              messages={chat}
-              walletAddress={walletAddress}
-              muteUntil={profile?.muteUntil ?? null}
-              onMessageSent={fetchChatData}
-              className="h-full"
-            />
-          </FloatingFloorPanel>
-        )}
+            <span className="flex items-center gap-2 text-sm font-black text-ink">
+              <span aria-hidden>💬</span> Trollbox
+            </span>
+            <span
+              className="text-xs font-black text-ink transition-transform duration-200"
+              style={{ display: "inline-block", transform: openMobilePanels.chat ? "rotate(180deg)" : "rotate(0deg)" }}
+            >
+              ▼
+            </span>
+          </button>
+          {openMobilePanels.chat && (
+            <div className="mt-2 overflow-hidden rounded-[20px] border-[3px] border-ink bg-[var(--panel-cream)] shadow-[4px_4px_0_#111]" style={{ height: 400 }}>
+              <ChatBox
+                messages={chat}
+                walletAddress={walletAddress}
+                muteUntil={profile?.muteUntil ?? null}
+                onMessageSent={fetchChatData}
+                className="h-full"
+              />
+            </div>
+          )}
+        </div>
       </div>
 
       {showJoinModal && walletAddress && (

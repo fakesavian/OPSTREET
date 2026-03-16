@@ -633,6 +633,9 @@ function normalizeWalletError(raw: string): string {
   if (/duplicated wallet|same key|mldsa|conflict/i.test(msg)) {
     return "OP_WALLET reports a duplicate wallet/MLDSA key conflict. Open the wallet and tap \"Resolve Now\" before submitting trades.";
   }
+  if (/could not find.*utxo|no.*spendable.*utxo|insufficient.*utxo/i.test(msg)) {
+    return "OP_WALLET could not find confirmed spendable UTXOs. Only confirmed Taproot (p2tr) UTXOs can be spent — fund your Taproot address and wait for at least 1 confirmation, then retry.";
+  }
   if (/insufficient|not enough funds|balance too low/i.test(msg)) {
     return "Insufficient funds in OP_WALLET for this transaction and its network fees.";
   }
@@ -886,115 +889,91 @@ export async function submitOpnetLiquidityFundingWithWallet(
   const opnet = getOPNet();
   if (!opnet) throw new Error("OPNet wallet extension not found.");
 
-  // Ensure wallet is on testnet before sending to a tb1p address
   await ensureOPNetTestnet(opnet);
 
   if (!Number.isFinite(payload.amountSats) || payload.amountSats <= 0) {
     throw new Error("Liquidity amount in sats must be greater than zero.");
   }
 
-  // Validate vault address format before calling the wallet
   const rawAddr = payload.toAddress.trim();
-  if (!rawAddr) {
-    throw new Error("Liquidity vault address is empty.");
-  }
+  if (!rawAddr) throw new Error("Liquidity vault address is empty.");
   if (!/^(opt1|tb1|bcrt1|[mn2])[a-zA-HJ-NP-Z0-9]{25,}$/i.test(rawAddr)) {
     throw new Error(
-      `Vault address "${rawAddr.slice(0, 12)}..." does not look like a valid testnet address. Check NEXT_PUBLIC_LIQUIDITY_VAULT_ADDRESS.`
+      `Vault address "${rawAddr.slice(0, 12)}..." does not look like a valid testnet address. Check NEXT_PUBLIC_LIQUIDITY_VAULT_ADDRESS.`,
     );
   }
 
   // OP_WALLET on OPNet testnet uses "opt" HRP — convert tb1/bcrt1 → opt1
   const addr = toOpnetTestnetAddress(rawAddr);
+  const sats = payload.amountSats;
+  const memo = payload.memo ?? "OpStreet liquidity";
 
-  const targets: Array<Record<string, unknown>> = [
-    opnet as Record<string, unknown>,
-    ((opnet as Record<string, unknown>)["bitcoin"] ?? {}) as Record<string, unknown>,
-    ((opnet as Record<string, unknown>)["opnet"] ?? {}) as Record<string, unknown>,
-  ];
+  // Collect candidate provider objects
   const root = opnet as Record<string, unknown>;
-  for (const value of Object.values(root)) {
-    if (value && typeof value === "object") targets.push(value as Record<string, unknown>);
+  const targets: Array<Record<string, unknown>> = [root];
+  for (const key of ["bitcoin", "opnet"] as const) {
+    const sub = root[key];
+    if (sub && typeof sub === "object") targets.push(sub as Record<string, unknown>);
   }
 
-  // OP_WALLET internally checks `'signer' in firstArg` to detect call format.
-  // Passing a string (address) as firstArg crashes with "Cannot use 'in' operator".
-  // ONLY use object-format calls where firstArg is always an object.
-  const sendOpts = {
-    to: addr,
-    amount: payload.amountSats,
-    feeRate: 5,
-    memo: payload.memo ?? "OpStreet liquidity",
-    signer: null,
-    mldsaSigner: null,
-  };
-
-  const calls: Array<{ via: "direct" | "request"; target: Record<string, unknown>; payload: unknown }> = [];
-  for (const target of targets) {
-    if (typeof target["sendBitcoin"] === "function") {
-      // Object-format ONLY — never pass string as first arg (wallet does 'signer' in firstArg).
-      calls.push({
-        via: "direct",
-        target,
-        payload: [sendOpts],
-      });
-    }
-    if (typeof target["request"] === "function") {
-      calls.push(
-        {
-          via: "request",
-          target,
-          payload: { method: "sendBitcoin", params: sendOpts },
-        },
-        {
-          via: "request",
-          target,
-          payload: { method: "sendBitcoin", params: [sendOpts] },
-        },
-      );
-    }
-    if (typeof target["_request"] === "function") {
-      calls.push({
-        via: "request",
-        target: { request: target["_request"] as LooseFn },
-        payload: { method: "sendBitcoin", params: sendOpts },
-      });
-    }
-  }
-
+  // OP_WALLET documented API: sendBitcoin(toAddress: string, satoshis: number, options?)
+  // Try positional args first (correct per docs), then request-style fallbacks.
   const failures: string[] = [];
-  for (const call of calls) {
-    try {
-      const result =
-        call.via === "direct"
-          ? await (call.target["sendBitcoin"] as LooseFn)(...(call.payload as unknown[]))
-          : await (call.target["request"] as LooseFn)(call.payload);
-      const parsed = parseSubmitResult(result);
-      if (parsed?.txId) return { txId: parsed.txId, raw: parsed.raw };
-      if (parsed?.signedTxHex) {
-        const derivedTxId = await deriveTxIdFromRawHex(parsed.signedTxHex);
-        if (derivedTxId) {
-          return { txId: derivedTxId, raw: parsed.raw };
-        }
+
+  for (const target of targets) {
+    if (typeof target["sendBitcoin"] !== "function") continue;
+    const fn = target["sendBitcoin"] as LooseFn;
+
+    // Positional variants: (addr, sats, opts), (addr, sats), (addr, BigInt(sats), opts)
+    const directVariants: unknown[][] = [
+      [addr, sats, { feeRate: 5, memo }],
+      [addr, sats],
+      [addr, BigInt(sats), { feeRate: 5, memo }],
+      [addr, BigInt(sats)],
+    ];
+
+    for (const args of directVariants) {
+      try {
+        const result = await fn(...args);
+        const parsed = parseSubmitResult(result);
+        if (parsed?.txId) return { txId: parsed.txId, raw: parsed.raw };
+        if (typeof result === "string" && result.length > 8) return { txId: result, raw: result };
+      } catch (error) {
+        const normalized = normalizeWalletError(errorMessage(error));
+        if (isFatalWalletError(normalized)) throw new Error(normalized);
+        failures.push(normalized);
       }
-      if (parsed?.reservationId) return { txId: parsed.reservationId, raw: parsed.raw };
-      if (typeof result === "string") {
-        const derivedTxId = await deriveTxIdFromRawHex(result);
-        if (derivedTxId) return { txId: derivedTxId, raw: result };
-        if (result.length > 8) return { txId: result, raw: result };
-      }
-    } catch (error) {
-      const normalized = normalizeWalletError(errorMessage(error));
-      failures.push(normalized);
-      if (isFatalWalletError(normalized)) throw new Error(normalized);
     }
   }
 
-  // Surface the first user-actionable error, skip internal call-format mismatches
+  // request()-style fallbacks
+  for (const target of targets) {
+    if (typeof target["request"] !== "function") continue;
+    const req = target["request"] as LooseFn;
+
+    const requestVariants = [
+      { method: "sendBitcoin", params: [addr, sats, { feeRate: 5, memo }] },
+      { method: "sendBitcoin", params: { to: addr, amount: sats, feeRate: 5, memo } },
+    ];
+
+    for (const reqPayload of requestVariants) {
+      try {
+        const result = await req(reqPayload);
+        const parsed = parseSubmitResult(result);
+        if (parsed?.txId) return { txId: parsed.txId, raw: parsed.raw };
+        if (typeof result === "string" && result.length > 8) return { txId: result, raw: result };
+      } catch (error) {
+        const normalized = normalizeWalletError(errorMessage(error));
+        if (isFatalWalletError(normalized)) throw new Error(normalized);
+        failures.push(normalized);
+      }
+    }
+  }
+
   const userError = failures.find((f) => !f.startsWith("__internal_"));
   throw new Error(
     userError ??
-      "Wallet did not return a funding transaction id. Ensure OP_WALLET is unlocked and approved.",
+      "OP_WALLET did not return a transaction ID for the BTC transfer. Ensure your wallet is on OPNet Testnet and has confirmed BTC UTXOs on its Taproot address.",
   );
 }
 

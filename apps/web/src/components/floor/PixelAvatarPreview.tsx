@@ -187,15 +187,8 @@ function renderChain(id: string, frameWidth: number) {
 }
 
 function renderPants(id: string, frameWidth: number) {
+  if (id === "default") return null;
   const color = id === "cream" ? "#d8c79b" : id === "charcoal" ? "#484d59" : "#4f7eb7";
-  if (id === "default") {
-    return (
-      <>
-        {pixelLayer(frameWidth, { left: 5, top: 21, width: 3, height: 8, color: "#6d7aa0" })}
-        {pixelLayer(frameWidth, { left: 8, top: 21, width: 3, height: 8, color: "#6d7aa0" })}
-      </>
-    );
-  }
   return (
     <>
       {pixelLayer(frameWidth, { left: 5, top: 21, width: 3, height: 8, color })}
@@ -205,6 +198,7 @@ function renderPants(id: string, frameWidth: number) {
 }
 
 function renderShoes(id: string, frameWidth: number) {
+  if (id === "default") return null;
   const color =
     id === "loafers" ? "#7b5434" : id === "sneakers" ? "#5a77a1" : id === "boots" ? "#383029" : "#644b3c";
   return (
