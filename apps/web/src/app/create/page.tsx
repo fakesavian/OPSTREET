@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createProject, fetchWalletBalance } from "@/lib/api";
 import { DEFAULT_GAME_PAYMENT_TOKEN, GAME_PAYMENT_TOKENS } from "@opfun/shared";
 import { useWallet } from "@/components/WalletProvider";
-import { submitOpnetLiquidityFundingWithWallet } from "@/lib/wallet";
+import { submitOpnetLiquidityFundingWithWallet, checkWalletUtxos } from "@/lib/wallet";
 import { BtcBlockWaitOverlay } from "@/components/BtcBlockWaitOverlay";
 
 const STEPS = ["Token Info", "Links", "Review"] as const;
@@ -93,6 +93,22 @@ export default function CreatePage() {
   const [touched, setTouched] = useState<TouchedFields>({});
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [pendingTxId, setPendingTxId] = useState<string | null>(null);
+  const [utxoCheck, setUtxoCheck] = useState<{ count: number; totalSats: string; loading: boolean } | null>(null);
+
+  // When entering Review step, pre-flight check UTXOs so user knows before clicking Launch
+  useEffect(() => {
+    if (step !== 2 || !wallet?.address) return;
+    setUtxoCheck({ count: 0, totalSats: "0", loading: true });
+    checkWalletUtxos(wallet.address).then((result) => {
+      setUtxoCheck({
+        count: result.count,
+        totalSats: result.totalSats.toString(),
+        loading: false,
+      });
+    }).catch(() => {
+      setUtxoCheck({ count: -1, totalSats: "0", loading: false });
+    });
+  }, [step, wallet?.address]);
 
   const step0Errors = validateStep0(form);
   const fundingPreview = getLiquidityFundingPreview(form.liquidityToken, form.liquidityAmount);
@@ -167,17 +183,14 @@ export default function CreatePage() {
       router.push(`/p/${project.slug}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Something went wrong";
-      if (/insufficient funds/i.test(msg)) {
+      if (/insufficient funds/i.test(msg) && !/utxo|csv|spendable/i.test(msg)) {
         setError(
           `${msg} Need at least ${formatSats(fundingPreview.totalSats)} sats (${formatTbtc(fundingPreview.totalTbtc)} tBTC) plus network fees.`,
         );
-      } else if (/utxos?/i.test(msg)) {
-        setError(
-          `OP_WALLET could not find confirmed spendable UTXOs. Fund the connected wallet with at least ${formatSats(fundingPreview.totalSats)} sats (${formatTbtc(fundingPreview.totalTbtc)} tBTC) plus network fees, then retry.`,
-        );
-      } else if (/invalid.*address|invalid.*recipient|network/i.test(msg)) {
+      } else if (/invalid.*address|invalid.*recipient/i.test(msg)) {
         setError(`${msg} Open OP_WALLET and verify you are on "OP_NET Testnet" (Signet).`);
       } else {
+        // Show the actual error — psbt path now returns descriptive messages
         setError(msg);
       }
     } finally {
@@ -427,6 +440,26 @@ export default function CreatePage() {
               <li>&#10003; Deployed on OP_NET</li>
             </ul>
           </div>
+
+          {/* UTXO pre-flight diagnostic */}
+          {utxoCheck && (
+            <div className={`rounded-xl border-2 px-4 py-3 text-xs font-bold ${
+              utxoCheck.loading ? "border-ink/30 bg-[#F5F5F0] text-ink/60"
+              : utxoCheck.count > 0 ? "border-[#15803D] bg-[#D1FAE5] text-[#166534]"
+              : "border-[#B45309] bg-[#FEF3C7] text-[#92400E]"
+            }`}>
+              {utxoCheck.loading && "⟳ Checking spendable UTXOs on OPNet RPC…"}
+              {!utxoCheck.loading && utxoCheck.count > 0 && (
+                <>&#10003; {utxoCheck.count} spendable UTXO{utxoCheck.count > 1 ? "s" : ""} found — {(Number(utxoCheck.totalSats) / 1e8).toFixed(8)} tBTC available</>
+              )}
+              {!utxoCheck.loading && utxoCheck.count === 0 && (
+                <>&#9888; No spendable UTXOs found for your address on OPNet RPC. If your balance shows only under &ldquo;+ CSV Balances&rdquo; in OP_WALLET, those funds are time-locked — fund this address with fresh tBTC from the signet faucet first.</>
+              )}
+              {!utxoCheck.loading && utxoCheck.count === -1 && (
+                <>⚠ Could not reach OPNet RPC to check UTXOs. Proceeding anyway.</>
+              )}
+            </div>
+          )}
 
           {error && (
             <div className="rounded-xl border-2 border-[#EF4444] bg-[#FEE2E2] px-4 py-3 text-sm font-bold text-[#B91C1C]">&#9888; {error}</div>

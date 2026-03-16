@@ -1127,17 +1127,25 @@ async function tryPsbtTransfer(
 
   if (!utxos.length) {
     console.debug("[PSBT] No usable UTXOs — raw sample:", JSON.stringify(rawUtxos.slice(0, 2)));
-    return null;
+    throw new Error(
+      `No spendable UTXOs found for ${connectedAddr.slice(0, 14)}… (checked OPNet RPC and wallet). ` +
+      `If your balance appears under "+ CSV Balances", those funds are time-locked and cannot be spent yet — ` +
+      `fund this address with fresh tBTC from the signet faucet, then retry.`,
+    );
   }
 
   // 2. Derive scripts
   const senderScript = addressToP2TRScript(connectedAddr);
-  if (!senderScript) { console.debug("[PSBT] Cannot derive senderScript for:", connectedAddr); return null; }
+  if (!senderScript) {
+    throw new Error(`Cannot derive P2TR script for sender address: ${connectedAddr.slice(0, 20)}…`);
+  }
 
   // Also try vault with both HRPs
   const vaultOpt = toOpnetTestnetAddress(vaultAddress);
   const recipientScript = addressToP2TRScript(vaultOpt) ?? addressToP2TRScript(vaultAddress);
-  if (!recipientScript) { console.debug("[PSBT] Cannot derive recipientScript for:", vaultAddress); return null; }
+  if (!recipientScript) {
+    throw new Error(`Cannot derive P2TR script for vault address: ${vaultAddress.slice(0, 20)}…`);
+  }
 
   // 3. Greedy UTXO selection (fee ~2500 sat estimate for P2TR tx)
   const feeEstimate = BigInt(2500);
@@ -1151,8 +1159,12 @@ async function tryPsbtTransfer(
   }
   console.debug("[PSBT] Selected", selected.length, "UTXOs, totalIn:", totalIn.toString(), "needed:", totalNeeded.toString());
   if (totalIn < totalNeeded) {
-    console.debug("[PSBT] Insufficient UTXOs for amount+fee");
-    return null;
+    const totalSats = utxos.reduce((s, u) => s + u.sats, BigInt(0));
+    throw new Error(
+      `UTXOs found (${utxos.length} outputs, ${totalSats.toString()} sats total) but not enough to cover ` +
+      `${amountSats} sats + ${feeEstimate.toString()} sat fee. ` +
+      `Need ${totalNeeded.toString()} sats — please add more tBTC to this address.`,
+    );
   }
 
   const change = totalIn - BigInt(amountSats) - feeEstimate;
@@ -1184,63 +1196,102 @@ async function tryPsbtTransfer(
     const s = root[k]; if (s && typeof s === "object") targets.push(s as Record<string, unknown>);
   }
 
+  let lastSignError = "signPsbt not found on wallet";
   for (const target of targets) {
     const signFn = target["signPsbt"] as LooseFn | undefined;
     if (typeof signFn !== "function") continue;
 
-    try {
-      // Try sign variants from most to least specific.
-      // OP_WALLET signPsbt(psbtHex, { autoFinalized, toSignInputs }) follows Unisat API.
-      const signVariants: unknown[][] = [
-        [psbtHex, { autoFinalized: true, toSignInputs }],
-        [psbtHex, { autoFinalized: true }],
-        [psbtHex],
-      ];
-      for (const args of signVariants) {
-        let signed: unknown;
-        try { signed = await signFn(...args); } catch (e) {
-          console.debug("[PSBT] signPsbt threw:", e);
-          continue;
-        }
-        if (!signed) { console.debug("[PSBT] signPsbt returned falsy"); continue; }
+    // OP_WALLET signPsbt(psbtHex, { autoFinalized, toSignInputs }) follows Unisat API.
+    const signVariants: unknown[][] = [
+      [psbtHex, { autoFinalized: true, toSignInputs }],
+      [psbtHex, { autoFinalized: true }],
+      [psbtHex],
+    ];
+    for (const args of signVariants) {
+      let signed: unknown;
+      try { signed = await signFn(...args); } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.debug("[PSBT] signPsbt threw:", msg);
+        lastSignError = msg;
+        // Fatal wallet errors (reject, cancelled) — don't retry
+        if (/reject|denied|cancelled|canceled/i.test(msg)) throw new Error(msg);
+        continue;
+      }
+      if (!signed) { lastSignError = "signPsbt returned empty"; continue; }
 
-        // Some wallets return a 64-char txid directly when they also broadcast
-        if (typeof signed === "string" && /^[0-9a-f]{64}$/i.test(signed)) return { txId: signed, raw: signed };
-        if (typeof signed === "object" && signed !== null) {
-          const s = signed as Record<string, unknown>;
-          const txId = s["txId"] ?? s["txid"] ?? s["hash"] ?? s["result"];
-          if (typeof txId === "string" && txId.length >= 32) return { txId, raw: signed };
-        }
+      // Some wallets return a 64-char txid directly when they also broadcast
+      if (typeof signed === "string" && /^[0-9a-f]{64}$/i.test(signed)) return { txId: signed, raw: signed };
+      if (typeof signed === "object" && signed !== null) {
+        const s = signed as Record<string, unknown>;
+        const txId = s["txId"] ?? s["txid"] ?? s["hash"] ?? s["result"];
+        if (typeof txId === "string" && txId.length >= 32) return { txId, raw: signed };
+      }
 
-        // Signed (and optionally finalized) PSBT hex — push it.
-        // pushPsbt(psbtHex) is the Unisat/OP_WALLET API for broadcasting a signed PSBT.
-        const signedHex = typeof signed === "string" ? signed : null;
-        if (!signedHex) continue;
+      // Signed PSBT hex returned — push/broadcast it.
+      const signedHex = typeof signed === "string" ? signed : null;
+      if (!signedHex) { lastSignError = "signPsbt returned non-string"; continue; }
 
-        for (const pushName of ["pushPsbt", "pushTx", "broadcastTransaction", "broadcast"]) {
-          const pushFn = target[pushName] as LooseFn | undefined;
-          if (typeof pushFn !== "function") continue;
-          try {
-            // pushPsbt(hex) / pushTx({ rawtx: hex })
-            const pushArg = pushName === "pushTx" ? { rawtx: signedHex } : signedHex;
-            const pushed = await pushFn(pushArg);
-            if (typeof pushed === "string" && pushed.length >= 32) return { txId: pushed, raw: pushed };
-            if (typeof pushed === "object" && pushed !== null) {
-              const p = pushed as Record<string, unknown>;
-              const txId = p["txId"] ?? p["txid"] ?? p["result"];
-              if (typeof txId === "string" && txId.length >= 32) return { txId, raw: pushed };
-            }
-          } catch (e) {
-            console.debug("[PSBT]", pushName, "threw:", e);
+      for (const pushName of ["pushPsbt", "pushTx", "broadcastTransaction", "broadcast"]) {
+        const pushFn = target[pushName] as LooseFn | undefined;
+        if (typeof pushFn !== "function") continue;
+        try {
+          const pushArg = pushName === "pushTx" ? { rawtx: signedHex } : signedHex;
+          const pushed = await pushFn(pushArg);
+          if (typeof pushed === "string" && pushed.length >= 32) return { txId: pushed, raw: pushed };
+          if (typeof pushed === "object" && pushed !== null) {
+            const p = pushed as Record<string, unknown>;
+            const txId = p["txId"] ?? p["txid"] ?? p["result"];
+            if (typeof txId === "string" && txId.length >= 32) return { txId, raw: pushed };
           }
+        } catch (e) {
+          console.debug("[PSBT]", pushName, "threw:", e);
+          lastSignError = `${pushName}: ${e instanceof Error ? e.message : String(e)}`;
         }
       }
-    } catch (e) {
-      console.debug("[PSBT] signPsbt outer error:", e);
     }
   }
 
-  return null;
+  throw new Error(`PSBT signing failed: ${lastSignError}`);
+}
+
+/**
+ * Pre-flight check: fetch UTXOs for address from the OPNet RPC proxy.
+ * Used by the UI to show how many spendable UTXOs are available before launching.
+ */
+export async function checkWalletUtxos(address: string): Promise<{
+  count: number;
+  totalSats: bigint;
+  source: string;
+}> {
+  const addrsToTry = [address];
+  const tb1 = convertBech32Hrp(address, "tb");
+  if (tb1 && tb1 !== address) addrsToTry.push(tb1);
+
+  for (const addr of addrsToTry) {
+    try {
+      const resp = await fetch(`/api/opnet-utxos?address=${encodeURIComponent(addr)}`);
+      if (!resp.ok) continue;
+      const data = (await resp.json()) as { confirmed?: OPNetUTXO[]; pending?: OPNetUTXO[]; raw?: OPNetUTXO[] };
+      const raw = [...(data.confirmed ?? []), ...(data.raw ?? [])];
+      const utxos = raw.map(normalizeUTXO).filter((u): u is NonNullable<ReturnType<typeof normalizeUTXO>> => u !== null);
+      // Deduplicate by txid:vout
+      const seen = new Set<string>();
+      const deduped = utxos.filter((u) => {
+        const key = `${u.txid}:${u.vout}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      if (deduped.length > 0) {
+        return {
+          count: deduped.length,
+          totalSats: deduped.reduce((s, u) => s + u.sats, BigInt(0)),
+          source: addr,
+        };
+      }
+    } catch { /* try next */ }
+  }
+  return { count: 0, totalSats: BigInt(0), source: address };
 }
 
 export async function submitOpnetLiquidityFundingWithWallet(
@@ -1392,15 +1443,13 @@ export async function submitOpnetLiquidityFundingWithWallet(
     psbtError = normalizeWalletError(errorMessage(err));
   }
 
-  // Prefer the PSBT error when it's more specific than the generic UTXO message.
-  // The userError from sendBitcoin is usually "could not find UTXOs" — the psbtError
-  // may tell us more (e.g. signPsbt rejected, or no UTXOs found by proxy either).
+  // psbtError is now always more specific (from throws in tryPsbtTransfer).
+  // Prefer it over the generic sendBitcoin UTXO error so user sees a useful message.
   const userError = failures.find((f) => !f.startsWith("__internal_"));
-  const isGenericUtxoError = userError && /could not find.*utxo|no.*spendable.*utxo/i.test(userError);
   console.debug("[wallet] sendBitcoin failures:", failures, "psbtError:", psbtError);
   throw new Error(
-    (isGenericUtxoError && psbtError && !psbtError.includes("did not return a transaction ID") ? psbtError : userError) ??
-      psbtError ??
+    psbtError ??
+      userError ??
       "OP_WALLET did not return a transaction ID for the BTC transfer. Ensure your wallet is on OPNet Testnet and has confirmed BTC UTXOs on its Taproot address.",
   );
 }
