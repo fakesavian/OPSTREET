@@ -637,7 +637,7 @@ function normalizeWalletError(raw: string): string {
     return "Insufficient funds in OP_WALLET for this transaction and its network fees.";
   }
   if (/reject|denied|cancelled|canceled|declined/i.test(msg)) {
-    return "Wallet request was rejected.";
+    return "Wallet request was rejected. If a signing popup appeared, tap Approve/Sign (not Cancel). If OP_WALLET keeps rejecting, use 'Enter address' to connect manually.";
   }
   if (/not connected|unauthori|permission/i.test(msg)) {
     return "Wallet is not authorized for this site. Reconnect and sign again.";

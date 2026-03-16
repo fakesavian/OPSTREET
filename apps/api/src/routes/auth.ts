@@ -198,10 +198,13 @@ export async function authRoutes(app: FastifyInstance) {
         request.log.warn({ event: "auth_fail", reason: "verify_throw", walletAddress }, "Auth failed: signature verification threw");
         return reply.status(401).send({ error: "Signature verification failed." });
       }
-      if (!valid && DEV_AUTH_SESSION && process.env["NODE_ENV"] !== "production") {
+      // DEV_AUTH_HEADER_FALLBACK=true bypasses BIP-322 on testnet deployments where
+      // the wallet (e.g. OP_WALLET) cannot produce a verifiable BIP-322 signature.
+      // Never set this flag on a production mainnet deployment.
+      if (!valid && process.env["DEV_AUTH_HEADER_FALLBACK"] === "true") {
         request.log.warn(
           { event: "auth_dev_fallback", walletAddress },
-          "BIP-322 verification failed, allowing dev fallback session.",
+          "BIP-322 verification failed, allowing fallback session (DEV_AUTH_HEADER_FALLBACK=true).",
         );
         valid = true;
       }
