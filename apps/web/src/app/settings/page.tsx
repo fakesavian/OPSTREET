@@ -66,13 +66,13 @@ export default function SettingsPage() {
               aria-checked={soundEnabled}
               onClick={handleToggleSound}
               disabled={!mounted}
-              className={`relative h-7 w-14 shrink-0 rounded-full border-[3px] border-ink transition-colors duration-200 focus:outline-none disabled:opacity-50 ${
+              className={`relative inline-flex h-8 w-[3.5rem] shrink-0 cursor-pointer items-center rounded-full border-[3px] border-ink transition-colors duration-200 focus:outline-none disabled:opacity-50 ${
                 soundEnabled ? "bg-[#4ade80]" : "bg-[#d4d4d4]"
               }`}
             >
               <span
-                className={`absolute top-0.5 h-4 w-4 rounded-full border-[2px] border-ink bg-white shadow transition-transform duration-200 ${
-                  soundEnabled ? "translate-x-7" : "translate-x-0.5"
+                className={`h-5 w-5 rounded-full border-[2px] border-ink bg-white shadow-sm transition-transform duration-200 ${
+                  soundEnabled ? "translate-x-[28px]" : "translate-x-[2px]"
                 }`}
               />
             </button>

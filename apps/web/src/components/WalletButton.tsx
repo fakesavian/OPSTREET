@@ -153,6 +153,14 @@ export function WalletButton({ variant = "default" }: { variant?: "default" | "m
                 Profile
               </a>
 
+              <a
+                href="/settings"
+                onClick={() => setShowMenu(false)}
+                className="block w-full px-4 py-2.5 text-xs font-black text-ink hover:bg-opYellow/40 border-b-2 border-ink/10 transition-colors"
+              >
+                Settings
+              </a>
+
               <button
                 onClick={() => {
                   disconnect();

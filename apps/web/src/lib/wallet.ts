@@ -881,6 +881,249 @@ export async function submitOpnetTradeWithWallet(
   throw new Error("OPNet wallet did not return a transaction payload. The wallet likely needs valid interaction/tx params from backend for this token.");
 }
 
+// ── PSBT-based BTC transfer (browser-safe, no external crypto libs) ──────────
+// Used as fallback when wallet's sendBitcoin fails to find UTXOs.
+// Fetches UTXOs from OPNet RPC directly, builds a raw PSBT, and asks the wallet
+// to sign it via signPsbt() + broadcast via pushTx().
+
+function convertBits5to8(data: number[]): number[] {
+  let acc = 0, bits = 0;
+  const result: number[] = [];
+  for (const v of data) {
+    acc = (acc << 5) | v;
+    bits += 5;
+    while (bits >= 8) { bits -= 8; result.push((acc >> bits) & 0xff); }
+  }
+  return result;
+}
+
+/** Extract the P2TR scriptPubKey bytes from a bech32m address (any HRP). */
+function addressToP2TRScript(addr: string): Uint8Array | null {
+  const decoded = bech32Decode(addr);
+  if (!decoded || decoded.data.length < 2) return null;
+  const witnessVersion = decoded.data[0]!;
+  const witnessProgram = convertBits5to8(decoded.data.slice(1));
+  if (witnessProgram.length !== 32) return null; // P2TR is exactly 32 bytes
+  const script = new Uint8Array(34);
+  script[0] = 0x50 + witnessVersion; // OP_1 = 0x51
+  script[1] = 0x20; // PUSH 32 bytes
+  witnessProgram.forEach((b, i) => { script[i + 2] = b; });
+  return script;
+}
+
+function writeVarInt(n: number): Uint8Array {
+  if (n < 0xfd) return Uint8Array.from([n]);
+  if (n <= 0xffff) return Uint8Array.from([0xfd, n & 0xff, (n >> 8) & 0xff]);
+  const b = new Uint8Array(5);
+  b[0] = 0xfe; b[1] = n & 0xff; b[2] = (n >> 8) & 0xff;
+  b[3] = (n >> 16) & 0xff; b[4] = (n >> 24) & 0xff;
+  return b;
+}
+
+function writeLE32(n: number): Uint8Array {
+  const b = new Uint8Array(4);
+  b[0] = n & 0xff; b[1] = (n >> 8) & 0xff;
+  b[2] = (n >> 16) & 0xff; b[3] = (n >> 24) & 0xff;
+  return b;
+}
+
+function writeLE64(n: bigint): Uint8Array {
+  const b = new Uint8Array(8);
+  let v = n;
+  const mask = BigInt(0xff);
+  for (let i = 0; i < 8; i++) { b[i] = Number(v & mask); v >>= BigInt(8); }
+  return b;
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16);
+  return bytes;
+}
+
+function concatU8(...arrs: Uint8Array[]): Uint8Array {
+  const total = arrs.reduce((s, a) => s + a.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const a of arrs) { out.set(a, off); off += a.length; }
+  return out;
+}
+
+interface OPNetUTXO { transactionId: string; outputIndex: number; value: number; }
+
+/**
+ * Builds a minimal PSBTv0 for a P2TR-to-P2TR transfer and returns base64.
+ * No crypto libs needed — signing is delegated to the wallet.
+ */
+function buildP2TRPsbt(
+  inputs: Array<{ txid: string; vout: number; value: number; senderScript: Uint8Array }>,
+  outputs: Array<{ script: Uint8Array; value: number }>,
+): string {
+  // ── unsigned transaction ──────────────────────────────────────────────────
+  const txInputs = inputs.map((inp) => {
+    const txidLE = hexToBytes(inp.txid).reverse();
+    return concatU8(txidLE, writeLE32(inp.vout), Uint8Array.from([0x00]), writeLE32(0xfffffffd));
+  });
+  const txOutputs = outputs.map((o) =>
+    concatU8(writeLE64(BigInt(o.value)), writeVarInt(o.script.length), o.script),
+  );
+  const unsignedTx = concatU8(
+    writeLE32(2),
+    writeVarInt(txInputs.length), ...txInputs,
+    writeVarInt(txOutputs.length), ...txOutputs,
+    writeLE32(0),
+  );
+
+  // ── PSBT structure ────────────────────────────────────────────────────────
+  // Magic "psbt\xff"
+  const magic = Uint8Array.from([0x70, 0x73, 0x62, 0x74, 0xff]);
+
+  // Global: UNSIGNED_TX (key type 0x00)
+  const globalTx = concatU8(
+    writeVarInt(1), Uint8Array.from([0x00]),
+    writeVarInt(unsignedTx.length), unsignedTx,
+    Uint8Array.from([0x00]), // global map end
+  );
+
+  // Per-input maps: WITNESS_UTXO (key type 0x01) = value (8 bytes LE) + script
+  const inputMaps = inputs.map((inp) => {
+    const witnessVal = concatU8(
+      writeLE64(BigInt(inp.value)),
+      writeVarInt(inp.senderScript.length),
+      inp.senderScript,
+    );
+    return concatU8(
+      writeVarInt(1), Uint8Array.from([0x01]),
+      writeVarInt(witnessVal.length), witnessVal,
+      Uint8Array.from([0x00]), // input map end
+    );
+  });
+
+  // Per-output maps: empty
+  const outputMaps = outputs.map(() => Uint8Array.from([0x00]));
+
+  const psbt = concatU8(magic, globalTx, ...inputMaps, ...outputMaps);
+  let binary = "";
+  psbt.forEach((b) => { binary += String.fromCharCode(b); });
+  return btoa(binary);
+}
+
+/**
+ * Fallback: fetch UTXOs from OPNet RPC, build PSBT, ask wallet to sign + broadcast.
+ * Called only when sendBitcoin variants all fail with UTXO errors.
+ */
+async function tryPsbtTransfer(
+  opnet: OPNetProvider,
+  connectedAddr: string,
+  vaultAddress: string,
+  amountSats: number,
+): Promise<{ txId: string; raw?: unknown } | null> {
+  // 1. Fetch UTXOs — try both address formats
+  const addrsToTry = [connectedAddr];
+  const tb1Version = convertBech32Hrp(connectedAddr, "tb1");
+  if (tb1Version && tb1Version !== connectedAddr) addrsToTry.push(tb1Version);
+
+  let utxos: OPNetUTXO[] = [];
+  for (const addr of addrsToTry) {
+    try {
+      const url = `https://testnet.opnet.org/api/v1/address/utxos?address=${encodeURIComponent(addr)}&optimize=false`;
+      const resp = await fetch(url);
+      if (!resp.ok) continue;
+      const data = (await resp.json()) as { confirmed?: OPNetUTXO[]; pending?: OPNetUTXO[] };
+      utxos = [...(data.confirmed ?? []), ...(data.pending ?? [])];
+      if (utxos.length) break;
+    } catch { /* try next */ }
+  }
+  if (!utxos.length) return null;
+
+  // 2. Derive scripts
+  const senderScript = addressToP2TRScript(connectedAddr);
+  if (!senderScript) return null;
+
+  // Also try vault with both HRPs
+  const vaultOpt = toOpnetTestnetAddress(vaultAddress);
+  const recipientScript = addressToP2TRScript(vaultOpt) ?? addressToP2TRScript(vaultAddress);
+  if (!recipientScript) return null;
+
+  // 3. Greedy UTXO selection (fee ~2500 sat estimate for P2TR tx)
+  const feeEstimate = BigInt(2500);
+  const totalNeeded = BigInt(amountSats) + feeEstimate;
+  const selected: OPNetUTXO[] = [];
+  let totalIn = BigInt(0);
+  for (const utxo of utxos.sort((a, b) => b.value - a.value)) {
+    selected.push(utxo);
+    totalIn += BigInt(utxo.value);
+    if (totalIn >= totalNeeded) break;
+  }
+  if (totalIn < totalNeeded) return null;
+
+  const change = totalIn - BigInt(amountSats) - feeEstimate;
+  const outputs: Array<{ script: Uint8Array; value: number }> = [
+    { script: recipientScript, value: amountSats },
+  ];
+  if (change > BigInt(546)) outputs.push({ script: senderScript, value: Number(change) });
+
+  // 4. Build PSBT
+  const psbtBase64 = buildP2TRPsbt(
+    selected.map((u) => ({ txid: u.transactionId, vout: u.outputIndex, value: u.value, senderScript: senderScript! })),
+    outputs,
+  );
+
+  // 5. Have wallet sign and broadcast
+  const root = opnet as Record<string, unknown>;
+  const targets: Array<Record<string, unknown>> = [root];
+  for (const k of ["bitcoin", "opnet"] as const) {
+    const s = root[k]; if (s && typeof s === "object") targets.push(s as Record<string, unknown>);
+  }
+
+  for (const target of targets) {
+    const signFn = target["signPsbt"] as LooseFn | undefined;
+    if (typeof signFn !== "function") continue;
+
+    try {
+      // Try different signPsbt option shapes used by different wallet versions
+      const signVariants = [
+        [psbtBase64, { autoFinalized: true, broadcast: true }],
+        [psbtBase64, { autoFinalized: true }],
+        [psbtBase64],
+      ];
+      for (const args of signVariants) {
+        let signed: unknown;
+        try { signed = await signFn(...args); } catch { continue; }
+        if (!signed) continue;
+
+        // If broadcast:true returned a txId directly
+        if (typeof signed === "string" && /^[0-9a-f]{64}$/i.test(signed)) return { txId: signed, raw: signed };
+        if (typeof signed === "object" && signed !== null) {
+          const s = signed as Record<string, unknown>;
+          const txId = s["txId"] ?? s["txid"] ?? s["hash"] ?? s["result"];
+          if (typeof txId === "string" && txId.length >= 32) return { txId, raw: signed };
+        }
+
+        // signed PSBT — now push it
+        const signedHex = typeof signed === "string" ? signed : null;
+        if (!signedHex) continue;
+
+        for (const pushName of ["pushTx", "broadcastTransaction", "broadcast", "sendRawTransaction"]) {
+          const pushFn = target[pushName] as LooseFn | undefined;
+          if (typeof pushFn !== "function") continue;
+          try {
+            const pushed = await pushFn(signedHex);
+            if (typeof pushed === "string" && pushed.length >= 32) return { txId: pushed, raw: pushed };
+            if (typeof pushed === "object" && pushed !== null) {
+              const p = pushed as Record<string, unknown>;
+              const txId = p["txId"] ?? p["txid"] ?? p["result"];
+              if (typeof txId === "string" && txId.length >= 32) return { txId, raw: pushed };
+            }
+          } catch { /* try next */ }
+        }
+      }
+    } catch { /* try next target */ }
+  }
+
+  return null;
+}
+
 export async function submitOpnetLiquidityFundingWithWallet(
   provider: WalletProviderType,
   payload: OpnetLiquidityFundingRequest,
@@ -1005,6 +1248,22 @@ export async function submitOpnetLiquidityFundingWithWallet(
       }
     }
   }
+
+  // ── PSBT fallback: build tx ourselves, wallet only signs ─────────────────
+  // sendBitcoin failed (wallet can't find its own UTXOs). We fetch UTXOs directly
+  // from the OPNet RPC, build a P2TR PSBT, and ask the wallet to sign + broadcast.
+  try {
+    const connectedAddr =
+      opnet.selectedAddress ??
+      (Array.isArray(opnet.accounts) ? opnet.accounts[0] : undefined) ??
+      (await opnet.getAccounts?.())?.[0] ??
+      (await opnet.getCurrentAddress?.());
+
+    if (connectedAddr) {
+      const psbtResult = await tryPsbtTransfer(opnet, connectedAddr, rawAddr, sats);
+      if (psbtResult?.txId) return psbtResult;
+    }
+  } catch { /* PSBT fallback failed — fall through to error */ }
 
   const userError = failures.find((f) => !f.startsWith("__internal_"));
   throw new Error(
