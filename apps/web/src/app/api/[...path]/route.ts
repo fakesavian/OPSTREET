@@ -231,12 +231,14 @@ async function proxyRequest(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown upstream error.";
+    const cause = error instanceof Error && (error as Error & { cause?: unknown }).cause;
+    const causeMsg = cause instanceof Error ? `${cause.message} (code: ${(cause as Error & { code?: string }).code ?? "?"})` : String(cause ?? "");
     return Response.json(
       {
         error:
           `Failed to reach backend API at ${origin}. ` +
           "Confirm OPFUN_API_URL points to a live deployment and that the backend is reachable from Vercel.",
-        details: message,
+        details: causeMsg || message,
       },
       { status: 502 },
     );
