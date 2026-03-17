@@ -236,7 +236,7 @@ export function WalletButton({ variant = "default" }: { variant?: "default" | "m
 
       {/* Hints dropdown — shown below button, no impact on nav layout */}
       {!connecting && (
-        <div className="absolute right-0 top-full mt-1 flex flex-col items-end gap-0.5">
+        <div className="absolute right-0 top-full mt-1 flex flex-col items-end gap-1 rounded-xl border-2 border-ink/15 bg-[var(--cream)] px-3 py-2 shadow-sm">
           <a
             href="https://opnet.org/opwallet/"
             target="_blank"
