@@ -9,6 +9,62 @@ import { useWallet } from "@/components/WalletProvider";
 import { fetchClanLicenseStatus } from "@/lib/api";
 import { NotificationDropdown } from "./NotificationDropdown";
 
+function WalletHintsDropdown() {
+  const { connectManual } = useWallet();
+  const [showManual, setShowManual] = useState(false);
+  const [addr, setAddr] = useState("");
+
+  function submit() {
+    const a = addr.trim();
+    if (!a) return;
+    connectManual(a);
+    setAddr("");
+    setShowManual(false);
+  }
+
+  return (
+    <div className="op-panel absolute right-0 top-full z-50 mt-2 flex flex-col items-end gap-1.5 px-3 py-2.5 whitespace-nowrap">
+      <a
+        href="https://opnet.org/opwallet/"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-[10px] font-black text-ink hover:text-opYellow transition-colors"
+      >
+        Need wallet? Install ↗
+      </a>
+      {!showManual ? (
+        <button
+          onClick={() => setShowManual(true)}
+          className="text-[10px] font-black text-ink hover:text-opYellow transition-colors"
+        >
+          Enter testnet address
+        </button>
+      ) : (
+        <div className="flex items-center gap-1">
+          <input
+            type="text"
+            value={addr}
+            onChange={(e) => setAddr(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submit();
+              if (e.key === "Escape") { setShowManual(false); setAddr(""); }
+            }}
+            placeholder="Paste testnet address..."
+            className="input text-[10px] py-1 px-2 w-48"
+            autoFocus
+          />
+          <button onClick={submit} disabled={!addr.trim()} className="op-btn-primary text-[10px] px-2 py-1 disabled:opacity-50">
+            Go
+          </button>
+          <button onClick={() => { setShowManual(false); setAddr(""); }} className="text-[10px] text-ink/50 hover:text-ink px-1">
+            ✕
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function OpHeader() {
   const { wallet } = useWallet();
   const walletAddress = wallet?.address;
@@ -122,9 +178,12 @@ export function OpHeader() {
           </div>
           <div className="hidden sm:flex items-center gap-2">
             <WalletButton />
-            <Link href="/create" className="op-btn-primary px-5 py-2.5 text-sm font-black whitespace-nowrap">
-              + Create Coin
-            </Link>
+            <div className="relative">
+              <Link href="/create" className="op-btn-primary px-5 py-2.5 text-sm font-black whitespace-nowrap">
+                + Create Coin
+              </Link>
+              {!wallet && <WalletHintsDropdown />}
+            </div>
           </div>
           <MobileNav />
         </div>
