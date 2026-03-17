@@ -158,14 +158,14 @@ export function OpHeader() {
               Swap ↗
             </a>
 
-            <div className="relative">
+            <div className="relative mr-4">
               <button
                 disabled
-                className="mr-5 cursor-not-allowed rounded-lg border-2 border-transparent px-3 py-1.5 text-xs font-bold text-[var(--text-muted)] opacity-60"
+                className="cursor-not-allowed rounded-lg border-2 border-transparent px-3 py-1.5 text-xs font-bold text-[var(--text-muted)] opacity-60"
               >
                 Staking
               </button>
-              <span className="absolute -right-1 -top-2 whitespace-nowrap rounded border border-ink bg-opRed px-1 py-0.5 text-[8px] font-black leading-none text-white">
+              <span className="absolute -top-2 left-1/2 -translate-x-1/2 whitespace-nowrap rounded border border-ink bg-opRed px-1 py-0.5 text-[8px] font-black leading-none text-white">
                 SOON
               </span>
             </div>
