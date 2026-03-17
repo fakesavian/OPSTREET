@@ -1,5 +1,6 @@
 ﻿"use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { WalletButton } from "@/components/WalletButton";
@@ -91,11 +92,14 @@ export function OpHeader() {
     <header className="border-b-3 border-ink bg-[var(--panel-cream)]">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-2">
         <div className="flex items-center gap-8">
-          <Link href="/" className="flex items-center gap-2" aria-label="OpStreet home">
-            <img
+          <Link href="/" className="flex shrink-0 items-center" aria-label="OpStreet home">
+            <Image
               src="/opstreet/brand/logo.png"
               alt="OpStreet"
-              className="h-10 w-auto object-contain"
+              width={160}
+              height={40}
+              priority
+              className="object-contain"
             />
           </Link>
 

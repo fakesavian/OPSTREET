@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
@@ -103,10 +104,12 @@ export function MobileNav() {
         }`}
       >
         <div className="mb-6 flex items-center justify-between">
-          <img
+          <Image
             src="/opstreet/brand/logo.png"
             alt="OpStreet"
-            className="h-10 w-auto object-contain"
+            width={160}
+            height={40}
+            className="object-contain"
           />
           <button onClick={() => setOpen(false)} aria-label="Close menu" className="text-lg leading-none text-ink hover:text-ink/70">
             X
