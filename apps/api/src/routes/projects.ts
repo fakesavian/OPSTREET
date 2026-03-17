@@ -15,7 +15,11 @@ import { queueDeployForProject } from "./deploy.js";
 // Resolve to packages/opnet/generated/
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GENERATED_DIR = path.resolve(__dirname, "../../../../packages/opnet/generated");
-const CREATE_PROJECT_DAILY_LIMIT = Number(process.env["CREATE_PROJECT_DAILY_LIMIT"] ?? 3);
+// On testnet (default) there is no creation limit — limit only applies on mainnet.
+// Set CREATE_PROJECT_DAILY_LIMIT in env to enforce a cap (mainnet deployments should set this).
+const CREATE_PROJECT_DAILY_LIMIT = process.env["CREATE_PROJECT_DAILY_LIMIT"]
+  ? Number(process.env["CREATE_PROJECT_DAILY_LIMIT"])
+  : Infinity;
 const CREATE_PROJECT_IP_DAILY_LIMIT = Number(process.env["CREATE_PROJECT_IP_DAILY_LIMIT"] ?? 20);
 
 // M10: Bob call timeout (30 s). Prevents indefinite hangs.

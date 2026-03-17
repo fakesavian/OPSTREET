@@ -1450,11 +1450,9 @@ export async function submitOpnetLiquidityFundingWithWallet(
   const toAddress = toOpnetTestnetAddress(rawAddr);
   const factory = new TransactionFactory();
 
-  // TransactionFactory.createBTCTransfer detects window.opnet.web3 and calls
-  // sendBitcoin() internally (detectFundingOPWallet). OP_WALLET shows the
-  // confirmation popup, signs, AND broadcasts to OPNet signet — then returns
-  // { tx: rawSignedHex, ... }. result.tx is the RAW SIGNED TX HEX, not the txid.
-  // The transaction is already broadcast — compute txid from the raw hex.
+  // opnet.web3.sendBitcoin (called by detectFundingOPWallet) SIGNS but does NOT
+  // broadcast to OPNet signet. result.tx = raw signed tx hex. We must broadcast
+  // explicitly and compute the txid from the raw hex locally.
   const result = await factory.createBTCTransfer({
     utxos,
     from: senderAddress,
@@ -1471,10 +1469,24 @@ export async function submitOpnetLiquidityFundingWithWallet(
     );
   }
 
-  // Compute the real txid: double-SHA256 of the non-witness (legacy) serialization,
-  // byte-reversed. @btc-vision/bitcoin Transaction.fromHex handles segwit correctly.
+  // Compute txid: double-SHA256 of non-witness (legacy) serialization, byte-reversed.
+  // @btc-vision/bitcoin Transaction.fromHex handles segwit witness stripping correctly.
   const { Transaction: BtcTransaction } = await import("@btc-vision/bitcoin");
   const txId = BtcTransaction.fromHex(rawHex).getId();
+
+  // Broadcast the signed raw hex to OPNet testnet signet.
+  // If the wallet already broadcast it, sendRawTransaction returns null — that's fine.
+  const broadcastResult = await rpcProvider.sendRawTransaction(rawHex, false);
+  if (broadcastResult && typeof (broadcastResult as unknown as Record<string, unknown>)["success"] !== "undefined") {
+    const b = broadcastResult as unknown as Record<string, unknown>;
+    if (b["success"] === false) {
+      const err = b["error"] as string | undefined;
+      // "already in utxo set" = duplicate broadcast = tx is live, not a real failure
+      if (err && !err.toLowerCase().includes("already") && !err.toLowerCase().includes("utxo")) {
+        throw new Error(`OPNet broadcast rejected: ${err}`);
+      }
+    }
+  }
 
   return { txId, raw: result };
 }
