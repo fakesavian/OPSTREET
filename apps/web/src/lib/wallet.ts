@@ -1296,40 +1296,10 @@ export async function checkWalletUtxos(address: string): Promise<{
   totalSats: bigint;
   source: string;
 }> {
-  const addrSet = new Set([address]);
-  // Collect every address the wallet exposes — includes CSV contract addresses
+  // Step 1: Get main address UTXO count via wallet extension (for display only)
+  let utxoCount = 0;
+  let mainSats = BigInt(0);
   const opnet = getOPNet();
-  if (opnet) {
-    const root = opnet as Record<string, unknown>;
-    // Sync properties
-    const accs = root["accounts"];
-    if (Array.isArray(accs)) accs.forEach((a) => { if (typeof a === "string" && a) addrSet.add(a); });
-    if (typeof root["selectedAddress"] === "string") addrSet.add(root["selectedAddress"] as string);
-    const btcSub = root["bitcoin"] as Record<string, unknown> | undefined;
-    if (btcSub) {
-      if (typeof btcSub["selectedAddress"] === "string") addrSet.add(btcSub["selectedAddress"] as string);
-      const btcAccs = btcSub["accounts"];
-      if (Array.isArray(btcAccs)) btcAccs.forEach((a) => { if (typeof a === "string" && a) addrSet.add(a); });
-    }
-    // Async getAccounts() — may return CSV contract addresses that sync properties miss
-    try {
-      const getAccFn = (root["getAccounts"] ?? (btcSub as Record<string, unknown> | undefined)?.["getAccounts"]) as LooseFn | undefined;
-      if (typeof getAccFn === "function") {
-        const result = await getAccFn();
-        if (Array.isArray(result)) result.forEach((a) => { if (typeof a === "string" && a) addrSet.add(a); });
-      }
-    } catch { /* ignore */ }
-  }
-  // Add tb1 equivalents for each address
-  for (const a of Array.from(addrSet)) {
-    const tb1 = convertBech32Hrp(a, "tb");
-    if (tb1 && tb1 !== a) addrSet.add(tb1);
-  }
-
-  // 1. Ask the wallet extension directly via getBitcoinUtxos() — only returns main address UTXOs.
-  //    We collect these but do NOT return early: CSV-unlocked UTXOs are at separate addresses
-  //    and must be accumulated via step 2.
-  const walletUtxos: Array<{ txid: string; vout: number; sats: bigint }> = [];
   if (opnet) {
     const root = opnet as Record<string, unknown>;
     const candidates = [root, root["bitcoin"]].filter((v): v is Record<string, unknown> => Boolean(v && typeof v === "object"));
@@ -1346,44 +1316,79 @@ export async function checkWalletUtxos(address: string): Promise<{
         }
         if (!Array.isArray(arr) || !arr.length) continue;
         const utxos = (arr as OPNetUTXO[]).map(normalizeUTXO).filter((u): u is NonNullable<ReturnType<typeof normalizeUTXO>> => u !== null);
-        walletUtxos.push(...utxos);
+        utxoCount = utxos.length;
+        mainSats = utxos.reduce((s, u) => s + u.sats, BigInt(0));
         break;
       } catch { /* try next */ }
     }
   }
 
-  // 2. OPNet RPC proxy — query ALL candidate addresses and accumulate (not first-match).
-  //    This picks up CSV1 and CSV2 unlocked balances at their own addresses.
-  const seen = new Set<string>();
-  const allUtxos: Array<{ txid: string; vout: number; sats: bigint }> = [];
+  // Step 2: Use OPNet SDK provider to get balances for main + CSV1 addresses.
+  //
+  //   OP_WALLET getBitcoinUtxos() ONLY returns main P2TR UTXOs.
+  //   CSV1 and CSV2 are derived addresses (P2WSH) computed from the wallet public key.
+  //   The only reliable way to include them is:
+  //     a) provider.getPublicKeyInfo(addr) → Address object
+  //     b) provider.getCSV1ForAddress(addrObj) → { address: string }
+  //     c) provider.getBalances([main, csv1]) → { addr: bigint }
+  //
+  try {
+    const { JSONRpcProvider } = await import("opnet");
+    const { networks } = await import("@btc-vision/bitcoin");
 
-  // Seed with anything getBitcoinUtxos already returned
-  for (const u of walletUtxos) {
-    const key = `${u.txid}:${u.vout}`;
-    if (!seen.has(key)) { seen.add(key); allUtxos.push(u); }
+    const provider = new JSONRpcProvider({
+      url: "https://testnet.opnet.org",
+      network: networks.opnetTestnet,
+    });
+
+    // Get the Address object (resolves the public key on-chain)
+    const addrObj = await provider.getPublicKeyInfo(address, false);
+
+    // Derive CSV1 address from the public key
+    const csv1 = provider.getCSV1ForAddress(addrObj);
+    const csvAddress: string | undefined = (csv1 as unknown as Record<string, unknown>)?.["address"] as string | undefined;
+
+    const addressesToQuery: string[] = [address];
+    if (csvAddress && csvAddress !== address) addressesToQuery.push(csvAddress);
+
+    // getBalances returns Record<address, bigint>
+    const balances = await provider.getBalances(addressesToQuery, true);
+    const totalProviderSats = Object.values(balances).reduce((s, b) => s + (typeof b === "bigint" ? b : BigInt(String(b))), BigInt(0));
+
+    if (totalProviderSats > BigInt(0)) {
+      return {
+        // Use max of UTXO count and 1 — if provider sees balance, funds exist
+        count: Math.max(utxoCount, totalProviderSats > BigInt(0) ? 1 : 0),
+        totalSats: totalProviderSats,
+        source: "provider:balances",
+      };
+    }
+  } catch { /* provider unavailable — fall through to UTXO result */ }
+
+  // Step 3: Fallback — use main UTXO result if provider query failed
+  if (utxoCount > 0) {
+    return { count: utxoCount, totalSats: mainSats, source: "wallet:getBitcoinUtxos" };
   }
 
-  for (const addr of Array.from(addrSet)) {
-    try {
+  // Step 4: Last resort — OPNet RPC proxy for main address
+  try {
+    const tb1 = convertBech32Hrp(address, "tb");
+    for (const addr of [address, ...(tb1 && tb1 !== address ? [tb1] : [])]) {
       const resp = await fetch(`/api/opnet-utxos?address=${encodeURIComponent(addr)}`);
       if (!resp.ok) continue;
-      const data = (await resp.json()) as { confirmed?: OPNetUTXO[]; pending?: OPNetUTXO[]; raw?: OPNetUTXO[] };
+      const data = (await resp.json()) as { confirmed?: OPNetUTXO[]; raw?: OPNetUTXO[] };
       const raw = [...(data.confirmed ?? []), ...(data.raw ?? [])];
       const utxos = raw.map(normalizeUTXO).filter((u): u is NonNullable<ReturnType<typeof normalizeUTXO>> => u !== null);
-      for (const u of utxos) {
-        const key = `${u.txid}:${u.vout}`;
-        if (!seen.has(key)) { seen.add(key); allUtxos.push(u); }
+      if (utxos.length > 0) {
+        return {
+          count: utxos.length,
+          totalSats: utxos.reduce((s, u) => s + u.sats, BigInt(0)),
+          source: addr,
+        };
       }
-    } catch { /* try next */ }
-  }
+    }
+  } catch { /* ignore */ }
 
-  if (allUtxos.length > 0) {
-    return {
-      count: allUtxos.length,
-      totalSats: allUtxos.reduce((s, u) => s + u.sats, BigInt(0)),
-      source: "all-addresses",
-    };
-  }
   return { count: 0, totalSats: BigInt(0), source: address };
 }
 
