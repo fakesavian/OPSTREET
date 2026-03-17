@@ -1401,8 +1401,6 @@ export async function submitOpnetLiquidityFundingWithWallet(
 ): Promise<{ txId: string; raw?: unknown } | null> {
   if (provider !== "opnet") return null;
 
-  // Prefer walletInstance from useWalletConnect() — it's the authenticated provider object.
-  // Fall back to window.bitcoin/opnet for backwards compat.
   const opnet = (payload.walletInstance as OPNetProvider | null | undefined) ?? getOPNet();
   if (!opnet) throw new Error("OPNet wallet extension not found.");
 
@@ -1420,165 +1418,57 @@ export async function submitOpnetLiquidityFundingWithWallet(
     );
   }
 
-  // OP_WALLET on OPNet testnet uses "opt" HRP — convert tb1/bcrt1 → opt1
-  const addr = toOpnetTestnetAddress(rawAddr);
-  const sats = payload.amountSats;
-  const memo = payload.memo ?? "OpStreet liquidity";
+  const senderAddress = payload.senderAddress;
+  if (!senderAddress) throw new Error("Sender address is required for OPNet BTC transfer.");
 
-  // Collect candidate provider objects.
-  // sendBitcoin lives on walletInstance.web3 (Web3Provider), NOT on walletInstance directly.
-  // walletInstance = window.opnet (OPWalletInterface extends Unisat; web3?: Web3Provider)
-  const root = opnet as Record<string, unknown>;
-  const web3Sub = root["web3"];
-  const web3Targets: Array<Record<string, unknown>> = [];
-  if (web3Sub && typeof web3Sub === "object") web3Targets.push(web3Sub as Record<string, unknown>);
-  const targets: Array<Record<string, unknown>> = [root];
-  for (const key of ["bitcoin", "opnet"] as const) {
-    const sub = root[key];
-    if (sub && typeof sub === "object") targets.push(sub as Record<string, unknown>);
+  // ── Correct OPNet BTC transfer pattern ───────────────────────────────────
+  // Per OPNet docs: TransactionFactory.createBTCTransfer (signer:null → OPWallet signs),
+  // then provider.sendRawTransaction() to broadcast to OPNet network.
+  // window.opnet.sendBitcoin() does NOT broadcast to OPNet — it is NOT the right API.
+  // See: how-to/frontend-btc-transfer.md
+  const { TransactionFactory } = await import("@btc-vision/transaction");
+  const { JSONRpcProvider } = await import("opnet");
+  const { networks: btcNetworks } = await import("@btc-vision/bitcoin");
+
+  const rpcProvider = new JSONRpcProvider({
+    url: "https://testnet.opnet.org",
+    network: btcNetworks.testnet,
+  });
+
+  // Fetch UTXOs for the sender address via OPNet provider
+  const utxos = await rpcProvider.utxoManager.getUTXOs({
+    address: senderAddress,
+    optimize: false,
+  });
+
+  if (!utxos || utxos.length === 0) {
+    throw new Error(
+      "No UTXOs found for your wallet address on OPNet testnet. Ensure your wallet has confirmed BTC on the OPNet signet chain.",
+    );
   }
 
-  const failures: string[] = [];
+  const toAddress = toOpnetTestnetAddress(rawAddr);
+  const factory = new TransactionFactory();
 
-  // Also try the original tb1/bcrt1 format in case the wallet resolves UTXOs under that HRP
-  const rawAddrLower = rawAddr.toLowerCase();
-  const altAddr =
-    rawAddrLower.startsWith("opt1") ? convertBech32Hrp(rawAddr, "tb") ?? rawAddr : rawAddr;
+  // Use IFundingTransactionParametersWithoutSigner — omits signer/mldsaSigner/network.
+  // TransactionFactory detects window.opnet and delegates signing to OP_WALLET.
+  const result = await factory.createBTCTransfer({
+    utxos,
+    from: senderAddress,
+    to: toAddress,
+    feeRate: 10,
+    priorityFee: BigInt(0),
+    amount: BigInt(payload.amountSats),
+  });
 
-  // ── First: OP_WALLET Web3Provider API ────────────────────────────────────
-  // sendBitcoin is on window.opnet.web3.sendBitcoin (Web3Provider), not window.opnet directly.
-  // Signature: sendBitcoin(params: IFundingTransactionParametersWithoutSigner): Promise<BitcoinTransferBase>
-  //   params = { from?, to, amount: bigint, utxos: UTXO[], feeRate?, autoAdjustAmount? }
-  //   UTXO   = { transactionId, outputIndex, value: bigint, scriptPubKey }
-  //   result = { tx: string (txId), estimatedFees, nextUTXOs, inputUtxos }
-  // The wallet manages its own UTXOs — try with empty utxos array first (wallet fetches internally).
-  if (web3Targets.length) {
-    const fromAddr = payload.senderAddress ?? addr;
-    // Try 1: let wallet manage UTXOs entirely (empty array + autoAdjustAmount)
-    for (const w3 of web3Targets) {
-      if (typeof w3["sendBitcoin"] !== "function") continue;
-      const fn = w3["sendBitcoin"] as LooseFn;
-      for (const toAddr of [addr, altAddr]) {
-        for (const params of [
-          { from: fromAddr, to: toAddr, amount: BigInt(sats), utxos: [], feeRate: 5, autoAdjustAmount: false },
-          { to: toAddr, amount: BigInt(sats), utxos: [], feeRate: 5 },
-          { from: fromAddr, to: toAddr, amount: BigInt(sats), utxos: [], feeRate: 1 },
-        ]) {
-          try {
-            const result = await fn.call(w3, params);
-            if (result && typeof result === "object") {
-              const r = result as Record<string, unknown>;
-              const txVal = r["tx"];
-              if (typeof txVal === "string" && txVal.length >= 32) {
-                // If txVal is exactly 64 hex chars it's already a txid.
-                // If longer it's a raw signed tx — double-SHA256 to get the real txid.
-                if (/^[0-9a-fA-F]{64}$/.test(txVal)) {
-                  return { txId: txVal, raw: result };
-                }
-                const derived = await deriveTxIdFromRawHex(txVal);
-                if (derived) return { txId: derived, raw: result };
-              }
-            }
-            const parsed = parseSubmitResult(result);
-            if (parsed?.txId) return { txId: parsed.txId, raw: parsed.raw };
-          } catch (error) {
-            const normalized = normalizeWalletError(errorMessage(error));
-            if (isFatalWalletError(normalized)) throw new Error(normalized);
-            failures.push(`web3:${normalized}`);
-          }
-        }
-      }
-    }
+  const broadcast = await rpcProvider.sendRawTransaction(result.tx, false);
+  if (!broadcast?.success || !broadcast?.result) {
+    throw new Error(
+      `OPNet broadcast failed: ${broadcast?.error ?? "no txid returned"}. Check your wallet has UTXOs on the OPNet testnet signet chain.`,
+    );
   }
 
-  // ── Fallback: positional API (Unisat and other wallets) ──────────────────
-  const sendOptions = [
-    { feeRate: 5, memo, usePendingUTXO: true },
-    { feeRate: 5, memo },
-    { memo },
-  ];
-
-  for (const target of targets) {
-    if (typeof target["sendBitcoin"] !== "function") continue;
-    const fn = target["sendBitcoin"] as LooseFn;
-
-    for (const tryAddr of [addr, altAddr]) {
-      for (const opts of sendOptions) {
-        const directVariants: unknown[][] = [
-          [tryAddr, sats, opts],
-          [tryAddr, BigInt(sats), opts],
-          [tryAddr, sats],
-          [tryAddr, BigInt(sats)],
-        ];
-        for (const args of directVariants) {
-          try {
-            const result = await fn(...args);
-            const parsed = parseSubmitResult(result);
-            if (parsed?.txId) return { txId: parsed.txId, raw: parsed.raw };
-            if (typeof result === "string" && result.length > 8) return { txId: result, raw: result };
-          } catch (error) {
-            const normalized = normalizeWalletError(errorMessage(error));
-            if (isFatalWalletError(normalized)) throw new Error(normalized);
-            failures.push(normalized);
-          }
-        }
-      }
-    }
-  }
-
-  // request()-style fallbacks with both address formats
-  for (const target of targets) {
-    if (typeof target["request"] !== "function") continue;
-    const req = target["request"] as LooseFn;
-
-    const requestVariants = [
-      { method: "sendBitcoin", params: [addr, sats, { feeRate: 5, memo, usePendingUTXO: true }] },
-      { method: "sendBitcoin", params: [addr, sats, { feeRate: 5, memo }] },
-      { method: "sendBitcoin", params: [altAddr, sats, { feeRate: 5, memo, usePendingUTXO: true }] },
-      { method: "sendBitcoin", params: { to: addr, amount: sats, feeRate: 5, memo, usePendingUTXO: true } },
-      { method: "sendBitcoin", params: { to: addr, amount: sats, feeRate: 5, memo } },
-      // Some wallets expose transfer or send instead
-      { method: "transfer", params: { to: addr, amount: BigInt(sats), token: "BTC" } },
-      { method: "btc_sendTransaction", params: [{ to: addr, value: sats }] },
-    ];
-
-    for (const reqPayload of requestVariants) {
-      try {
-        const result = await req(reqPayload);
-        const parsed = parseSubmitResult(result);
-        if (parsed?.txId) return { txId: parsed.txId, raw: parsed.raw };
-        if (typeof result === "string" && result.length > 8) return { txId: result, raw: result };
-      } catch (error) {
-        const normalized = normalizeWalletError(errorMessage(error));
-        if (isFatalWalletError(normalized)) throw new Error(normalized);
-        failures.push(normalized);
-      }
-    }
-  }
-
-  // Last resort: try other direct method names
-  const altMethods = ["transfer", "send", "btcSend", "sendTransaction"];
-  for (const target of targets) {
-    for (const methodName of altMethods) {
-      if (typeof target[methodName] !== "function") continue;
-      const fn = target[methodName] as LooseFn;
-      try {
-        const result = await fn(addr, BigInt(sats), { feeRate: 5 });
-        const parsed = parseSubmitResult(result);
-        if (parsed?.txId) return { txId: parsed.txId, raw: parsed.raw };
-        if (typeof result === "string" && result.length > 8) return { txId: result, raw: result };
-      } catch (error) {
-        failures.push(normalizeWalletError(errorMessage(error)));
-      }
-    }
-  }
-
-  const userError = failures.find((f) => !f.startsWith("__internal_"));
-  console.debug("[wallet] sendBitcoin failures:", failures);
-  throw new Error(
-    userError ??
-      "OP_WALLET could not send BTC. Ensure your wallet is on OPNet Testnet and has confirmed BTC UTXOs on its Taproot address.",
-  );
+  return { txId: broadcast.result, raw: result };
 }
 
 // ── Wallet-native interaction signing ─────────────────────────────────────
