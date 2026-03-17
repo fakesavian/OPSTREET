@@ -17,7 +17,7 @@ export const DEPLOY_SCRIPT_TEMPLATE = `#!/usr/bin/env ts-node
  *   2. Compile WASM:  npm run build  (inside contract/ directory)
  *   3. Fund wallet:   send testnet BTC to your p2tr address (see DEPLOY.md)
  *   4. Set mnemonic:  export OPNET_MNEMONIC="your 24 word phrase..."
- *   5. Run:           npx ts-node deploy.ts
+ *   5. Run:           npx tsx deploy.ts
  *
  * SAFETY: Testnet only. Never paste seed phrases or private keys in this file.
  */
@@ -30,6 +30,7 @@ import {
     type RawChallenge,
 } from '@btc-vision/transaction';
 import { networks } from '@btc-vision/bitcoin';
+import { JSONRpcProvider } from 'opnet';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -64,11 +65,14 @@ async function deploy(): Promise<void> {
     const bytecode: Uint8Array = fs.readFileSync(WASM_PATH);
     console.log('Contract size:', bytecode.length, 'bytes');
 
-    const provider = new OPNetLimitedProvider(RPC_URL);
+    // OPNetLimitedProvider: UTXO fetching only
+    // JSONRpcProvider: broadcasting raw transactions
+    const utxoProvider = new OPNetLimitedProvider(RPC_URL);
+    const rpcProvider = new JSONRpcProvider({ url: RPC_URL, network: NETWORK });
 
     // Fetch UTXOs — deployments typically need 5,000,000–10,000,000 sat
     console.log('Fetching UTXOs...');
-    const utxos: UTXO[] = await provider.fetchUTXO({
+    const utxos: UTXO[] = await utxoProvider.fetchUTXO({
         address: wallet.p2tr,
         minAmount: 1_000_000n,
         requestedAmount: 10_000_000n,
@@ -96,8 +100,8 @@ async function deploy(): Promise<void> {
 
     // Get challenge from node
     console.log('Fetching epoch challenge...');
-    const epochTemplate = await provider.getEpochTemplate();
-    const latestEpoch = await provider.getLatestEpoch();
+    const epochTemplate = await utxoProvider.getEpochTemplate();
+    const latestEpoch = await utxoProvider.getLatestEpoch();
 
     // Build challenge solution (basic mining for testnet)
     const rawChallenge: RawChallenge = {
@@ -132,22 +136,29 @@ async function deploy(): Promise<void> {
         bytecode,
         utxos,
         challenge,
-        feeRate: 5,
-        priorityFee: 330n,
-        gasSatFee: 330n,
+        feeRate: 10,
+        priorityFee: 10_000n,
+        gasSatFee: 10_000n,
+        // Required: bind ML-DSA key to the deployed contract address
+        linkMLDSAPublicKeyToAddress: true,
+        revealMLDSAPublicKey: true,
     });
 
     console.log('\\n─────────────────────────────────────────');
     console.log('Contract address:', result.contractAddress);
     console.log('Contract pubkey: ', result.contractPubKey);
     console.log('─────────────────────────────────────────');
+    // Broadcast via JSONRpcProvider (OPNetLimitedProvider has broadcastTransaction,
+    // not broadcast — use sendRawTransaction on JSONRpcProvider for reliability)
     console.log('Broadcasting funding TX...');
-    const fundingTx = await provider.broadcast(result.transaction[0]!);
+    const fundingTx = await rpcProvider.sendRawTransaction(result.transaction[0]!, false);
     console.log('Funding TX:', fundingTx);
+    if (!fundingTx) throw new Error('Funding TX broadcast failed — check node connectivity and UTXO balance');
 
     console.log('Broadcasting deployment TX...');
-    const deployTx = await provider.broadcast(result.transaction[1]!);
+    const deployTx = await rpcProvider.sendRawTransaction(result.transaction[1]!, false);
     console.log('Deploy TX:', deployTx);
+    if (!deployTx) throw new Error('Deployment TX broadcast failed — funding TX was sent (' + (fundingTx as unknown as string) + '). Check node logs.');
 
     console.log('\\n✓ Deployed successfully!');
     console.log('  Contract:', result.contractAddress);
@@ -183,10 +194,9 @@ deploy().catch((err: unknown) => {
 export const DEPLOY_PACKAGE_JSON = `{
   "name": "deploy-{{SLUG}}",
   "version": "1.0.0",
-  "type": "module",
   "description": "Deploy script for {{NAME}} ({{TICKER}})",
   "scripts": {
-    "deploy": "npx ts-node deploy.ts"
+    "deploy": "npx tsx deploy.ts"
   },
   "dependencies": {
     "@btc-vision/bitcoin": "6.5.6",
@@ -197,7 +207,7 @@ export const DEPLOY_PACKAGE_JSON = `{
   },
   "devDependencies": {
     "@types/node": "^25.3.3",
-    "ts-node": "10.9.2",
+    "tsx": "^4.19.4",
     "typescript": "^5.9.3"
   },
   "overrides": {
@@ -231,7 +241,7 @@ Fund your deployer wallet (you'll need ~100,000 sat):
 
 \`\`\`bash
 # First, find your address:
-npx ts-node -e "
+npx tsx -e "
 const { Mnemonic } = require('@btc-vision/transaction');
 const { networks } = require('@btc-vision/bitcoin');
 const m = new Mnemonic(process.env.OPNET_MNEMONIC, '', networks.testnet);
@@ -257,7 +267,7 @@ export OPNET_MNEMONIC="word1 word2 word3 ... word24"
 
 \`\`\`bash
 npm install
-npx ts-node deploy.ts
+npx tsx deploy.ts
 \`\`\`
 
 Expected output:

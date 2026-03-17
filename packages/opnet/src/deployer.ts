@@ -366,7 +366,7 @@ async function tryAutoDeploy(generatedDir: string): Promise<{
       });
     }
 
-    execSync("npx ts-node deploy.ts", {
+    execSync("npx tsx deploy.ts", {
       cwd: generatedDir,
       timeout: 120_000,
       stdio: "inherit",
@@ -470,7 +470,7 @@ function buildInstructions(
       `       npm run build`,
       `  2. Fund your testnet wallet (get Signet BTC from a faucet)`,
       `  3. Set your mnemonic: export OPNET_MNEMONIC="word1 ... word24"`,
-      `  4. Run: cd ${dir} && npm install && npx ts-node deploy.ts`,
+      `  4. Run: cd ${dir} && npm install && npx tsx deploy.ts`,
       `  5. See: ${dir}/DEPLOY.md for full instructions`,
     ].join("\n");
   }
@@ -480,7 +480,7 @@ function buildInstructions(
     `Next steps:`,
     `  1. Fund your testnet wallet (get Signet BTC from a faucet)`,
     `  2. Set your mnemonic: export OPNET_MNEMONIC="word1 ... word24"`,
-    `  3. Run: cd ${dir} && npm install && npx ts-node deploy.ts`,
+    `  3. Run: cd ${dir} && npm install && npx tsx deploy.ts`,
     `  4. See: ${dir}/DEPLOY.md for full instructions`,
   ].join("\n");
 }
