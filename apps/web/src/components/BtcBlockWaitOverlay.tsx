@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 
-// OPNet testnet mempool explorer
-const MEMPOOL_BASE = "https://mempool.opnet.org/testnet4/tx";
+// OPNet testnet mempool explorer — OPNet runs a custom signet fork, NOT testnet4.
+// The explorer serves the OPNet chain at the root path with no /testnet4/ prefix.
+const MEMPOOL_BASE = "https://mempool.opnet.org/tx";
 
 // ── Sound ────────────────────────────────────────────────────────────────────
 function playCoinsDrop() {
