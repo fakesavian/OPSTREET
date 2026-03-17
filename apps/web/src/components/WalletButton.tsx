@@ -226,47 +226,9 @@ export function WalletButton({ variant = "default" }: { variant?: "default" | "m
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <div className="flex items-center gap-2">
-        <button onClick={() => void connect()} disabled={connecting} className="op-btn-outline text-sm px-5 py-2.5 font-black">
-          {connecting ? "Connecting..." : "Connect Wallet"}
-        </button>
-        <a href="https://opnet.org/opwallet/" target="_blank" rel="noopener noreferrer" className="text-[10px] font-black text-[var(--text-muted)] hover:text-ink transition-colors whitespace-nowrap">
-          Need wallet? Install
-        </a>
-
-        {!showManual && (
-          <button onClick={() => setShowManual(true)} className="text-[10px] text-[var(--text-muted)] hover:text-ink transition-colors whitespace-nowrap">
-            Enter address
-          </button>
-        )}
-      </div>
-
-      {showManual && (
-        <div className="flex items-center gap-1.5 mt-1">
-          <input
-            type="text"
-            value={manualAddress}
-            onChange={(e) => setManualAddress(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleManualSubmit();
-              if (e.key === "Escape") {
-                setShowManual(false);
-                setManualAddress("");
-              }
-            }}
-            placeholder="Paste testnet address..."
-            className="input text-xs py-1.5 px-3 w-52"
-            autoFocus
-          />
-          <button onClick={handleManualSubmit} disabled={!manualAddress.trim()} className="op-btn-primary text-xs px-3 py-1.5 disabled:opacity-50">
-            Connect
-          </button>
-          <button onClick={() => { setShowManual(false); setManualAddress(""); }} className="text-xs text-[var(--text-muted)] hover:text-ink px-1" title="Cancel">
-            X
-          </button>
-        </div>
-      )}
-
+      <button onClick={() => void connect()} disabled={connecting} className="op-btn-outline text-sm px-5 py-2.5 font-black">
+        {connecting ? "Connecting..." : "Connect Wallet"}
+      </button>
       {connectError && <p className="text-[10px] text-opRed max-w-[240px] text-right leading-tight">{connectError}</p>}
     </div>
   );
