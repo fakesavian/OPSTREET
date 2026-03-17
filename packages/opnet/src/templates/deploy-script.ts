@@ -34,7 +34,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 // ── Config ────────────────────────────────────────────────────────────────
-const NETWORK = networks.opnetTestnet;
+// OPNet testnet is a Bitcoin Signet fork. The correct network constant is
+// networks.testnet (Signet). networks.opnetTestnet does NOT exist.
+const NETWORK = networks.testnet;
 const RPC_URL = 'https://testnet.opnet.org';
 const WASM_PATH = path.resolve(__dirname, 'contract/build/{{TICKER}}.wasm');
 
@@ -232,7 +234,7 @@ Fund your deployer wallet (you'll need ~100,000 sat):
 npx ts-node -e "
 const { Mnemonic } = require('@btc-vision/transaction');
 const { networks } = require('@btc-vision/bitcoin');
-const m = new Mnemonic(process.env.OPNET_MNEMONIC, '', networks.opnetTestnet);
+const m = new Mnemonic(process.env.OPNET_MNEMONIC, '', networks.testnet);
 const w = m.derive(0);
 console.log('Address:', w.p2tr);
 m.zeroize(); w.zeroize();
@@ -299,8 +301,8 @@ This contract has **safe defaults enforced**:
 
 **TESTNET ONLY.** Target: OPNet Testnet (Bitcoin Signet fork)
 - RPC: https://testnet.opnet.org
-- Must use \`networks.opnetTestnet\` from \`@btc-vision/bitcoin\`
-- NEVER use \`networks.testnet\` — that is Bitcoin Testnet4 (incompatible)
+- Use \`networks.testnet\` from \`@btc-vision/bitcoin\` (OPNet testnet = Signet)
+- NEVER use \`networks.opnetTestnet\` — that constant does not exist in @btc-vision/bitcoin
 `;
 
 export function generateDeployScript(vars: {
