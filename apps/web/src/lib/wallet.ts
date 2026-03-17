@@ -1453,8 +1453,8 @@ export async function submitOpnetLiquidityFundingWithWallet(
   // TransactionFactory.createBTCTransfer detects window.opnet.web3 and calls
   // sendBitcoin() internally (detectFundingOPWallet). OP_WALLET shows the
   // confirmation popup, signs, AND broadcasts to OPNet signet — then returns
-  // { tx: txid, estimatedFees, nextUTXOs, inputUtxos }.
-  // result.tx is already the broadcast txid — do NOT call sendRawTransaction again.
+  // { tx: rawSignedHex, ... }. result.tx is the RAW SIGNED TX HEX, not the txid.
+  // The transaction is already broadcast — compute txid from the raw hex.
   const result = await factory.createBTCTransfer({
     utxos,
     from: senderAddress,
@@ -1464,12 +1464,17 @@ export async function submitOpnetLiquidityFundingWithWallet(
     amount: BigInt(payload.amountSats),
   });
 
-  const txId = result?.tx;
-  if (!txId || typeof txId !== "string" || txId.length < 32) {
+  const rawHex = result?.tx;
+  if (!rawHex || typeof rawHex !== "string" || rawHex.length < 64) {
     throw new Error(
-      "OP_WALLET did not return a transaction ID after broadcast. Ensure your wallet is on OPNet Testnet and has confirmed UTXOs.",
+      "OP_WALLET did not return a signed transaction. Ensure your wallet is on OPNet Testnet and has confirmed UTXOs.",
     );
   }
+
+  // Compute the real txid: double-SHA256 of the non-witness (legacy) serialization,
+  // byte-reversed. @btc-vision/bitcoin Transaction.fromHex handles segwit correctly.
+  const { Transaction: BtcTransaction } = await import("@btc-vision/bitcoin");
+  const txId = BtcTransaction.fromHex(rawHex).getId();
 
   return { txId, raw: result };
 }
