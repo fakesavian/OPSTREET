@@ -225,11 +225,59 @@ export function WalletButton({ variant = "default" }: { variant?: "default" | "m
   }
 
   return (
-    <div className="flex flex-col items-end gap-1">
-      <button onClick={() => void connect()} disabled={connecting} className="op-btn-outline text-sm px-5 py-2.5 font-black">
+    <div className="relative">
+      <button
+        onClick={() => void connect()}
+        disabled={connecting}
+        className="op-btn-outline text-sm px-5 py-2.5 font-black"
+      >
         {connecting ? "Connecting..." : "Connect Wallet"}
       </button>
-      {connectError && <p className="text-[10px] text-opRed max-w-[240px] text-right leading-tight">{connectError}</p>}
+
+      {/* Hints dropdown — shown below button, no impact on nav layout */}
+      {!connecting && (
+        <div className="absolute right-0 top-full mt-1 flex flex-col items-end gap-0.5">
+          <a
+            href="https://opnet.org/opwallet/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[9px] font-black text-ink/40 hover:text-ink transition-colors whitespace-nowrap"
+          >
+            Need wallet? Install ↗
+          </a>
+          {!showManual ? (
+            <button
+              onClick={() => setShowManual(true)}
+              className="text-[9px] text-ink/40 hover:text-ink transition-colors whitespace-nowrap"
+            >
+              Enter testnet address
+            </button>
+          ) : (
+            <div className="flex items-center gap-1 mt-0.5">
+              <input
+                type="text"
+                value={manualAddress}
+                onChange={(e) => setManualAddress(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleManualSubmit();
+                  if (e.key === "Escape") { setShowManual(false); setManualAddress(""); }
+                }}
+                placeholder="Paste testnet address..."
+                className="input text-[10px] py-1 px-2 w-48"
+                autoFocus
+              />
+              <button onClick={handleManualSubmit} disabled={!manualAddress.trim()} className="op-btn-primary text-[10px] px-2 py-1 disabled:opacity-50">
+                Go
+              </button>
+              <button onClick={() => { setShowManual(false); setManualAddress(""); }} className="text-[10px] text-ink/40 hover:text-ink px-1">
+                ✕
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {connectError && <p className="absolute right-0 top-full mt-1 text-[10px] text-opRed max-w-[240px] text-right leading-tight">{connectError}</p>}
     </div>
   );
 }

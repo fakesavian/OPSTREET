@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Image from "next/image";
 import Link from "next/link";
@@ -8,55 +8,6 @@ import { MobileNav } from "@/components/MobileNav";
 import { useWallet } from "@/components/WalletProvider";
 import { fetchClanLicenseStatus } from "@/lib/api";
 import { NotificationDropdown } from "./NotificationDropdown";
-
-/** Small inline "Enter address" hint shown before the connect buttons when no wallet is connected. */
-function WalletManualHint() {
-  const { connectManual } = useWallet();
-  const [open, setOpen] = useState(false);
-  const [addr, setAddr] = useState("");
-
-  function submit() {
-    const a = addr.trim();
-    if (!a) return;
-    connectManual(a);
-    setAddr("");
-    setOpen(false);
-  }
-
-  if (open) {
-    return (
-      <div className="flex items-center gap-1">
-        <input
-          type="text"
-          value={addr}
-          onChange={(e) => setAddr(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") submit();
-            if (e.key === "Escape") { setOpen(false); setAddr(""); }
-          }}
-          placeholder="Testnet address…"
-          className="input text-[10px] py-0.5 px-2 w-44 h-6"
-          autoFocus
-        />
-        <button onClick={submit} disabled={!addr.trim()} className="op-btn-primary text-[10px] px-2 py-0.5 h-6 disabled:opacity-50">
-          Go
-        </button>
-        <button onClick={() => { setOpen(false); setAddr(""); }} className="text-[10px] text-ink/40 hover:text-ink px-1">
-          ✕
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <button
-      onClick={() => setOpen(true)}
-      className="text-[10px] font-black text-ink/50 hover:text-ink transition-colors whitespace-nowrap"
-    >
-      Enter address
-    </button>
-  );
-}
 
 export function OpHeader() {
   const { wallet } = useWallet();
@@ -165,32 +116,15 @@ export function OpHeader() {
           </nav>
         </div>
 
-        <div className="flex items-center gap-2">
-          {/* Disconnected hints — shown before actions so wallet flow reads left-to-right */}
-          {!wallet && (
-            <div className="hidden sm:flex items-center gap-1 rounded-lg border-2 border-ink/20 bg-[var(--cream)] px-2 py-1">
-              <a
-                href="https://opnet.org/opwallet/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[10px] font-black text-ink/60 hover:text-opYellow transition-colors whitespace-nowrap border-r-2 border-ink/15 pr-2 mr-1"
-              >
-                ⬡ Need wallet?
-              </a>
-              <WalletManualHint />
-            </div>
-          )}
-
+        <div className="flex shrink-0 items-center gap-2">
           <div className="hidden sm:block">
             <NotificationDropdown />
           </div>
-          <div className="flex flex-nowrap shrink-0 items-center gap-2">
-            <div className="hidden sm:flex items-center gap-2">
-              <WalletButton />
-              <Link href="/create" className="op-btn-primary px-5 py-2.5 text-sm font-black whitespace-nowrap">
-                + Create Coin
-              </Link>
-            </div>
+          <div className="hidden sm:flex items-center gap-2">
+            <WalletButton />
+            <Link href="/create" className="op-btn-primary px-5 py-2.5 text-sm font-black whitespace-nowrap">
+              + Create Coin
+            </Link>
           </div>
           <MobileNav />
         </div>
