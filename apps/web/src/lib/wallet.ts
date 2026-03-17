@@ -1435,7 +1435,7 @@ export async function submitOpnetLiquidityFundingWithWallet(
     network: btcNetworks.testnet,
   });
 
-  // Fetch UTXOs for the sender address via OPNet provider
+  // Fetch UTXOs for the sender address via OPNet RPC — required by TransactionFactory
   const utxos = await rpcProvider.utxoManager.getUTXOs({
     address: senderAddress,
     optimize: false,
@@ -1450,8 +1450,11 @@ export async function submitOpnetLiquidityFundingWithWallet(
   const toAddress = toOpnetTestnetAddress(rawAddr);
   const factory = new TransactionFactory();
 
-  // Use IFundingTransactionParametersWithoutSigner — omits signer/mldsaSigner/network.
-  // TransactionFactory detects window.opnet and delegates signing to OP_WALLET.
+  // TransactionFactory.createBTCTransfer detects window.opnet.web3 and calls
+  // sendBitcoin() internally (detectFundingOPWallet). OP_WALLET shows the
+  // confirmation popup, signs, AND broadcasts to OPNet signet — then returns
+  // { tx: txid, estimatedFees, nextUTXOs, inputUtxos }.
+  // result.tx is already the broadcast txid — do NOT call sendRawTransaction again.
   const result = await factory.createBTCTransfer({
     utxos,
     from: senderAddress,
@@ -1461,14 +1464,14 @@ export async function submitOpnetLiquidityFundingWithWallet(
     amount: BigInt(payload.amountSats),
   });
 
-  const broadcast = await rpcProvider.sendRawTransaction(result.tx, false);
-  if (!broadcast?.success || !broadcast?.result) {
+  const txId = result?.tx;
+  if (!txId || typeof txId !== "string" || txId.length < 32) {
     throw new Error(
-      `OPNet broadcast failed: ${broadcast?.error ?? "no txid returned"}. Check your wallet has UTXOs on the OPNet testnet signet chain.`,
+      "OP_WALLET did not return a transaction ID after broadcast. Ensure your wallet is on OPNet Testnet and has confirmed UTXOs.",
     );
   }
 
-  return { txId: broadcast.result, raw: result };
+  return { txId, raw: result };
 }
 
 // ── Wallet-native interaction signing ─────────────────────────────────────
