@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState, useEffect, useCallback } from "react";
 import type { ProjectDTO } from "@opfun/shared";
 import type { CheckRun, WatchEvent, MarketStateResponse } from "@/lib/api";
@@ -226,9 +227,11 @@ export function ProjectPageClient({ initialProject }: { initialProject: FullProj
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <div className="flex items-start gap-4">
         {project.iconUrl ? (
-          <img
+          <Image
             src={project.iconUrl}
             alt={project.name}
+            width={64}
+            height={64}
             className="h-16 w-16 rounded-2xl border-3 border-ink object-cover shrink-0"
           />
         ) : (

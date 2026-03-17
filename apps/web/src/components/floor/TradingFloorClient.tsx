@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useWallet } from "@/components/WalletProvider";
 import {
@@ -261,11 +262,12 @@ export function TradingFloorClient() {
               className="relative aspect-square overflow-hidden rounded-[34px] border-[3px] border-ink bg-[#FFF7E8] shadow-[8px_8px_0_#111]"
               style={{ width: "min(100%, calc(100vh - 132px))" }}
             >
-              <img
+              <Image
                 src={DESKTOP_BACKGROUND_SRC}
                 alt=""
                 aria-hidden="true"
-                className="absolute inset-0 h-full w-full object-cover"
+                fill
+                className="object-cover"
               />
               <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(255,247,232,0.08)_0%,rgba(255,247,232,0)_22%,rgba(17,17,17,0.08)_100%)]" />
 

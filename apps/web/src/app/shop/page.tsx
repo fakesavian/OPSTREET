@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { useWallet } from "@/components/WalletProvider";
 import {
@@ -158,7 +159,7 @@ export default function ShopPage() {
           {items.map((item) => (
             <article key={item.itemKey} className="op-panel p-4 flex flex-col gap-3">
               <div className="overflow-hidden rounded-xl border-2 border-ink/20 bg-[var(--cream)]">
-                <img src={item.imageUrl} alt={item.name} className="h-44 w-full object-cover" />
+                <Image src={item.imageUrl} alt={item.name} width={400} height={176} className="h-44 w-full object-cover" />
               </div>
 
               <div>

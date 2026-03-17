@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState } from "react";
 import type { ProjectDTO } from "@opfun/shared";
 
@@ -225,9 +226,11 @@ function SpotlightCard({ project }: { project: ProjectDTO }) {
       <div className="relative flex gap-4 p-4">
         <div className="shrink-0">
           {project.iconUrl ? (
-            <img
+            <Image
               src={project.iconUrl}
               alt={project.name}
+              width={80}
+              height={80}
               className="h-20 w-20 rounded-xl border-2 border-ink object-cover"
             />
           ) : (
@@ -289,9 +292,11 @@ function GridCard({ project }: { project: ProjectDTO }) {
       <div className="flex gap-3 p-3">
         <div className="shrink-0">
           {project.iconUrl ? (
-            <img
+            <Image
               src={project.iconUrl}
               alt=""
+              width={56}
+              height={56}
               className="h-14 w-14 rounded-xl border-2 border-ink object-cover"
             />
           ) : (
@@ -344,9 +349,11 @@ function ListRow({ project }: { project: ProjectDTO }) {
     >
       <div className="flex min-w-0 items-center gap-2.5">
         {project.iconUrl ? (
-          <img
+          <Image
             src={project.iconUrl}
             alt=""
+            width={32}
+            height={32}
             className="h-8 w-8 shrink-0 rounded-lg border-2 border-ink object-cover"
           />
         ) : (

@@ -1344,9 +1344,12 @@ export async function checkWalletUtxos(address: string): Promise<{
     // Get the Address object (resolves the public key on-chain)
     const addrObj = await provider.getPublicKeyInfo(address, false);
 
-    // Derive CSV1 address from the public key
-    const csv1 = provider.getCSV1ForAddress(addrObj);
-    const csvAddress: string | undefined = (csv1 as unknown as Record<string, unknown>)?.["address"] as string | undefined;
+    // Derive CSV1 address from the public key — addrObj may be undefined for new/unfunded addresses
+    let csvAddress: string | undefined;
+    if (addrObj) {
+      const csv1 = provider.getCSV1ForAddress(addrObj);
+      csvAddress = (csv1 as unknown as Record<string, unknown>)?.["address"] as string | undefined;
+    }
 
     const addressesToQuery: string[] = [address];
     if (csvAddress && csvAddress !== address) addressesToQuery.push(csvAddress);
