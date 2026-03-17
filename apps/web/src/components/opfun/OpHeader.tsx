@@ -95,7 +95,7 @@ export function OpHeader() {
             <img
               src="/opstreet/brand/logo.png"
               alt="OpStreet"
-              className="h-12 w-auto rounded-lg border-0 object-contain"
+              className="h-10 w-auto object-contain"
             />
           </Link>
 

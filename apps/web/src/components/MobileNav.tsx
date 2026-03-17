@@ -106,7 +106,7 @@ export function MobileNav() {
           <img
             src="/opstreet/brand/logo.png"
             alt="OpStreet"
-            className="h-12 w-auto rounded-lg object-contain"
+            className="h-10 w-auto object-contain"
           />
           <button onClick={() => setOpen(false)} aria-label="Close menu" className="text-lg leading-none text-ink hover:text-ink/70">
             X
