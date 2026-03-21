@@ -27,15 +27,20 @@ interface StoredTx {
 interface PendingTxState {
   txId: string | null;
   startedAt: number | null;
+  confirmed: boolean;
   /** Call this when a BTC funding transaction is broadcast */
   setPendingTx: (txId: string) => void;
   /** Call this to dismiss the overlay (user action or confirmation) */
   clearPendingTx: () => void;
 }
 
+const MEMPOOL_API = "https://mempool.opnet.org/api/tx";
+const POLL_INTERVAL_MS = 30_000;
+
 const PendingTxContext = createContext<PendingTxState>({
   txId: null,
   startedAt: null,
+  confirmed: false,
   setPendingTx: () => undefined,
   clearPendingTx: () => undefined,
 });
@@ -43,6 +48,7 @@ const PendingTxContext = createContext<PendingTxState>({
 export function PendingTxProvider({ children }: { children: React.ReactNode }) {
   const [txId, setTxId] = useState<string | null>(null);
   const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [confirmed, setConfirmed] = useState(false);
 
   // Hydrate from localStorage on mount
   useEffect(() => {
@@ -63,12 +69,35 @@ export function PendingTxProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // Poll mempool for confirmation (~every 30s)
+  useEffect(() => {
+    if (!txId || confirmed) return;
+    // Skip fake testnet-skip txIds
+    if (txId.startsWith("testnet-skip-")) return;
+
+    async function checkConfirmed() {
+      try {
+        const res = await fetch(`${MEMPOOL_API}/${txId}`);
+        if (!res.ok) return;
+        const data = await res.json() as { status?: { confirmed?: boolean } };
+        if (data?.status?.confirmed) setConfirmed(true);
+      } catch {
+        // network error — retry next interval
+      }
+    }
+
+    void checkConfirmed();
+    const id = setInterval(() => void checkConfirmed(), POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [txId, confirmed]);
+
   const setPendingTx = useCallback((id: string) => {
     const now = Date.now();
     const stored: StoredTx = { txId: id, startedAt: now };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
     setTxId(id);
     setStartedAt(now);
+    setConfirmed(false);
   }, []);
 
   const clearPendingTx = useCallback(() => {
@@ -78,7 +107,7 @@ export function PendingTxProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <PendingTxContext.Provider value={{ txId, startedAt, setPendingTx, clearPendingTx }}>
+    <PendingTxContext.Provider value={{ txId, startedAt, confirmed, setPendingTx, clearPendingTx }}>
       {children}
     </PendingTxContext.Provider>
   );

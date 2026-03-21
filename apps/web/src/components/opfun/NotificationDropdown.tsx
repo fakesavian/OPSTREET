@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useNotifications } from "@/context/NotificationContext";
+import { usePendingTx } from "@/context/PendingTxContext";
 
 function relativeTime(ts: string): string {
   const diff = Date.now() - new Date(ts).getTime();
@@ -18,10 +19,12 @@ const TYPE_ICONS: Record<string, string> = {
   deploy: "UP",
   trade: "$",
   system: "!",
+  tx: "TX",
 };
 
 export function NotificationDropdown() {
-  const { notifications, markAllRead, unreadCount } = useNotifications();
+  const { notifications, markAllRead, markRead, unreadCount } = useNotifications();
+  const { txId: activeTxId, setPendingTx } = usePendingTx();
   const [open, setOpen] = useState(false);
   const [prevCount, setPrevCount] = useState(unreadCount);
   const [popKey, setPopKey] = useState(0);
@@ -67,7 +70,7 @@ export function NotificationDropdown() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-[70] mt-2 w-72 overflow-hidden rounded-[22px] border-[3px] border-ink bg-[linear-gradient(180deg,#fff8e8_0%,#ffe69a_100%)] shadow-hard animate-slide-down">
+        <div className="absolute right-0 top-full z-[70] mt-2 w-80 overflow-hidden rounded-[22px] border-[3px] border-ink bg-[linear-gradient(180deg,#fff8e8_0%,#ffe69a_100%)] shadow-hard animate-slide-down">
           <div className="flex items-center justify-between border-b-2 border-ink/15 px-4 py-3">
             <span className="text-xs font-black uppercase tracking-[0.18em] text-ink">Notifications</span>
             {unreadCount > 0 && (
@@ -80,25 +83,59 @@ export function NotificationDropdown() {
             )}
           </div>
 
-          <div className="max-h-64 overflow-y-auto">
+          <div className="max-h-72 overflow-y-auto">
             {notifications.length === 0 ? (
               <div className="px-4 py-6 text-center text-xs font-semibold text-[var(--text-muted)]">No notifications yet</div>
             ) : (
-              notifications.slice(0, 20).map((n) => (
-                <div
-                  key={n.id}
-                  className={`flex gap-3 border-b-2 border-ink/10 px-4 py-3 ${n.read ? "opacity-70" : ""}`}
-                >
-                  <span className="mt-0.5 inline-flex h-6 min-w-[2rem] items-center justify-center rounded-full border-2 border-ink bg-[var(--panel-cream)] text-[9px] font-black text-ink">
-                    {TYPE_ICONS[n.type] ?? "NEW"}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-[11px] font-black text-ink">{n.title}</p>
-                    <p className="truncate text-[10px] font-semibold text-[var(--text-secondary)]">{n.message}</p>
-                    <p className="mt-0.5 text-[9px] font-semibold text-[var(--text-muted)]">{relativeTime(n.timestamp)}</p>
+              notifications.slice(0, 20).map((n) => {
+                const isConfirmedTx = n.type === "tx" && n.title === "Transaction Confirmed";
+                const isPendingTx = n.type === "tx" && !isConfirmedTx;
+                const isActiveTx = n.type === "tx" && n.txId === activeTxId;
+
+                return (
+                  <div
+                    key={n.id}
+                    className={`flex gap-3 border-b-2 border-ink/10 px-4 py-3 ${n.read ? "opacity-70" : ""}`}
+                  >
+                    <span className={`mt-0.5 inline-flex h-6 min-w-[2rem] items-center justify-center rounded-full border-2 border-ink text-[9px] font-black text-ink ${
+                      isConfirmedTx ? "bg-[#dcfce7] border-[#16a34a] text-[#15803d]"
+                      : isPendingTx ? "bg-opYellow"
+                      : "bg-[var(--panel-cream)]"
+                    }`}>
+                      {isConfirmedTx ? "✓" : (TYPE_ICONS[n.type] ?? "NEW")}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className={`truncate text-[11px] font-black ${isConfirmedTx ? "text-[#15803d]" : "text-ink"}`}>
+                        {n.title}
+                      </p>
+                      <p className="truncate text-[10px] font-semibold text-[var(--text-secondary)]">{n.message}</p>
+                      <p className="mt-0.5 text-[9px] font-semibold text-[var(--text-muted)]">{relativeTime(n.timestamp)}</p>
+                      {/* Re-open button for tx notifications */}
+                      {n.type === "tx" && n.txId && (
+                        <div className="mt-1.5">
+                          {isActiveTx ? (
+                            <span className="inline-flex items-center gap-1 rounded-md border border-ink/20 bg-ink/5 px-2 py-0.5 text-[9px] font-black text-ink/50">
+                              ↗ Overlay open
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPendingTx(n.txId!);
+                                markRead(n.id);
+                                setOpen(false);
+                              }}
+                              className="inline-flex items-center gap-1 rounded-md border-2 border-ink bg-opYellow px-2 py-0.5 text-[9px] font-black text-ink hover:bg-ink hover:text-opYellow transition-colors"
+                            >
+                              ↗ Re-open
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

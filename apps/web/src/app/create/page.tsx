@@ -13,7 +13,7 @@ type Step = 0 | 1 | 2;
 type FieldErrors = Partial<Record<string, string>>;
 type TouchedFields = Partial<Record<string, boolean>>;
 
-const DEFAULT_LIQUIDITY_VAULT_ADDRESS = "tb1ppdtv25qr5ydzr9733rl23pt9gx36cvffxe8mr82t2ntd9ddf3uus6wecwc";
+const DEFAULT_LIQUIDITY_VAULT_ADDRESS = "opt1pq4p904uy5zv76wcyac2sqrulpmluys6y6kulpyy7uerhkr9nxvgs3y2sce";
 const LIQUIDITY_VAULT_ADDRESS =
   process.env["NEXT_PUBLIC_LIQUIDITY_VAULT_ADDRESS"]?.trim() || DEFAULT_LIQUIDITY_VAULT_ADDRESS;
 const LIQUIDITY_TOKEN_TO_SATS: Record<"TBTC" | "MOTO" | "PILL", number> = {
