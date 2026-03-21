@@ -262,6 +262,21 @@ export async function projectRoutes(app: FastifyInstance) {
     });
   });
 
+  // POST /projects/:id/reset-checks — break out of a stuck CHECKING state
+  app.post<{ Params: { id: string } }>("/projects/:id/reset-checks",
+    { preHandler: [verifyWalletToken] },
+    async (request, reply) => {
+      const { id } = request.params;
+      const project = await prisma.project.findUnique({ where: { id } });
+      if (!project) return reply.status(404).send({ error: "Project not found" });
+      if (project.status !== "CHECKING") {
+        return reply.status(409).send({ error: `Project is not stuck — current status: ${project.status}` });
+      }
+      await prisma.project.update({ where: { id }, data: { status: "DRAFT" } });
+      return reply.send({ status: "DRAFT", message: "Reset to DRAFT. You can run checks again." });
+    },
+  );
+
   // POST /projects/:id/pledge — retired after live migration.
   // Keep the route so stale clients fail clearly instead of silently mutating legacy state.
   app.post<{ Params: { id: string }; Body: { walletAddress?: string } }>(

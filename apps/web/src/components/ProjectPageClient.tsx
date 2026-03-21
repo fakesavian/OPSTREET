@@ -246,7 +246,7 @@ export function ProjectPageClient({ initialProject }: { initialProject: FullProj
             <StatusPill status={project.status} />
             <OpBadge variant={project.launchStatus === "LIVE" ? "live" : project.launchStatus ? "testnet" : "draft"} />
           </div>
-          <p className="mt-1.5 text-sm text-[var(--text-muted)] leading-relaxed">{project.description}</p>
+          <p className="mt-1.5 text-sm font-bold text-ink leading-relaxed">{project.description}</p>
         </div>
       </div>
 

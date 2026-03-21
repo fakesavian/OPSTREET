@@ -60,6 +60,9 @@ function shortIssue(issue: { severity: string; message: string }): string {
   return `${issue.severity}: ${issue.message.replace(/^BOB-AUDIT:\s*/i, "").replace(/\s+/g, " ").trim()}`;
 }
 
+// How long (ms) before we show the "stuck" reset button
+const CHECKING_STUCK_MS = 5 * 60 * 1000;
+
 export function RunChecksPanel({
   initialProject,
   onStatusChange,
@@ -69,6 +72,7 @@ export function RunChecksPanel({
 }) {
   const [project, setProject] = useState<FullProject>(initialProject);
   const [running, setRunning] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [error, setError] = useState("");
 
   const refresh = useCallback(async () => {
@@ -99,6 +103,27 @@ export function RunChecksPanel({
     return () => clearInterval(interval);
   }, [project.status, refresh]);
 
+  async function resetChecks() {
+    setResetting(true);
+    setError("");
+    try {
+      const res = await fetch(`${API}/projects/${project.id}/reset-checks`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
+        throw new Error(err.error ?? err.message ?? `HTTP ${res.status}`);
+      }
+      setProject((p) => ({ ...p, status: "DRAFT" }));
+      onStatusChange?.("DRAFT");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Reset failed");
+    } finally {
+      setResetting(false);
+    }
+  }
+
   async function runChecks() {
     setRunning(true);
     setError("");
@@ -125,6 +150,16 @@ export function RunChecksPanel({
   const statusColor = STATUS_COLOR[project.status] ?? "text-[var(--text-muted)]";
   const isChecking = project.status === "CHECKING";
 
+  // Detect stuck: CHECKING + oldest PENDING check run > 5 min ago
+  const isStuck = isChecking && (() => {
+    const pendingRun = project.checkRuns.find((r) => r.status === "PENDING");
+    if (!pendingRun) {
+      // No pending run recorded but still CHECKING — definitely stuck
+      return true;
+    }
+    return Date.now() - new Date(pendingRun.createdAt).getTime() > CHECKING_STUCK_MS;
+  })();
+
   return (
     <div className="space-y-5">
       <div className="op-panel p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -146,6 +181,20 @@ export function RunChecksPanel({
           >
             {running || isChecking ? "Running..." : "Run Security Checks"}
           </button>
+        )}
+        {isStuck && (
+          <div className="flex flex-col gap-2 shrink-0">
+            <div className="rounded-xl border-2 border-opRed/40 bg-opRed/5 px-3 py-2 text-xs text-opRed font-bold max-w-xs">
+              ⚠ Audit appears stuck. The background job may have timed out.
+            </div>
+            <button
+              onClick={resetChecks}
+              disabled={resetting}
+              className="rounded-xl border-2 border-opRed bg-opRed/10 px-3 py-2 text-xs font-black text-opRed hover:bg-opRed hover:text-white transition-colors disabled:opacity-50"
+            >
+              {resetting ? "Resetting..." : "Force Reset → Re-run Checks"}
+            </button>
+          </div>
         )}
       </div>
 
