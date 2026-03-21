@@ -1338,7 +1338,7 @@ export async function checkWalletUtxos(address: string): Promise<{
 
     const provider = new JSONRpcProvider({
       url: "https://testnet.opnet.org",
-      network: networks.opnetTestnet,
+      network: networks.regtest, // OPNet testnet is a signet fork — regtest params
     });
 
     // Get the Address object (resolves the public key on-chain)
