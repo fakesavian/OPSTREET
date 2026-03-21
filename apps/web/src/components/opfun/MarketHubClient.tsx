@@ -72,6 +72,9 @@ function rightRailCopy(project: ProjectDTO): string {
   return "Awaiting build";
 }
 
+const FETCH_RETRIES = 3;
+const FETCH_RETRY_MS = 1500;
+
 export function MarketHubClient({
   initialProjects,
   initialSection = "trending",
@@ -83,33 +86,37 @@ export function MarketHubClient({
   const [projects, setProjects] = useState<ProjectDTO[]>(initialProjects);
   const [loading, setLoading] = useState(initialProjects.length === 0);
   const [error, setError] = useState("");
+  const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
-    let cancelled = false;
-
     if (initialProjects.length > 0) {
       setProjects(initialProjects);
       setLoading(false);
       return;
     }
 
+    let cancelled = false;
     setLoading(true);
     setError("");
-    fetchProjects("trending")
-      .then((payload) => {
-        if (!cancelled) setProjects(payload.items);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load trending projects.");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [initialProjects]);
+    (async () => {
+      let lastErr = "";
+      for (let i = 0; i <= FETCH_RETRIES; i++) {
+        if (cancelled) return;
+        if (i > 0) await new Promise((r) => setTimeout(r, FETCH_RETRY_MS));
+        try {
+          const payload = await fetchProjects("trending");
+          if (!cancelled) { setProjects(payload.items); setLoading(false); }
+          return;
+        } catch (err) {
+          lastErr = err instanceof Error ? err.message : "Failed to load projects.";
+        }
+      }
+      if (!cancelled) { setError(lastErr); setLoading(false); }
+    })();
+
+    return () => { cancelled = true; };
+  }, [initialProjects, retryKey]);
 
   const sortedProjects = useMemo(() => sortProjects(projects, activeFilter), [projects, activeFilter]);
   const featured = useMemo(() => topRailProjects(projects), [projects]);
@@ -144,8 +151,19 @@ export function MarketHubClient({
       </div>
 
       {error && (
-        <div className="rounded-xl border-2 border-[#EF4444] bg-[#FEE2E2] px-4 py-3 text-sm font-bold text-[#B91C1C]">
-          {error}
+        <div className="rounded-xl border-2 border-[#EF4444] bg-[#FEE2E2] px-4 py-3 space-y-2">
+          <p className="text-sm font-bold text-[#B91C1C]">{error}</p>
+          {/failed to fetch|cannot reach|unreachable/i.test(error) && (
+            <p className="text-xs text-[#B91C1C]/80">
+              The backend API is not reachable. Make sure <code className="font-mono bg-[#B91C1C]/10 px-1 rounded">OPFUN_API_URL</code> is set in your Vercel project settings and your API server is running.
+            </p>
+          )}
+          <button
+            onClick={() => setRetryKey((k) => k + 1)}
+            className="inline-flex items-center gap-1.5 rounded-lg border-2 border-[#B91C1C] bg-white px-3 py-1 text-xs font-black text-[#B91C1C] hover:bg-[#FEE2E2] transition-colors"
+          >
+            ↺ Retry
+          </button>
         </div>
       )}
 
