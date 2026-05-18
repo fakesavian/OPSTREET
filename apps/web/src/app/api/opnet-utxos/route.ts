@@ -1,14 +1,13 @@
+import { getOpnetJsonRpcUrl, getOpnetNetworkConfig } from "@opfun/opnet";
 import type { NextRequest } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const OPNET_RPC = "https://testnet.opnet.org/api/v1/json-rpc";
-
 /**
- * Server-side proxy for OPNet UTXOs.
- * Browser pages cannot call testnet.opnet.org directly (CORS).
- * Uses JSON-RPC btc_getUTXOs which matches what the opnet SDK uses.
+ * Server-side proxy for OP_NET UTXOs.
+ * Browser pages cannot call OP_NET RPC directly in every environment (CORS).
+ * Uses the same canonical OP_NET network/RPC config as the runtime provider.
  * GET /api/opnet-utxos?address=opt1p...
  */
 export async function GET(request: NextRequest): Promise<Response> {
@@ -16,6 +15,9 @@ export async function GET(request: NextRequest): Promise<Response> {
   if (!address) {
     return Response.json({ error: "address is required" }, { status: 400 });
   }
+
+  const networkConfig = getOpnetNetworkConfig();
+  const jsonRpcUrl = getOpnetJsonRpcUrl();
 
   try {
     // Use JSON-RPC btc_getUTXOs — same method the opnet SDK uses internally.
@@ -27,7 +29,7 @@ export async function GET(request: NextRequest): Promise<Response> {
       id: 1,
     };
 
-    const upstream = await fetch(OPNET_RPC, {
+    const upstream = await fetch(jsonRpcUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(rpcPayload),
@@ -36,25 +38,40 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     if (!upstream.ok) {
       return Response.json(
-        { error: `OPNet RPC returned ${upstream.status}` },
+        {
+          error: `OP_NET RPC returned ${upstream.status}`,
+          network: networkConfig.network,
+        },
         { status: upstream.status },
       );
     }
 
     const rpc = await upstream.json() as { result?: unknown; error?: unknown };
     if (rpc.error) {
-      return Response.json({ error: rpc.error }, { status: 502 });
+      return Response.json(
+        { error: rpc.error, network: networkConfig.network },
+        { status: 502 },
+      );
     }
 
-    // Normalize: return { confirmed, pending } regardless of RPC shape
+    // Normalize: return { confirmed, pending } regardless of RPC shape.
     const result = rpc.result as Record<string, unknown> | null | undefined;
     const confirmed = Array.isArray(result?.confirmed) ? result.confirmed : [];
     const pending = Array.isArray(result?.pending) ? result.pending : [];
     const raw = Array.isArray(result?.raw) ? result.raw : [];
 
-    return Response.json({ confirmed, pending, raw });
+    return Response.json({
+      confirmed,
+      pending,
+      raw,
+      network: networkConfig.network,
+      bitcoinNetworkKey: networkConfig.bitcoinNetworkKey,
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";
-    return Response.json({ error: `Failed to fetch UTXOs: ${msg}` }, { status: 502 });
+    return Response.json(
+      { error: `Failed to fetch UTXOs: ${msg}`, network: networkConfig.network },
+      { status: 502 },
+    );
   }
 }

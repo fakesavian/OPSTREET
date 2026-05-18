@@ -2,7 +2,7 @@
  * OPNet integration wrapper.
  * M1: stubs | M2: scaffold + audit | M3: compile + deploy
  * SAFETY: never pass secrets, private keys, or seed phrases to Bob or this module.
- * Target: OPNet testnet only.
+ * Target: OPNet network selected via OPNET_NETWORK; defaults to OP_NET docs-aligned regtest.
  */
 
 export { BobClient, getBob } from "./bob-client.js";
@@ -47,12 +47,16 @@ export {
   RuntimeConfigError,
   getOpnetRpcUrl,
   getOpnetNetwork,
+  getOpnetNetworkConfig,
+  getOpnetJsonRpcUrl,
   MOTOSWAP_FACTORY_ADDRESS,
   MOTOSWAP_ROUTER_ADDRESS,
   SHOP_OP721_COLLECTION_ADDRESS,
   OPNET_FEE_RECIPIENT,
   type RuntimeConfigRequirements,
   type RuntimeContractConfig,
+  type OpnetNetworkName,
+  type OpnetNetworkConfig,
   type RuntimeAddressDiagnostic,
   type RuntimeDiagnostics,
   type ProviderHealthResult,

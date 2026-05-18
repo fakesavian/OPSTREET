@@ -4,6 +4,17 @@
  * Used for identity, address resolution, signing, and contract interactions.
  */
 
+import {
+  BITCOIN_ADDRESS_HRPS,
+  OP_NET_ADDRESS_HRPS,
+  getDefaultOpnetRpcUrl,
+  getOpnetWalletNetworkConfig,
+  isWalletNetworkCompatible,
+  resolveOpnetNetworkName,
+  type OpnetNetworkName,
+  type OpnetWalletNetworkConfig,
+} from "@opfun/opnet/network";
+
 export type WalletProviderType = "unisat" | "okx" | "opnet" | "manual";
 
 export interface WalletState {
@@ -87,9 +98,9 @@ export interface OpnetSignedInteractionResult {
 }
 
 // ── Bech32m address re-encoding ──────────────────────────────────────────
-// OPNet testnet uses HRP "opt" (opt1p... for taproot) instead of "tb" (tb1p...).
-// OP_WALLET rejects standard Bitcoin testnet addresses.
-// This converts between bech32/bech32m HRPs so the env var can use either format.
+// OP_NET uses network-specific HRPs for OP addresses (op/opr/opt) and Bitcoin
+// message/UTXO addresses (bc/bcrt/tb). Keep this derived from canonical config
+// instead of hardcoding legacy testnet assumptions in browser wallet flows.
 
 const BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 
@@ -153,19 +164,40 @@ function convertBech32Hrp(address: string, targetHrp: string): string | null {
   return bech32Encode(targetHrp, decoded.data, decoded.isBech32m);
 }
 
+function getBrowserOpnetEnv(): { explicitNetwork?: string; rpcUrlOverride: string } {
+  const env = typeof process !== "undefined" ? process.env : undefined;
+  return {
+    explicitNetwork: env?.["NEXT_PUBLIC_OPNET_NETWORK"] ?? env?.["OPNET_NETWORK"],
+    rpcUrlOverride: (env?.["NEXT_PUBLIC_OPNET_RPC_URL"] ?? env?.["OPNET_RPC_URL"] ?? "").trim(),
+  };
+}
+
+function getBrowserOpnetNetworkName(): OpnetNetworkName {
+  const env = getBrowserOpnetEnv();
+  return resolveOpnetNetworkName(env.explicitNetwork, env.rpcUrlOverride);
+}
+
+function getBrowserOpnetWalletConfig(): OpnetWalletNetworkConfig {
+  const env = getBrowserOpnetEnv();
+  const network = resolveOpnetNetworkName(env.explicitNetwork, env.rpcUrlOverride);
+  return getOpnetWalletNetworkConfig(network, env.rpcUrlOverride || getDefaultOpnetRpcUrl(network));
+}
+
 /**
- * Ensure address uses the OPNet testnet HRP ("opt").
- * If it's a standard Bitcoin testnet address (tb1...), re-encode it.
- * If it's already opt1..., return as-is.
+ * Ensure an address uses the OP_NET HRP for the currently configured network.
+ * Examples: legacy-testnet tb1/opt1 -> opt1, regtest bcrt1/opr1 -> opr1.
  */
-function toOpnetTestnetAddress(address: string): string {
+function toOpnetNetworkAddress(address: string): string {
   const lower = address.toLowerCase();
-  if (lower.startsWith("opt1")) return address; // Already in OPNet format
-  if (lower.startsWith("tb1") || lower.startsWith("bcrt1")) {
-    const converted = convertBech32Hrp(address, "opt");
+  const { opnetAddressHrp } = getBrowserOpnetWalletConfig();
+
+  if (lower.startsWith(`${opnetAddressHrp}1`)) return address;
+  if ([...BITCOIN_ADDRESS_HRPS, ...OP_NET_ADDRESS_HRPS].some((hrp) => lower.startsWith(`${hrp}1`))) {
+    const converted = convertBech32Hrp(address, opnetAddressHrp);
     if (converted) return converted;
   }
-  return address; // Return original if conversion fails (let wallet decide)
+
+  return address; // Return original if conversion fails (let wallet/provider decide)
 }
 
 // ── Provider detection ───────────────────────────────────────────────────
@@ -199,43 +231,32 @@ function getOPNet(): OPNetProvider | undefined {
   return win.opnet ?? win.opnetWallet ?? win.btcwallet ?? win.bitcoin;
 }
 
-function normalizeOPNetNetwork(value: unknown): string | undefined {
-  if (typeof value === "string" && value.trim().length > 0) {
-    return value.trim().toLowerCase();
-  }
-  if (!value || typeof value !== "object") return undefined;
-
-  const obj = value as Record<string, unknown>;
-  for (const key of ["network", "name", "chain", "id"]) {
-    const field = obj[key];
-    if (typeof field === "string" && field.trim().length > 0) {
-      return field.trim().toLowerCase();
-    }
-  }
-
-  return undefined;
-}
-
-function isTestnetNetwork(network: string | undefined): boolean {
-  return Boolean(network && /testnet/i.test(network));
-}
-
 async function getOPNetNetwork(p: OPNetProvider): Promise<string | undefined> {
   if (typeof p.getNetwork !== "function") return undefined;
   try {
-    return normalizeOPNetNetwork(await p.getNetwork());
+    const value = await p.getNetwork();
+    if (typeof value === "string" && value.trim().length > 0) return value.trim().toLowerCase();
+    if (!value || typeof value !== "object") return undefined;
+
+    const obj = value as Record<string, unknown>;
+    for (const key of ["network", "name", "chain", "id"]) {
+      const field = obj[key];
+      if (typeof field === "string" && field.trim().length > 0) return field.trim().toLowerCase();
+    }
+    return undefined;
   } catch {
     return undefined;
   }
 }
 
-async function ensureOPNetTestnet(p: OPNetProvider): Promise<string | undefined> {
+async function ensureOPNetConfiguredNetwork(p: OPNetProvider): Promise<string | undefined> {
+  const target = getBrowserOpnetWalletConfig();
   const current = await getOPNetNetwork(p);
-  if (isTestnetNetwork(current)) return current;
+  if (isWalletNetworkCompatible(current, target.network)) return current;
 
   if (typeof p.switchNetwork === "function") {
     try {
-      await p.switchNetwork("testnet");
+      await p.switchNetwork(target.walletNetwork);
     } catch {
       return current;
     }
@@ -249,7 +270,7 @@ async function ensureOPNetTestnet(p: OPNetProvider): Promise<string | undefined>
 async function connectOPNetProvider(
   p: OPNetProvider,
 ): Promise<{ address: string; network?: string }> {
-  const network = await ensureOPNetTestnet(p);
+  const network = await ensureOPNetConfiguredNetwork(p);
   // Try requestAccounts first (Unisat-style)
   if (typeof p.requestAccounts === "function") {
     const accounts = await p.requestAccounts();
@@ -308,8 +329,9 @@ export async function connectWallet(): Promise<WalletState> {
   const opnet = getOPNet();
   if (opnet) {
     const result = await connectOPNetProvider(opnet);
-    if (result.network && !isTestnetNetwork(result.network)) {
-      throw new Error(`OP_WALLET is on ${result.network}. Switch to testnet and try again.`);
+    if (result.network && !isWalletNetworkCompatible(result.network, getBrowserOpnetNetworkName())) {
+      const target = getBrowserOpnetWalletConfig();
+      throw new Error(`OP_WALLET is on ${result.network}. Switch to ${target.walletNetwork} and try again.`);
     }
     return { address: result.address, provider: "opnet", network: result.network };
   }
@@ -318,7 +340,7 @@ export async function connectWallet(): Promise<WalletState> {
 }
 
 /**
- * Connect with a manually-entered address for local testnet development.
+ * Connect with a manually-entered address for local OP_NET development.
  * Validates it looks like a Bitcoin address — no signing required.
  */
 export function connectWithAddress(address: string): WalletState {
@@ -340,18 +362,18 @@ function isBitcoinMessageAddress(address: string): boolean {
 }
 
 /**
- * Convert an OPNet testnet address (opt1p...) back to a Bitcoin testnet
- * address (tb1p...) for BIP-322 signature verification.
- * If the address is already tb1/bc1/bcrt1, return as-is.
+ * Convert an OP_NET address (op/opr/opt) back to the configured Bitcoin
+ * address HRP (bc/bcrt/tb) for BIP-322 signature verification.
+ * If the address is already a Bitcoin HRP address, return as-is.
  * Returns null if conversion fails.
  */
 export function toBip322Address(address: string): string | null {
   const lower = address.toLowerCase();
-  if (lower.startsWith("tb1") || lower.startsWith("bc1") || lower.startsWith("bcrt1")) {
-    return address;
-  }
-  if (lower.startsWith("opt1")) {
-    const converted = convertBech32Hrp(address, "tb");
+  const { bitcoinAddressHrp } = getBrowserOpnetWalletConfig();
+
+  if (BITCOIN_ADDRESS_HRPS.some((hrp) => lower.startsWith(`${hrp}1`))) return address;
+  if (OP_NET_ADDRESS_HRPS.some((hrp) => lower.startsWith(`${hrp}1`))) {
+    const converted = convertBech32Hrp(address, bitcoinAddressHrp);
     if (converted) return converted;
   }
   return null;
@@ -365,7 +387,7 @@ export function getWalletVerificationIssue(wallet: WalletState): string | null {
   ) {
     // If we can convert the opt1 address to tb1, verification can proceed
     if (toBip322Address(wallet.address)) return null;
-    return "OP_WALLET connected on an OP_NET address. This build can connect to testnet, but login verification still expects a Bitcoin BIP-322 address (tb1/bc1).";
+    return "OP_WALLET connected on an OP_NET address. This build can connect to the configured OP_NET network, but login verification still expects a Bitcoin BIP-322 address for that network.";
   }
 
   return null;
@@ -649,7 +671,7 @@ function normalizeWalletError(raw: string): string {
     return "Wallet is not authorized for this site. Reconnect and sign again.";
   }
   if (/invalid.*address|invalid.*recipient/i.test(msg)) {
-    return "Invalid recipient address — ensure OP_WALLET is on the OP_NET testnet network, then retry.";
+    return "Invalid recipient address — ensure OP_WALLET is on the configured OP_NET network, then retry.";
   }
   // Internal wallet TypeError from 'signer' in stringArg — not a user-actionable error
   if (/Cannot use 'in' operator/i.test(msg)) {
@@ -691,7 +713,7 @@ export async function signOpnetInteractionWithWallet(
     throw new Error("OPNet wallet extension not found.");
   }
 
-  await ensureOPNetTestnet(opnet);
+  await ensureOPNetConfiguredNetwork(opnet);
 
   try {
     const signed = await signInteractionBuffer(interaction.offlineBufferHex);
@@ -1097,10 +1119,11 @@ async function tryPsbtTransfer(
       if (Array.isArray(btcAccounts)) btcAccounts.forEach((a) => { if (typeof a === "string" && a) addrCandidates.add(a); });
     }
   } catch { /* ignore */ }
-  // Also add tb1 equivalents for each opt1 address (OPNet RPC may index by either)
+  // Also add Bitcoin-HRP equivalents for each OP_NET address (RPC may index by either form)
+  const walletConfig = getBrowserOpnetWalletConfig();
   for (const a of Array.from(addrCandidates)) {
-    const tb1 = convertBech32Hrp(a, "tb");
-    if (tb1 && tb1 !== a) addrCandidates.add(tb1);
+    const bitcoinAddress = convertBech32Hrp(a, walletConfig.bitcoinAddressHrp);
+    if (bitcoinAddress && bitcoinAddress !== a) addrCandidates.add(bitcoinAddress);
   }
   console.debug("[PSBT] Address candidates:", Array.from(addrCandidates));
 
@@ -1165,7 +1188,7 @@ async function tryPsbtTransfer(
   }
 
   // Also try vault with both HRPs
-  const vaultOpt = toOpnetTestnetAddress(vaultAddress);
+  const vaultOpt = toOpnetNetworkAddress(vaultAddress);
   const recipientScript = addressToP2TRScript(vaultOpt) ?? addressToP2TRScript(vaultAddress);
   if (!recipientScript) {
     throw new Error(`Cannot derive P2TR script for vault address: ${vaultAddress.slice(0, 20)}…`);
@@ -1175,7 +1198,7 @@ async function tryPsbtTransfer(
   //    P2TR input ≈ 57.5 vbytes, P2TR output ≈ 43 vbytes, overhead ≈ 11 vbytes.
   //    We don't know input count yet so do two passes: estimate with 1 input first,
   //    then recalculate once the real count is known.
-  const FEE_RATE = 3; // sat/vbyte — conservative for testnet
+  const FEE_RATE = 3; // sat/vbyte — conservative for OP_NET dev networks
   const estimateFee = (nInputs: number) => BigInt(Math.ceil((nInputs * 58 + 2 * 43 + 11) * FEE_RATE));
 
   // First pass: select enough UTXOs to cover amount + pessimistic fee
@@ -1336,9 +1359,10 @@ export async function checkWalletUtxos(address: string): Promise<{
     const { JSONRpcProvider } = await import("opnet");
     const { networks } = await import("@btc-vision/bitcoin");
 
+    const walletConfig = getBrowserOpnetWalletConfig();
     const provider = new JSONRpcProvider({
-      url: "https://testnet.opnet.org",
-      network: networks.regtest, // OPNet testnet is a signet fork — regtest params
+      url: walletConfig.rpcUrl,
+      network: (networks as Record<string, unknown>)[walletConfig.bitcoinNetworkKey] as never,
     });
 
     // Get the Address object (resolves the public key on-chain)
@@ -1375,8 +1399,9 @@ export async function checkWalletUtxos(address: string): Promise<{
 
   // Step 4: Last resort — OPNet RPC proxy for main address
   try {
-    const tb1 = convertBech32Hrp(address, "tb");
-    for (const addr of [address, ...(tb1 && tb1 !== address ? [tb1] : [])]) {
+    const walletConfig = getBrowserOpnetWalletConfig();
+    const bitcoinAddress = convertBech32Hrp(address, walletConfig.bitcoinAddressHrp);
+    for (const addr of [address, ...(bitcoinAddress && bitcoinAddress !== address ? [bitcoinAddress] : [])]) {
       const resp = await fetch(`/api/opnet-utxos?address=${encodeURIComponent(addr)}`);
       if (!resp.ok) continue;
       const data = (await resp.json()) as { confirmed?: OPNetUTXO[]; raw?: OPNetUTXO[] };
@@ -1404,7 +1429,7 @@ export async function submitOpnetLiquidityFundingWithWallet(
   const opnet = (payload.walletInstance as OPNetProvider | null | undefined) ?? getOPNet();
   if (!opnet) throw new Error("OPNet wallet extension not found.");
 
-  await ensureOPNetTestnet(opnet);
+  await ensureOPNetConfiguredNetwork(opnet);
 
   if (!Number.isFinite(payload.amountSats) || payload.amountSats <= 0) {
     throw new Error("Liquidity amount in sats must be greater than zero.");
@@ -1412,9 +1437,9 @@ export async function submitOpnetLiquidityFundingWithWallet(
 
   const rawAddr = payload.toAddress.trim();
   if (!rawAddr) throw new Error("Liquidity vault address is empty.");
-  if (!/^(opt1|tb1|bcrt1|[mn2])[a-zA-HJ-NP-Z0-9]{25,}$/i.test(rawAddr)) {
+  if (!/^(op1|opr1|opt1|bc1|tb1|bcrt1|[mn2])[a-zA-HJ-NP-Z0-9]{25,}$/i.test(rawAddr)) {
     throw new Error(
-      `Vault address "${rawAddr.slice(0, 12)}..." does not look like a valid testnet address. Check NEXT_PUBLIC_LIQUIDITY_VAULT_ADDRESS.`,
+      `Vault address "${rawAddr.slice(0, 12)}..." does not look like a valid OP_NET/Bitcoin address. Check NEXT_PUBLIC_LIQUIDITY_VAULT_ADDRESS and NEXT_PUBLIC_OPNET_NETWORK.`,
     );
   }
 
@@ -1430,9 +1455,15 @@ export async function submitOpnetLiquidityFundingWithWallet(
   const { JSONRpcProvider } = await import("opnet");
   const { networks: btcNetworks } = await import("@btc-vision/bitcoin");
 
+  const walletConfig = getBrowserOpnetWalletConfig();
+  const bitcoinNetwork = (btcNetworks as Record<string, unknown>)[walletConfig.bitcoinNetworkKey];
+  if (!bitcoinNetwork) {
+    throw new Error(`@btc-vision/bitcoin does not expose ${walletConfig.bitcoinNetworkKey} network params.`);
+  }
+
   const rpcProvider = new JSONRpcProvider({
-    url: "https://testnet.opnet.org",
-    network: btcNetworks.testnet,
+    url: walletConfig.rpcUrl,
+    network: bitcoinNetwork as never,
   });
 
   // Fetch UTXOs for the sender address via OPNet RPC — required by TransactionFactory
@@ -1443,11 +1474,11 @@ export async function submitOpnetLiquidityFundingWithWallet(
 
   if (!utxos || utxos.length === 0) {
     throw new Error(
-      "No UTXOs found for your wallet address on OPNet testnet. Ensure your wallet has confirmed BTC on the OPNet signet chain.",
+      "No UTXOs found for your wallet address on the configured OP_NET network. Ensure your wallet has confirmed BTC on that OP_NET chain.",
     );
   }
 
-  const toAddress = toOpnetTestnetAddress(rawAddr);
+  const toAddress = toOpnetNetworkAddress(rawAddr);
   const factory = new TransactionFactory();
 
   // opnet.web3.sendBitcoin (called by detectFundingOPWallet) SIGNS but does NOT
@@ -1465,7 +1496,7 @@ export async function submitOpnetLiquidityFundingWithWallet(
   const rawHex = result?.tx;
   if (!rawHex || typeof rawHex !== "string" || rawHex.length < 64) {
     throw new Error(
-      "OP_WALLET did not return a signed transaction. Ensure your wallet is on OPNet Testnet and has confirmed UTXOs.",
+      "OP_WALLET did not return a signed transaction. Ensure your wallet is on the configured OP_NET network and has confirmed UTXOs.",
     );
   }
 
@@ -1474,7 +1505,7 @@ export async function submitOpnetLiquidityFundingWithWallet(
   const { Transaction: BtcTransaction } = await import("@btc-vision/bitcoin");
   const txId = BtcTransaction.fromHex(rawHex).getId();
 
-  // Broadcast the signed raw hex to OPNet testnet signet.
+  // Broadcast the signed raw hex to the configured OP_NET network.
   // If the wallet already broadcast it, sendRawTransaction returns null — that's fine.
   const broadcastResult = await rpcProvider.sendRawTransaction(rawHex, false);
   if (broadcastResult && typeof (broadcastResult as unknown as Record<string, unknown>)["success"] !== "undefined") {

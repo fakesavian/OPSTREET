@@ -3,6 +3,14 @@
 // ERR_PACKAGE_PATH_NOT_EXPORTED / module-init crashes on Vercel when a stale cached
 // version of @btc-vision/transaction is present at lambda startup.
 import { GAME_PAYMENT_TOKENS, type LiquidityToken } from "@opfun/shared";
+import {
+  getBitcoinNetworkKey,
+  getDefaultOpnetRpcUrl,
+  getOpnetJsonRpcUrlFromRpcUrl,
+  resolveOpnetNetworkName,
+} from "./network-config.js";
+import type { OpnetNetworkConfig, OpnetNetworkName } from "./network-config.js";
+export type { OpnetNetworkConfig, OpnetNetworkName } from "./network-config.js";
 
 // Type-only imports — erased at compile time, no runtime cost.
 import type {
@@ -24,19 +32,21 @@ async function getOpnetSdk(): Promise<OpnetSdkModule> {
   return _opnetSdk;
 }
 
-const OPNET_RPC_URL = (process.env["OPNET_RPC_URL"] ?? "").trim() || "https://testnet.opnet.org";
+const OPNET_RPC_URL_OVERRIDE = (process.env["OPNET_RPC_URL"] ?? "").trim();
+const OPNET_NETWORK = resolveOpnetNetworkName(process.env["OPNET_NETWORK"], OPNET_RPC_URL_OVERRIDE);
+const OPNET_RPC_URL = OPNET_RPC_URL_OVERRIDE || getDefaultOpnetRpcUrl(OPNET_NETWORK);
 const OPNET_PROVIDER_TIMEOUT_MS = Number(process.env["OPNET_PROVIDER_TIMEOUT_MS"] ?? 15_000);
 const DEFAULT_INTERACTION_FEE_RATE = Number(process.env["OPNET_INTERACTION_FEE_RATE"] ?? 5);
 const DEFAULT_INTERACTION_MAX_SPEND = BigInt(process.env["OPNET_INTERACTION_MAX_SPEND"] ?? "50000");
 
 // Lazy-loaded module caches — populated on first use, never at module load time.
-let _btcNetworks: { testnet: unknown } | null = null;
+let _btcNetworks: Record<string, unknown> | null = null;
 let _AddressClass: { fromString: (s: string) => unknown } | null = null;
 
-async function getBtcNetworks(): Promise<{ testnet: unknown }> {
+async function getBtcNetworks(): Promise<Record<string, unknown>> {
   if (!_btcNetworks) {
     const mod = await import("@btc-vision/bitcoin");
-    _btcNetworks = mod.networks as { testnet: unknown };
+    _btcNetworks = mod.networks as Record<string, unknown>;
   }
   return _btcNetworks;
 }
@@ -51,7 +61,12 @@ async function getAddressClass(): Promise<{ fromString: (s: string) => unknown }
 
 async function getOpnetNetworkObj(): Promise<unknown> {
   const nets = await getBtcNetworks();
-  return nets.testnet;
+  const networkKey = getBitcoinNetworkKey(OPNET_NETWORK);
+  const network = nets[networkKey];
+  if (!network) {
+    throw new RuntimeConfigError(`@btc-vision/bitcoin does not expose a ${networkKey} network object.`);
+  }
+  return network;
 }
 
 /**
@@ -128,6 +143,7 @@ export interface RuntimeDiagnostics {
     tbtcLiquidity: boolean;
     shopMint: boolean;
   };
+  issues: string[];
 }
 
 export interface LivePoolState {
@@ -867,6 +883,29 @@ export async function getRuntimeDiagnostics(): Promise<RuntimeDiagnostics> {
     inspectRuntimeAddress("OPNET_TBTC_CONTRACT_ADDRESS", TBTC_CONTRACT_ADDRESS, canProbeCode),
   ]);
 
+  const readiness = {
+    liveReads: providerHealth.healthy,
+    poolCreation: providerHealth.healthy && factory.valid && factory.codeExists === true,
+    routerReads: providerHealth.healthy && router.valid && router.codeExists === true,
+    tbtcLiquidity: providerHealth.healthy && tbtc.valid && tbtc.codeExists === true,
+    shopMint: providerHealth.healthy && shopCollection.valid && shopCollection.codeExists === true,
+  };
+
+  const issues: string[] = [];
+  if (!providerHealth.healthy) issues.push(`OP_NET provider is unhealthy: ${providerHealth.error ?? "unknown error"}`);
+  for (const [label, diagnostic] of Object.entries({ factory, router, shopCollection, tbtc })) {
+    if (!diagnostic.configured) continue;
+    if (!diagnostic.valid) issues.push(`${label} address is invalid${diagnostic.error ? `: ${diagnostic.error}` : "."}`);
+    if (diagnostic.valid && diagnostic.codeExists === false) {
+      issues.push(`${label} address has no contract code on ${getOpnetNetwork()} (${OPNET_RPC_URL}). Verify the address belongs to this OP_NET network.`);
+    }
+  }
+  if (factory.configured && router.configured && (!readiness.poolCreation || !readiness.routerReads)) {
+    issues.push("MotoSwap factory/router are configured but not live on the selected OP_NET network. This usually means OPNET_NETWORK/OPNET_RPC_URL and deployed addresses are from different chains.");
+  }
+  if (!tbtc.configured) issues.push("OPNET_TBTC_CONTRACT_ADDRESS is blank; TBTC liquidity flows are disabled.");
+  if (!shopCollection.configured) issues.push("SHOP_OP721_COLLECTION is blank; shop mint flows are disabled.");
+
   return {
     timestamp: new Date().toISOString(),
     network: getOpnetNetwork(),
@@ -878,13 +917,8 @@ export async function getRuntimeDiagnostics(): Promise<RuntimeDiagnostics> {
       shopCollection,
       tbtc,
     },
-    readiness: {
-      liveReads: providerHealth.healthy,
-      poolCreation: providerHealth.healthy && factory.valid && factory.codeExists === true,
-      routerReads: providerHealth.healthy && router.valid && router.codeExists === true,
-      tbtcLiquidity: providerHealth.healthy && tbtc.valid && tbtc.codeExists === true,
-      shopMint: providerHealth.healthy && shopCollection.valid && shopCollection.codeExists === true,
-    },
+    readiness,
+    issues,
   };
 }
 
@@ -960,6 +994,19 @@ export function getOpnetRpcUrl(): string {
   return OPNET_RPC_URL;
 }
 
-export function getOpnetNetwork(): string {
-  return "testnet";
+export function getOpnetNetwork(): OpnetNetworkName {
+  return OPNET_NETWORK;
+}
+
+export function getOpnetNetworkConfig(): OpnetNetworkConfig {
+  return {
+    network: OPNET_NETWORK,
+    rpcUrl: OPNET_RPC_URL,
+    timeoutMs: OPNET_PROVIDER_TIMEOUT_MS,
+    bitcoinNetworkKey: getBitcoinNetworkKey(OPNET_NETWORK),
+  };
+}
+
+export function getOpnetJsonRpcUrl(): string {
+  return getOpnetJsonRpcUrlFromRpcUrl(OPNET_RPC_URL);
 }

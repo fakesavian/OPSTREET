@@ -9,12 +9,17 @@
     ".": {
       "import": "./dist/index.js",
       "require": "./dist/index.js"
+    },
+    "./network": {
+      "import": "./dist/network-config.js",
+      "require": "./dist/network-config.js"
     }
   },
   "scripts": {
     "build": "tsc --project tsconfig.json",
     "typecheck": "tsc --noEmit",
-    "lint": "echo 'lint ok'"
+    "lint": "echo 'lint ok'",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "@opfun/shared": "workspace:*",

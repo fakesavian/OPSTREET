@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "predev": "pnpm --filter @opfun/shared build",
+    "predev": "pnpm --filter @opfun/shared build && pnpm --filter @opfun/opnet build",
     "dev": "concurrently --names \"web,api,watcher\" --prefix-colors \"cyan,green,yellow\" \"pnpm --filter web dev\" \"pnpm --filter api dev\" \"pnpm --filter watcher dev\"",
     "build": "pnpm --recursive build",
     "lint": "pnpm --recursive lint",
