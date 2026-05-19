@@ -2,7 +2,7 @@
  * OPNet integration wrapper.
  * M1: stubs | M2: scaffold + audit | M3: compile + deploy
  * SAFETY: never pass secrets, private keys, or seed phrases to Bob or this module.
- * Target: OPNet network selected via OPNET_NETWORK; defaults to OP_NET docs-aligned regtest.
+ * Target: OPNet network selected via OPNET_NETWORK; defaults to OP_NET testnet.
  */
 
 export { BobClient, getBob } from "./bob-client.js";

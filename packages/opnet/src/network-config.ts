@@ -1,10 +1,10 @@
-export type OpnetNetworkName = "mainnet" | "regtest" | "legacy-testnet";
+export type OpnetNetworkName = "mainnet" | "testnet";
 
 export interface OpnetNetworkConfig {
   network: OpnetNetworkName;
   rpcUrl: string;
   timeoutMs: number;
-  bitcoinNetworkKey: "bitcoin" | "regtest" | "testnet";
+  bitcoinNetworkKey: "bitcoin" | "testnet";
 }
 
 export interface OpnetWalletNetworkConfig {
@@ -12,50 +12,53 @@ export interface OpnetWalletNetworkConfig {
   rpcUrl: string;
   bitcoinNetworkKey: OpnetNetworkConfig["bitcoinNetworkKey"];
   /** Network name expected by browser OP_WALLET switchNetwork/getNetwork APIs. */
-  walletNetwork: "mainnet" | "regtest" | "testnet";
+  walletNetwork: "mainnet" | "testnet";
   /** OP_NET P2OP address HRP for this network flavor. */
-  opnetAddressHrp: "op" | "opr" | "opt";
+  opnetAddressHrp: "op" | "opt";
   /** Bitcoin BIP-322/P2TR address HRP for this network flavor. */
-  bitcoinAddressHrp: "bc" | "bcrt" | "tb";
+  bitcoinAddressHrp: "bc" | "tb";
 }
 
 export const DEFAULT_OPNET_RPC_URLS: Record<OpnetNetworkName, string> = {
   mainnet: "https://mainnet.opnet.org",
-  regtest: "https://regtest.opnet.org",
-  "legacy-testnet": "https://testnet.opnet.org",
+  testnet: "https://testnet.opnet.org",
 };
 
 export const OP_NET_ADDRESS_HRPS = ["op", "opr", "opt"] as const;
 export const BITCOIN_ADDRESS_HRPS = ["bc", "bcrt", "tb"] as const;
 
+/**
+ * Normalize app-level OP_NET networks.
+ *
+ * The product supports only OP_NET mainnet and OP_NET testnet. We still accept
+ * legacy-testnet/opnet-testnet as aliases for older env files, but intentionally
+ * reject regtest so browser wallets are never switched into the Wrench network.
+ */
 export function normalizeOpnetNetworkName(value: string | undefined): OpnetNetworkName {
   const normalized = (value ?? "").trim().toLowerCase();
-  if (!normalized || normalized === "regtest") return "regtest";
-  if (normalized === "mainnet" || normalized === "bitcoin") return "mainnet";
-  if (normalized === "testnet" || normalized === "legacy-testnet" || normalized === "legacy_testnet") {
-    return "legacy-testnet";
+  if (!normalized || normalized === "testnet" || normalized === "opnet-testnet" || normalized === "legacy-testnet" || normalized === "legacy_testnet") {
+    return "testnet";
   }
-  throw new Error(`Unsupported OPNET_NETWORK "${value}". Expected one of: mainnet, regtest, legacy-testnet.`);
+  if (normalized === "mainnet" || normalized === "bitcoin") return "mainnet";
+  throw new Error(`Unsupported OPNET_NETWORK "${value}". Expected one of: mainnet, testnet.`);
 }
 
 export function inferOpnetNetworkFromRpcUrl(rpcUrl: string): OpnetNetworkName | null {
   const normalized = rpcUrl.trim().toLowerCase();
   if (!normalized) return null;
-  if (normalized.includes("regtest.opnet.org")) return "regtest";
   if (normalized.includes("mainnet.opnet.org")) return "mainnet";
-  if (normalized.includes("testnet.opnet.org")) return "legacy-testnet";
+  if (normalized.includes("testnet.opnet.org") || normalized.includes("regtest.opnet.org")) return "testnet";
   return null;
 }
 
 export function resolveOpnetNetworkName(explicitNetwork: string | undefined, rpcUrlOverride = ""): OpnetNetworkName {
   if ((explicitNetwork ?? "").trim()) return normalizeOpnetNetworkName(explicitNetwork);
-  return inferOpnetNetworkFromRpcUrl(rpcUrlOverride) ?? "regtest";
+  return inferOpnetNetworkFromRpcUrl(rpcUrlOverride) ?? "testnet";
 }
 
 export function getBitcoinNetworkKey(network: OpnetNetworkName): OpnetNetworkConfig["bitcoinNetworkKey"] {
   if (network === "mainnet") return "bitcoin";
-  if (network === "legacy-testnet") return "testnet";
-  return "regtest";
+  return "testnet";
 }
 
 export function getDefaultOpnetRpcUrl(network: OpnetNetworkName): string {
@@ -83,24 +86,13 @@ export function getOpnetWalletNetworkConfig(
     };
   }
 
-  if (network === "legacy-testnet") {
-    return {
-      network,
-      rpcUrl,
-      bitcoinNetworkKey: "testnet",
-      walletNetwork: "testnet",
-      opnetAddressHrp: "opt",
-      bitcoinAddressHrp: "tb",
-    };
-  }
-
   return {
     network,
     rpcUrl,
-    bitcoinNetworkKey: "regtest",
-    walletNetwork: "regtest",
-    opnetAddressHrp: "opr",
-    bitcoinAddressHrp: "bcrt",
+    bitcoinNetworkKey: "testnet",
+    walletNetwork: "testnet",
+    opnetAddressHrp: "opt",
+    bitcoinAddressHrp: "tb",
   };
 }
 
@@ -117,7 +109,7 @@ export function normalizeWalletNetworkName(value: unknown): string | undefined {
   return undefined;
 }
 
-export function isWalletNetworkCompatible(reportedNetwork: string | undefined, target: OpnetNetworkName): boolean {
+export function isWalletNetworkCompatible(reportedNetwork: unknown, target: OpnetNetworkName): boolean {
   const normalized = normalizeWalletNetworkName(reportedNetwork);
   if (!normalized) return false;
 
@@ -125,6 +117,5 @@ export function isWalletNetworkCompatible(reportedNetwork: string | undefined, t
   if (normalized === target || normalized === config.walletNetwork) return true;
 
   if (target === "mainnet") return normalized.includes("mainnet") || normalized === "bitcoin";
-  if (target === "regtest") return normalized.includes("regtest");
-  return normalized.includes("testnet") || normalized.includes("legacy-testnet");
+  return normalized.includes("testnet") || normalized.includes("op_net testnet") || normalized.includes("opnet testnet");
 }

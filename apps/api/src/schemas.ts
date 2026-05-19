@@ -1,5 +1,13 @@
 import { z } from "zod";
 
+const LiquidityTokenSchema = z.preprocess((value) => {
+  if (typeof value !== "string") return value;
+  const normalized = value.trim().toUpperCase();
+  // User-facing shorthand; store canonical OP-20 symbol everywhere else.
+  if (normalized === "PIL") return "PILL";
+  return normalized;
+}, z.enum(["TBTC", "MOTO", "PILL"]));
+
 export const CreateProjectSchema = z.object({
   name: z.string().min(2).max(80),
   ticker: z
@@ -18,7 +26,7 @@ export const CreateProjectSchema = z.object({
     .default({}),
   iconUrl: z.string().url().optional(),
   sourceRepoUrl: z.string().url().optional(),
-  liquidityToken: z.enum(["TBTC", "MOTO", "PILL"]).optional(),
+  liquidityToken: LiquidityTokenSchema.optional(),
   liquidityAmount: z
     .string()
     .regex(/^\d+(\.\d+)?$/, "liquidityAmount must be a positive number string")

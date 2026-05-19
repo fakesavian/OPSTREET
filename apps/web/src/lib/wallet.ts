@@ -185,7 +185,7 @@ function getBrowserOpnetWalletConfig(): OpnetWalletNetworkConfig {
 
 /**
  * Ensure an address uses the OP_NET HRP for the currently configured network.
- * Examples: legacy-testnet tb1/opt1 -> opt1, regtest bcrt1/opr1 -> opr1.
+ * Examples: testnet tb1/opt1 -> opt1, mainnet bc1/op1 -> op1.
  */
 function toOpnetNetworkAddress(address: string): string {
   const lower = address.toLowerCase();

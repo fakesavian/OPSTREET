@@ -4,9 +4,9 @@ import { spawnSync } from "node:child_process";
 
 const runtime = await import("../dist/runtime-provider.js");
 
-test("OP_NET runtime defaults to docs-aligned regtest config", () => {
-  assert.equal(runtime.getOpnetNetwork(), "regtest");
-  assert.equal(runtime.getOpnetRpcUrl(), "https://regtest.opnet.org");
+test("OP_NET runtime defaults to OP_NET testnet config, not regtest/Wrench", () => {
+  assert.equal(runtime.getOpnetNetwork(), "testnet");
+  assert.equal(runtime.getOpnetRpcUrl(), "https://testnet.opnet.org");
 });
 
 test("OP_NET runtime exposes canonical network config for diagnostics", () => {
@@ -14,10 +14,10 @@ test("OP_NET runtime exposes canonical network config for diagnostics", () => {
 
   const config = runtime.getOpnetNetworkConfig();
   assert.deepEqual(config, {
-    network: "regtest",
-    rpcUrl: "https://regtest.opnet.org",
+    network: "testnet",
+    rpcUrl: "https://testnet.opnet.org",
     timeoutMs: 15_000,
-    bitcoinNetworkKey: "regtest",
+    bitcoinNetworkKey: "testnet",
   });
 });
 
@@ -33,35 +33,47 @@ function readConfigWithEnv(env) {
   return JSON.parse(result.stdout.trim());
 }
 
-test("OP_NET runtime infers legacy-testnet network when a legacy testnet RPC URL is explicitly configured", () => {
+test("OP_NET runtime infers OP_NET testnet network when a testnet RPC URL is explicitly configured", () => {
   assert.deepEqual(readConfigWithEnv({ OPNET_NETWORK: "", OPNET_RPC_URL: "https://testnet.opnet.org" }), {
-    network: "legacy-testnet",
+    network: "testnet",
     rpcUrl: "https://testnet.opnet.org",
     timeoutMs: 15_000,
     bitcoinNetworkKey: "testnet",
   });
 });
 
-test("OP_NET_NETWORK overrides RPC URL inference when explicitly set", () => {
-  assert.deepEqual(readConfigWithEnv({ OPNET_NETWORK: "regtest", OPNET_RPC_URL: "https://testnet.opnet.org" }), {
-    network: "regtest",
+test("legacy-testnet remains accepted as a backwards-compatible alias for OP_NET testnet", () => {
+  assert.deepEqual(readConfigWithEnv({ OPNET_NETWORK: "legacy-testnet", OPNET_RPC_URL: "https://testnet.opnet.org" }), {
+    network: "testnet",
     rpcUrl: "https://testnet.opnet.org",
     timeoutMs: 15_000,
-    bitcoinNetworkKey: "regtest",
+    bitcoinNetworkKey: "testnet",
   });
+});
+
+test("OP_NET_NETWORK rejects regtest so the site never switches OP_WALLET to Wrench", () => {
+  const script = `import('./packages/opnet/dist/runtime-provider.js').then((runtime) => console.log(JSON.stringify(runtime.getOpnetNetworkConfig())));`;
+  const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+    cwd: new URL("../../..", import.meta.url),
+    env: { ...process.env, OPNET_NETWORK: "regtest", OPNET_RPC_URL: "https://testnet.opnet.org" },
+    encoding: "utf8",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Unsupported OPNET_NETWORK/);
 });
 
 test("OP_NET runtime exposes JSON-RPC endpoint derived from canonical RPC URL", () => {
   assert.equal(typeof runtime.getOpnetJsonRpcUrl, "function");
-  assert.equal(runtime.getOpnetJsonRpcUrl(), "https://regtest.opnet.org/api/v1/json-rpc");
+  assert.equal(runtime.getOpnetJsonRpcUrl(), "https://testnet.opnet.org/api/v1/json-rpc");
 
   assert.equal(
-    readJsonRpcUrlWithEnv({ OPNET_NETWORK: "legacy-testnet", OPNET_RPC_URL: "https://testnet.opnet.org" }),
+    readJsonRpcUrlWithEnv({ OPNET_NETWORK: "testnet", OPNET_RPC_URL: "https://testnet.opnet.org" }),
     "https://testnet.opnet.org/api/v1/json-rpc",
   );
   assert.equal(
-    readJsonRpcUrlWithEnv({ OPNET_NETWORK: "regtest", OPNET_RPC_URL: "https://regtest.opnet.org/api/v1/json-rpc" }),
-    "https://regtest.opnet.org/api/v1/json-rpc",
+    readJsonRpcUrlWithEnv({ OPNET_NETWORK: "mainnet", OPNET_RPC_URL: "https://mainnet.opnet.org/api/v1/json-rpc" }),
+    "https://mainnet.opnet.org/api/v1/json-rpc",
   );
 });
 
@@ -86,20 +98,11 @@ function readJsonRpcUrlWithEnv(env) {
   return result.stdout.trim();
 }
 
-test("OP_NET wallet network config maps canonical networks to wallet names, HRPs, and BTC Vision keys", async () => {
+test("OP_NET wallet network config maps only mainnet and OP_NET testnet to wallet names, HRPs, and BTC Vision keys", async () => {
   const network = await import("../dist/network-config.js");
 
-  assert.deepEqual(network.getOpnetWalletNetworkConfig("regtest"), {
-    network: "regtest",
-    rpcUrl: "https://regtest.opnet.org",
-    bitcoinNetworkKey: "regtest",
-    walletNetwork: "regtest",
-    opnetAddressHrp: "opr",
-    bitcoinAddressHrp: "bcrt",
-  });
-
-  assert.deepEqual(network.getOpnetWalletNetworkConfig("legacy-testnet"), {
-    network: "legacy-testnet",
+  assert.deepEqual(network.getOpnetWalletNetworkConfig("testnet"), {
+    network: "testnet",
     rpcUrl: "https://testnet.opnet.org",
     bitcoinNetworkKey: "testnet",
     walletNetwork: "testnet",
@@ -117,13 +120,14 @@ test("OP_NET wallet network config maps canonical networks to wallet names, HRPs
   });
 });
 
-test("OP_NET wallet compatibility rejects legacy testnet when regtest is configured", async () => {
+test("OP_NET wallet compatibility accepts only the configured mainnet/testnet wallet network", async () => {
   const network = await import("../dist/network-config.js");
 
-  assert.equal(network.isWalletNetworkCompatible("regtest", "regtest"), true);
-  assert.equal(network.isWalletNetworkCompatible({ network: "regtest" }, "regtest"), true);
-  assert.equal(network.isWalletNetworkCompatible("testnet", "regtest"), false);
-  assert.equal(network.isWalletNetworkCompatible("testnet", "legacy-testnet"), true);
+  assert.equal(network.isWalletNetworkCompatible("testnet", "testnet"), true);
+  assert.equal(network.isWalletNetworkCompatible({ network: "testnet" }, "testnet"), true);
+  assert.equal(network.isWalletNetworkCompatible("regtest", "testnet"), false);
+  assert.equal(network.isWalletNetworkCompatible("wrench", "testnet"), false);
   assert.equal(network.isWalletNetworkCompatible("bitcoin", "mainnet"), true);
+  assert.equal(network.isWalletNetworkCompatible("testnet", "mainnet"), false);
 });
 

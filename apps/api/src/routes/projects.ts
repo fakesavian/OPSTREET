@@ -5,7 +5,7 @@ import { prisma } from "../db.js";
 import { CreateProjectSchema } from "../schemas.js";
 import { slugify } from "@opfun/shared";
 import { scaffoldContract } from "@opfun/opnet";
-import { auditContract } from "@opfun/opnet";
+import { auditContract, getOpnetNetwork } from "@opfun/opnet";
 import { assertCanTransition } from "../statusMachine.js";
 import { onProjectCreated } from "./floor.js";
 import { verifyWalletToken } from "../middleware/verifyWalletToken.js";
@@ -119,7 +119,7 @@ export async function projectRoutes(app: FastifyInstance) {
         iconUrl: data.iconUrl ?? null,
         sourceRepoUrl: data.sourceRepoUrl ?? null,
         status: "DRAFT",
-        network: "testnet",
+        network: getOpnetNetwork(),
         liquidityToken: data.liquidityToken,
         liquidityAmount: data.liquidityAmount,
         liquidityFundingTx: data.liquidityFundingTx,

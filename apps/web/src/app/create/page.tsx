@@ -21,7 +21,9 @@ const LIQUIDITY_TOKEN_TO_SATS: Record<"TBTC" | "MOTO" | "PILL", number> = {
   MOTO: 65_000,
   PILL: 70_000,
 };
-const SATS_PER_TBTC = 100_000_000;
+const SATS_PER_BTC = 100_000_000;
+const BROWSER_OPNET_NETWORK = (process.env["NEXT_PUBLIC_OPNET_NETWORK"] ?? "testnet").toLowerCase();
+const FUNDING_BTC_SYMBOL = BROWSER_OPNET_NETWORK.includes("mainnet") ? "BTC" : "tBTC";
 
 function getLiquidityFundingPreview(
   liquidityToken: "TBTC" | "MOTO" | "PILL",
@@ -38,7 +40,7 @@ function getLiquidityFundingPreview(
     liquidityUnits,
     satsRate,
     totalSats,
-    totalTbtc: totalSats / SATS_PER_TBTC,
+    totalBtc: totalSats / SATS_PER_BTC,
     valid,
   };
 }
@@ -47,7 +49,7 @@ function formatSats(value: number): string {
   return value.toLocaleString();
 }
 
-function formatTbtc(value: number): string {
+function formatBtc(value: number): string {
   return value.toFixed(8);
 }
 
@@ -176,7 +178,7 @@ export default function CreatePage() {
       const msg = err instanceof Error ? err.message : "Something went wrong";
       if (/insufficient funds/i.test(msg) && !/utxo|csv|spendable/i.test(msg)) {
         setError(
-          `${msg} Need at least ${formatSats(fundingPreview.totalSats)} sats (${formatTbtc(fundingPreview.totalTbtc)} tBTC) plus network fees.`,
+          `${msg} Need at least ${formatSats(fundingPreview.totalSats)} sats (${formatBtc(fundingPreview.totalBtc)} ${FUNDING_BTC_SYMBOL}) plus network fees.`,
         );
       } else if (/invalid.*address|invalid.*recipient/i.test(msg)) {
         setError(`${msg} Open OP_WALLET and verify you are on "OP_NET Testnet" (Signet).`);
@@ -302,7 +304,7 @@ export default function CreatePage() {
                 >
                   <option value="TBTC">TBTC</option>
                   <option value="MOTO">MOTO</option>
-                  <option value="PILL">PILL</option>
+                  <option value="PILL">PIL / PILL</option>
                 </select>
               </FieldGroup>
               <FieldGroup label="Initial liquidity amount *" error={showError("liquidityAmount")}>
@@ -409,7 +411,7 @@ export default function CreatePage() {
               <li>
                 {form.liquidityAmount} {form.liquidityToken} × {formatSats(fundingPreview.satsRate)} sats = {formatSats(fundingPreview.totalSats)} sats
               </li>
-              <li>{formatTbtc(fundingPreview.totalTbtc)} tBTC will be sent from OP_WALLET to the liquidity vault.</li>
+              <li>{formatBtc(fundingPreview.totalBtc)} {FUNDING_BTC_SYMBOL} will be sent from OP_WALLET to the liquidity vault.</li>
               <li>Your OP_WALLET needs at least {formatSats(fundingPreview.totalSats)} sats + network fees.</li>
             </ul>
           </div>
