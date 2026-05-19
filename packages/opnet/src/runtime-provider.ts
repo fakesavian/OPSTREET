@@ -204,6 +204,24 @@ export interface BroadcastInteractionResult extends BroadcastResult {
   fundingTxId?: string;
 }
 
+interface SequentialBroadcastTxResultLike {
+  txid?: string;
+  txId?: string;
+  success?: boolean;
+  error?: string;
+  peers?: number;
+}
+
+interface BroadcastedTransactionPackageLike {
+  success?: boolean;
+  error?: string;
+  packageResult?: {
+    packageMsg?: string;
+    txResults?: Record<string, { txid?: string; error?: string }>;
+  };
+  sequentialResults?: SequentialBroadcastTxResultLike[];
+}
+
 export interface TransactionReceiptResult {
   found: boolean;
   status: "confirmed" | "failed" | "pending";
@@ -362,6 +380,32 @@ function resultTxId(raw: unknown): string | undefined {
     const value = result[key];
     if (typeof value === "string" && value.length > 8) return value;
   }
+  return undefined;
+}
+
+function packageResultTxId(result: BroadcastedTransactionPackageLike, index: number): string | undefined {
+  const sequential = result.sequentialResults?.[index];
+  if (sequential?.txid) return sequential.txid;
+  if (sequential?.txId) return sequential.txId;
+
+  const txResults = result.packageResult?.txResults;
+  if (!txResults) return undefined;
+  const ordered = Object.values(txResults);
+  return ordered[index]?.txid;
+}
+
+function packageResultError(result: BroadcastedTransactionPackageLike, index: number): string | undefined {
+  const sequential = result.sequentialResults?.[index];
+  if (sequential && sequential.success === false) return sequential.error ?? `transaction ${index} failed`;
+
+  const packageResult = result.packageResult;
+  if (!packageResult) return undefined;
+
+  const failures = Object.values(packageResult.txResults ?? {})
+    .map((tx) => tx.error)
+    .filter((error): error is string => Boolean(error));
+  if (failures.length > 0) return failures.join("; ");
+  if (packageResult.packageMsg && packageResult.packageMsg !== "success") return packageResult.packageMsg;
   return undefined;
 }
 
@@ -792,26 +836,44 @@ export async function broadcastSignedInteraction(
   payload: SignedInteractionPayload,
 ): Promise<BroadcastInteractionResult> {
   try {
-    let fundingTxId: string | undefined;
+    const providerInstance = await getProvider();
 
     if (payload.fundingTransactionRaw) {
-      const funding = await (await getProvider()).sendRawTransaction(payload.fundingTransactionRaw, false);
-      const maybeFundingTxId = resultTxId(funding);
-      if (!funding.success || !maybeFundingTxId) {
+      const result = await providerInstance.sendRawTransactionPackage(
+        [payload.fundingTransactionRaw, payload.interactionTransactionRaw],
+        true,
+      ) as BroadcastedTransactionPackageLike;
+
+      const packageError = packageResultError(result, 1) ?? result.error;
+      if (!result.success || packageError) {
         return {
           success: false,
-          error: funding.error ?? "Funding transaction broadcast failed.",
+          fundingTxId: packageResultTxId(result, 0),
+          error: packageError ?? "Interaction transaction package broadcast failed.",
         };
       }
-      fundingTxId = maybeFundingTxId;
+
+      const txId = packageResultTxId(result, 1);
+      if (!txId) {
+        return {
+          success: false,
+          fundingTxId: packageResultTxId(result, 0),
+          error: "Interaction transaction package broadcast returned no interaction txid.",
+        };
+      }
+
+      return {
+        success: true,
+        txId,
+        fundingTxId: packageResultTxId(result, 0),
+      };
     }
 
-    const interaction = await (await getProvider()).sendRawTransaction(payload.interactionTransactionRaw, false);
+    const interaction = await providerInstance.sendRawTransaction(payload.interactionTransactionRaw, false);
     const txId = resultTxId(interaction);
     if (!interaction.success || !txId) {
       return {
         success: false,
-        fundingTxId,
         error: interaction.error ?? "Interaction transaction broadcast failed.",
       };
     }
@@ -819,7 +881,6 @@ export async function broadcastSignedInteraction(
     return {
       success: true,
       txId,
-      fundingTxId,
     };
   } catch (error) {
     return {
