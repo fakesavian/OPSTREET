@@ -33,6 +33,16 @@ export const CreateProjectSchema = z.object({
     .refine((v) => Number(v) > 0, "liquidityAmount must be greater than 0")
     .optional(),
   liquidityFundingTx: z.string().min(8).optional(),
+}).superRefine((value, ctx) => {
+  if ((value.liquidityToken === "BTC" || value.liquidityToken === "TBTC") && value.liquidityAmount) {
+    if (!/^\d+(?:\.\d{1,8})?$/.test(value.liquidityAmount)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["liquidityAmount"],
+        message: "BTC/tBTC liquidity can use up to 8 decimal places.",
+      });
+    }
+  }
 });
 
 export type CreateProjectInput = z.infer<typeof CreateProjectSchema>;

@@ -34,16 +34,42 @@ function isNativeBtcFundingToken(token: LiquidityToken): boolean {
   return token === "BTC" || token === "TBTC";
 }
 
+function parseNativeBtcAmountToSats(amount: string): { sats: number; error?: string } {
+  const trimmed = amount.trim();
+  const match = /^(\d+)(?:\.(\d{1,8})?)?$/.exec(trimmed);
+  if (!match) {
+    return { sats: 0, error: "BTC/tBTC liquidity can use up to 8 decimal places." };
+  }
+
+  const whole = BigInt(match[1] ?? "0");
+  const fraction = (match[2] ?? "").padEnd(8, "0");
+  const satsBigInt = whole * BigInt(SATS_PER_BTC) + BigInt(fraction || "0");
+
+  if (satsBigInt <= BigInt(0)) return { sats: 0, error: "Liquidity amount must be greater than zero." };
+  if (satsBigInt > BigInt(Number.MAX_SAFE_INTEGER)) {
+    return { sats: 0, error: "BTC/tBTC liquidity amount is too large." };
+  }
+
+  return { sats: Number(satsBigInt) };
+}
+
 function getLiquidityFundingPreview(
   liquidityToken: LiquidityToken,
   liquidityAmount: string,
 ) {
   const liquidityUnits = Number(liquidityAmount);
   const satsRate = LIQUIDITY_TOKEN_TO_SATS[liquidityToken];
-  const valid = Number.isFinite(liquidityUnits) && liquidityUnits > 0;
-  const totalSats = valid
-    ? Math.max(1, Math.round(liquidityUnits * satsRate))
-    : 0;
+  const nativeBtc = isNativeBtcFundingToken(liquidityToken)
+    ? parseNativeBtcAmountToSats(liquidityAmount)
+    : null;
+  const valid = nativeBtc
+    ? !nativeBtc.error
+    : Number.isFinite(liquidityUnits) && liquidityUnits > 0;
+  const totalSats = nativeBtc
+    ? nativeBtc.sats
+    : valid
+      ? Math.max(1, Math.round(liquidityUnits * satsRate))
+      : 0;
 
   return {
     liquidityUnits,
@@ -51,6 +77,7 @@ function getLiquidityFundingPreview(
     totalSats,
     totalBtc: totalSats / SATS_PER_BTC,
     valid,
+    error: nativeBtc?.error,
   };
 }
 
@@ -82,7 +109,12 @@ function validateStep0(form: {
   if (!form.description || form.description.length < 10) errors["description"] = "Description must be at least 10 characters.";
   if (form.description.length > 2000) errors["description"] = "Description must be 2000 characters or fewer.";
   if (!["BTC", "TBTC", "MOTO", "PILL"].includes(form.liquidityToken)) errors["liquidityToken"] = "Select a liquidity token.";
-  if (!form.liquidityAmount || !/^\d+(\.\d+)?$/.test(form.liquidityAmount)) {
+  const nativeBtcAmount = isNativeBtcFundingToken(form.liquidityToken)
+    ? parseNativeBtcAmountToSats(form.liquidityAmount)
+    : null;
+  if (nativeBtcAmount?.error) {
+    errors["liquidityAmount"] = nativeBtcAmount.error;
+  } else if (!form.liquidityAmount || !/^\d+(\.\d+)?$/.test(form.liquidityAmount)) {
     errors["liquidityAmount"] = "Liquidity amount must be a positive number.";
   } else if (Number(form.liquidityAmount) <= 0) {
     errors["liquidityAmount"] = "Liquidity amount must be greater than zero.";
@@ -331,7 +363,8 @@ export default function CreatePage() {
               <FieldGroup label="Initial liquidity amount *" error={showError("liquidityAmount")}>
                 <input
                   className={`input font-mono ${showError("liquidityAmount") ? "border-opRed" : ""}`}
-                  placeholder="100"
+                  placeholder={isNativeBtcFundingToken(form.liquidityToken) ? "0.01" : "100"}
+                  inputMode="decimal"
                   value={form.liquidityAmount}
                   onChange={(e) => set("liquidityAmount", e.target.value)}
                   onBlur={() => blur("liquidityAmount")}
