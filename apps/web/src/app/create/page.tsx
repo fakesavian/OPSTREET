@@ -13,7 +13,10 @@ type Step = 0 | 1 | 2;
 type FieldErrors = Partial<Record<string, string>>;
 type TouchedFields = Partial<Record<string, boolean>>;
 
-const DEFAULT_LIQUIDITY_VAULT_ADDRESS = "opt1pq4p904uy5zv76wcyac2sqrulpmluys6y6kulpyy7uerhkr9nxvgs3y2sce";
+// Temporary OP_NET testnet treasury/vault address. Override this with
+// NEXT_PUBLIC_LIQUIDITY_VAULT_ADDRESS once a dedicated contract treasury wallet
+// is created.
+const DEFAULT_LIQUIDITY_VAULT_ADDRESS = "opt1p0stmw7lmsndpskd4zk6u0skn3lsjrkl0anwyk2t2e906cjsua7ys8wk5nu";
 const LIQUIDITY_VAULT_ADDRESS =
   process.env["NEXT_PUBLIC_LIQUIDITY_VAULT_ADDRESS"]?.trim() || DEFAULT_LIQUIDITY_VAULT_ADDRESS;
 type LiquidityToken = "BTC" | "TBTC" | "MOTO" | "PILL";
@@ -25,6 +28,7 @@ const LIQUIDITY_TOKEN_TO_SATS: Record<LiquidityToken, number> = {
   PILL: 70_000,
 };
 const SATS_PER_BTC = 100_000_000;
+
 const BROWSER_OPNET_NETWORK = (process.env["NEXT_PUBLIC_OPNET_NETWORK"] ?? "testnet").toLowerCase();
 const IS_OPNET_MAINNET = BROWSER_OPNET_NETWORK.includes("mainnet");
 const NATIVE_BTC_LIQUIDITY_TOKEN: LiquidityToken = IS_OPNET_MAINNET ? "BTC" : "TBTC";

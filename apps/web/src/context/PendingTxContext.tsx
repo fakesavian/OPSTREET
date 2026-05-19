@@ -36,6 +36,7 @@ interface PendingTxState {
 
 const OP_NET_TX_STATUS_API = "/api/opnet-tx";
 const POLL_INTERVAL_MS = 30_000;
+const TXID_RE = /^[0-9a-f]{64}$/i;
 
 const PendingTxContext = createContext<PendingTxState>({
   txId: null,
@@ -57,6 +58,10 @@ export function PendingTxProvider({ children }: { children: React.ReactNode }) {
       if (!raw) return;
       const stored: StoredTx = JSON.parse(raw) as StoredTx;
       if (!stored.txId || !stored.startedAt) return;
+      if (!stored.txId.startsWith("testnet-skip-") && !TXID_RE.test(stored.txId)) {
+        localStorage.removeItem(STORAGE_KEY);
+        return;
+      }
       // Discard if TTL expired
       if (Date.now() - stored.startedAt > TTL_MS) {
         localStorage.removeItem(STORAGE_KEY);
@@ -98,11 +103,20 @@ export function PendingTxProvider({ children }: { children: React.ReactNode }) {
   }, [txId, confirmed]);
 
   const setPendingTx = useCallback((id: string) => {
-    if (id === txId) return;
+    const pendingId = id.trim();
+    if (!pendingId.startsWith("testnet-skip-") && !TXID_RE.test(pendingId)) {
+      console.warn("Ignoring invalid pending tx id", pendingId.slice(0, 32));
+      localStorage.removeItem(STORAGE_KEY);
+      setTxId(null);
+      setStartedAt(null);
+      setConfirmed(false);
+      return;
+    }
+    if (pendingId === txId) return;
     const now = Date.now();
-    const stored: StoredTx = { txId: id, startedAt: now };
+    const stored: StoredTx = { txId: pendingId, startedAt: now };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
-    setTxId(id);
+    setTxId(pendingId);
     setStartedAt(now);
     setConfirmed(false);
   }, [txId]);

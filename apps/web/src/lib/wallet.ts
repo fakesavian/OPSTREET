@@ -1506,26 +1506,31 @@ export async function submitOpnetLiquidityFundingWithWallet(
   const txId = BtcTransaction.fromHex(rawHex).getId();
 
   // Broadcast the signed raw hex to the configured OP_NET network.
-  // If the wallet already broadcast it, sendRawTransaction returns null — that's fine.
+  // Only return a pending tx if the node accepted it and gave us a canonical
+  // 64-hex txid. Otherwise the UI would show a mempool link for a transaction
+  // that was never actually posted.
   const broadcastResult = await rpcProvider.sendRawTransaction(rawHex, false);
-  let broadcastTxId = txId;
-  if (broadcastResult && typeof (broadcastResult as unknown as Record<string, unknown>)["success"] !== "undefined") {
-    const b = broadcastResult as unknown as Record<string, unknown>;
-    if (b["success"] === false) {
-      const err = b["error"] as string | undefined;
-      // "already in utxo set" / duplicate tx = tx is already live, not a real failure
-      if (err && !err.toLowerCase().includes("already") && !err.toLowerCase().includes("utxo")) {
-        throw new Error(`OPNet broadcast rejected: ${err}`);
-      }
-    } else if (typeof b["result"] === "string" && b["result"].length >= 8) {
-      // The OP_NET node returns the canonical txid it accepted. Use that for the
-      // loading overlay/explorer link instead of a locally-computed id so users
-      // never get sent to a mempool URL for the wrong transaction hash.
-      broadcastTxId = b["result"];
+  const b = broadcastResult as unknown as Record<string, unknown> | null;
+  const success = b?.["success"];
+  const error = typeof b?.["error"] === "string" ? b["error"] : undefined;
+  const resultTxId = typeof b?.["result"] === "string" ? b["result"] : undefined;
+
+  if (success === false) {
+    // Duplicate/already-known means the raw tx has already been accepted before;
+    // use the locally decoded txid in that narrow recovery case.
+    if (error && /already|mempool|known|utxo/i.test(error)) {
+      return { txId, raw: { signed: result, broadcast: broadcastResult, localTxId: txId } };
     }
+    throw new Error(`OPNet broadcast rejected: ${error ?? "unknown error"}`);
   }
 
-  return { txId: broadcastTxId, raw: { signed: result, broadcast: broadcastResult, localTxId: txId } };
+  if (!resultTxId || !/^[0-9a-f]{64}$/i.test(resultTxId)) {
+    throw new Error(
+      `OPNet broadcast did not return a canonical txid. Response: ${JSON.stringify(broadcastResult)}`,
+    );
+  }
+
+  return { txId: resultTxId, raw: { signed: result, broadcast: broadcastResult, localTxId: txId } };
 }
 
 // ── Wallet-native interaction signing ─────────────────────────────────────

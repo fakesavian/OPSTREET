@@ -13,6 +13,11 @@ export const metadata: Metadata = {
   title: "OpStreet",
   description: "Launch fast on OP_NET - with a Risk Card on every token.",
   keywords: ["opnet", "bitcoin", "token", "launchpad", "security"],
+  icons: {
+    icon: "/opstreet/brand/logo.png",
+    shortcut: "/opstreet/brand/logo.png",
+    apple: "/opstreet/brand/logo.png",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
