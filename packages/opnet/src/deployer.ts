@@ -65,7 +65,7 @@ export interface DeployInput {
   maxSupply: string;
   iconUrl?: string;
   buildHash: string;
-  liquidityToken?: "TBTC" | "MOTO" | "PILL";
+  liquidityToken?: "BTC" | "TBTC" | "MOTO" | "PILL";
   liquidityAmount?: string;
   generatedDir: string; // packages/opnet/generated/<projectId>
   /**

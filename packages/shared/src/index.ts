@@ -25,7 +25,7 @@ export type LaunchStatus =
 export type CheckRunType = "SCAFFOLD" | "STATIC" | "AUDIT" | "DEPLOY";
 export type CheckRunStatus = "PENDING" | "OK" | "WARN" | "FAIL";
 export type WatchSeverity = "INFO" | "WARN" | "CRITICAL";
-export type LiquidityToken = "TBTC" | "MOTO" | "PILL";
+export type LiquidityToken = "BTC" | "TBTC" | "MOTO" | "PILL";
 
 /**
  * Controls the launch mechanic for this token:

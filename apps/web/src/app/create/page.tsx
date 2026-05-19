@@ -16,17 +16,26 @@ type TouchedFields = Partial<Record<string, boolean>>;
 const DEFAULT_LIQUIDITY_VAULT_ADDRESS = "opt1pq4p904uy5zv76wcyac2sqrulpmluys6y6kulpyy7uerhkr9nxvgs3y2sce";
 const LIQUIDITY_VAULT_ADDRESS =
   process.env["NEXT_PUBLIC_LIQUIDITY_VAULT_ADDRESS"]?.trim() || DEFAULT_LIQUIDITY_VAULT_ADDRESS;
-const LIQUIDITY_TOKEN_TO_SATS: Record<"TBTC" | "MOTO" | "PILL", number> = {
+type LiquidityToken = "BTC" | "TBTC" | "MOTO" | "PILL";
+
+const LIQUIDITY_TOKEN_TO_SATS: Record<LiquidityToken, number> = {
+  BTC: 100_000_000,
   TBTC: 100_000_000,
   MOTO: 65_000,
   PILL: 70_000,
 };
 const SATS_PER_BTC = 100_000_000;
 const BROWSER_OPNET_NETWORK = (process.env["NEXT_PUBLIC_OPNET_NETWORK"] ?? "testnet").toLowerCase();
-const FUNDING_BTC_SYMBOL = BROWSER_OPNET_NETWORK.includes("mainnet") ? "BTC" : "tBTC";
+const IS_OPNET_MAINNET = BROWSER_OPNET_NETWORK.includes("mainnet");
+const NATIVE_BTC_LIQUIDITY_TOKEN: LiquidityToken = IS_OPNET_MAINNET ? "BTC" : "TBTC";
+const FUNDING_BTC_SYMBOL = IS_OPNET_MAINNET ? "BTC" : "tBTC";
+
+function isNativeBtcFundingToken(token: LiquidityToken): boolean {
+  return token === "BTC" || token === "TBTC";
+}
 
 function getLiquidityFundingPreview(
-  liquidityToken: "TBTC" | "MOTO" | "PILL",
+  liquidityToken: LiquidityToken,
   liquidityAmount: string,
 ) {
   const liquidityUnits = Number(liquidityAmount);
@@ -59,7 +68,7 @@ function validateStep0(form: {
   decimals: number;
   maxSupply: string;
   description: string;
-  liquidityToken: "TBTC" | "MOTO" | "PILL";
+  liquidityToken: LiquidityToken;
   liquidityAmount: string;
 }): FieldErrors {
   const errors: FieldErrors = {};
@@ -72,7 +81,7 @@ function validateStep0(form: {
   else if (Number(form.maxSupply) <= 0) errors["maxSupply"] = "Max supply must be greater than zero.";
   if (!form.description || form.description.length < 10) errors["description"] = "Description must be at least 10 characters.";
   if (form.description.length > 2000) errors["description"] = "Description must be 2000 characters or fewer.";
-  if (!["TBTC", "MOTO", "PILL"].includes(form.liquidityToken)) errors["liquidityToken"] = "Select a liquidity token.";
+  if (!["BTC", "TBTC", "MOTO", "PILL"].includes(form.liquidityToken)) errors["liquidityToken"] = "Select a liquidity token.";
   if (!form.liquidityAmount || !/^\d+(\.\d+)?$/.test(form.liquidityAmount)) {
     errors["liquidityAmount"] = "Liquidity amount must be a positive number.";
   } else if (Number(form.liquidityAmount) <= 0) {
@@ -90,7 +99,7 @@ export default function CreatePage() {
   const [step, setStep] = useState<Step>(0);
   const [form, setForm] = useState({
     name: "", ticker: "", decimals: 18, maxSupply: "1000000000", description: "",
-    liquidityToken: "MOTO" as "TBTC" | "MOTO" | "PILL", liquidityAmount: "100",
+    liquidityToken: "MOTO" as LiquidityToken, liquidityAmount: "100",
     website: "", twitter: "", github: "", iconUrl: "", sourceRepoUrl: "",
   });
   const [touched, setTouched] = useState<TouchedFields>({});
@@ -100,7 +109,10 @@ export default function CreatePage() {
 
   // When entering Review step, pre-flight check UTXOs so user knows before clicking Launch
   useEffect(() => {
-    if (step !== 2 || !wallet?.address) return;
+    if (step !== 2 || !wallet?.address || !isNativeBtcFundingToken(form.liquidityToken)) {
+      setUtxoCheck(null);
+      return;
+    }
     setUtxoCheck({ count: 0, totalSats: "0", loading: true });
     checkWalletUtxos(wallet.address).then((result) => {
       setUtxoCheck({
@@ -111,10 +123,11 @@ export default function CreatePage() {
     }).catch(() => {
       setUtxoCheck({ count: -1, totalSats: "0", loading: false });
     });
-  }, [step, wallet?.address]);
+  }, [step, wallet?.address, form.liquidityToken]);
 
   const step0Errors = validateStep0(form);
   const fundingPreview = getLiquidityFundingPreview(form.liquidityToken, form.liquidityAmount);
+  const isNativeBtcFunding = isNativeBtcFundingToken(form.liquidityToken);
   const showError = (field: string) => (touched[field] || submitAttempted) ? step0Errors[field] : undefined;
   function blur(field: string) { setTouched((t) => ({ ...t, [field]: true })); }
   function set(field: string, value: string | number) { setForm((prev) => ({ ...prev, [field]: value })); }
@@ -140,25 +153,31 @@ export default function CreatePage() {
 
       let fundingTxId: string;
 
-      if (skipFunding) {
+      if (isNativeBtcFunding && skipFunding) {
         // Testnet skip: no BTC transfer — create project with placeholder tx
         fundingTxId = `testnet-skip-${Date.now()}`;
       } else {
         if (wallet.provider !== "opnet") throw new Error("OP_WALLET is required to fund initial liquidity.");
 
-        const funding = await submitOpnetLiquidityFundingWithWallet(wallet.provider, {
-          toAddress: LIQUIDITY_VAULT_ADDRESS,
-          amountSats: fundingPreview.totalSats,
-          memo: `OpStreet liquidity ${form.ticker}`,
-          senderAddress: wallet.address,
-          walletInstance: walletInstance as Record<string, unknown> | null,
-        });
-        if (!funding?.txId) {
-          throw new Error("Liquidity funding transaction was not returned by wallet.");
+        if (isNativeBtcFunding) {
+          const funding = await submitOpnetLiquidityFundingWithWallet(wallet.provider, {
+            toAddress: LIQUIDITY_VAULT_ADDRESS,
+            amountSats: fundingPreview.totalSats,
+            memo: `OpStreet liquidity ${form.ticker}`,
+            senderAddress: wallet.address,
+            walletInstance: walletInstance as Record<string, unknown> | null,
+          });
+          if (!funding?.txId) {
+            throw new Error("Liquidity funding transaction was not returned by wallet.");
+          }
+          fundingTxId = funding.txId;
+          // Show block-wait overlay globally — persists across page navigation
+          setPendingTx(fundingTxId);
+        } else {
+          // MOTO/PIL are OP-20 token liquidity choices. Do not convert them into a BTC/tBTC transfer.
+          // Token transfer/approval funding is handled by the OP_NET launch pipeline after project creation.
+          fundingTxId = `op20-${form.liquidityToken.toLowerCase()}-funding-pending-${Date.now()}`;
         }
-        fundingTxId = funding.txId;
-        // Show block-wait overlay globally — persists across page navigation
-        setPendingTx(fundingTxId);
       }
 
       const links: Record<string, string> = {};
@@ -178,7 +197,9 @@ export default function CreatePage() {
       const msg = err instanceof Error ? err.message : "Something went wrong";
       if (/insufficient funds/i.test(msg) && !/utxo|csv|spendable/i.test(msg)) {
         setError(
-          `${msg} Need at least ${formatSats(fundingPreview.totalSats)} sats (${formatBtc(fundingPreview.totalBtc)} ${FUNDING_BTC_SYMBOL}) plus network fees.`,
+          isNativeBtcFunding
+            ? `${msg} Need at least ${formatSats(fundingPreview.totalSats)} sats (${formatBtc(fundingPreview.totalBtc)} ${FUNDING_BTC_SYMBOL}) plus network fees.`
+            : `${msg} Check your ${form.liquidityToken === "PILL" ? "PIL/PILL" : form.liquidityToken} balance in OP_WALLET.`,
         );
       } else if (/invalid.*address|invalid.*recipient/i.test(msg)) {
         setError(`${msg} Open OP_WALLET and verify you are on "OP_NET Testnet" (Signet).`);
@@ -299,10 +320,10 @@ export default function CreatePage() {
                 <select
                   className={`input ${showError("liquidityToken") ? "border-opRed" : ""}`}
                   value={form.liquidityToken}
-                  onChange={(e) => set("liquidityToken", e.target.value as "TBTC" | "MOTO" | "PILL")}
+                  onChange={(e) => set("liquidityToken", e.target.value as LiquidityToken)}
                   onBlur={() => blur("liquidityToken")}
                 >
-                  <option value="TBTC">TBTC</option>
+                  <option value={NATIVE_BTC_LIQUIDITY_TOKEN}>{FUNDING_BTC_SYMBOL}</option>
                   <option value="MOTO">MOTO</option>
                   <option value="PILL">PIL / PILL</option>
                 </select>
@@ -409,10 +430,19 @@ export default function CreatePage() {
             <p className="font-black text-ink mb-2 text-sm uppercase tracking-wider">Initial Funding Summary</p>
             <ul className="space-y-1 text-xs font-bold text-ink">
               <li>
-                {form.liquidityAmount} {form.liquidityToken} × {formatSats(fundingPreview.satsRate)} sats = {formatSats(fundingPreview.totalSats)} sats
+                {isNativeBtcFunding
+                  ? `${form.liquidityAmount} ${FUNDING_BTC_SYMBOL} = ${formatSats(fundingPreview.totalSats)} sats`
+                  : `${form.liquidityAmount} ${form.liquidityToken === "PILL" ? "PIL/PILL" : form.liquidityToken} selected for OP-20 liquidity`
+                }
               </li>
-              <li>{formatBtc(fundingPreview.totalBtc)} {FUNDING_BTC_SYMBOL} will be sent from OP_WALLET to the liquidity vault.</li>
-              <li>Your OP_WALLET needs at least {formatSats(fundingPreview.totalSats)} sats + network fees.</li>
+              {isNativeBtcFunding ? (
+                <>
+                  <li>{formatBtc(fundingPreview.totalBtc)} {FUNDING_BTC_SYMBOL} will be sent from OP_WALLET to the liquidity vault.</li>
+                  <li>Your OP_WALLET needs at least {formatSats(fundingPreview.totalSats)} sats + network fees.</li>
+                </>
+              ) : (
+                <li>No BTC/tBTC transfer will be made for {form.liquidityToken === "PILL" ? "PIL/PILL" : form.liquidityToken}; OP-20 liquidity funding stays token-native.</li>
+              )}
             </ul>
           </div>
 
@@ -429,7 +459,7 @@ export default function CreatePage() {
           </div>
 
           {/* Skip funding toggle — shown when no spendable UTXOs */}
-          {utxoCheck && !utxoCheck.loading && utxoCheck.count <= 0 && (
+          {isNativeBtcFunding && utxoCheck && !utxoCheck.loading && utxoCheck.count <= 0 && (
             <div className="rounded-xl border-2 border-ink bg-[#FFF7E8] px-4 py-3 space-y-3">
               <p className="text-xs font-black text-ink uppercase tracking-wider">Testnet: Skip BTC Funding</p>
               <p className="text-xs text-ink/70">
@@ -451,7 +481,7 @@ export default function CreatePage() {
           )}
 
           {/* UTXO pre-flight diagnostic */}
-          {utxoCheck && (() => {
+          {isNativeBtcFunding && utxoCheck && (() => {
             const availSats = BigInt(utxoCheck.totalSats);
             const needSats = BigInt(fundingPreview.totalSats);
             const hasEnough = availSats >= needSats;
@@ -465,13 +495,13 @@ export default function CreatePage() {
               }`}>
                 {utxoCheck.loading && "⟳ Checking spendable UTXOs on OPNet RPC…"}
                 {!utxoCheck.loading && utxoCheck.count > 0 && hasEnough && (
-                  <>&#10003; {utxoCheck.count} spendable UTXO{utxoCheck.count > 1 ? "s" : ""} found — {(Number(utxoCheck.totalSats) / 1e8).toFixed(8)} tBTC available</>
+                  <>&#10003; {utxoCheck.count} spendable UTXO{utxoCheck.count > 1 ? "s" : ""} found — {(Number(utxoCheck.totalSats) / 1e8).toFixed(8)} {FUNDING_BTC_SYMBOL} available</>
                 )}
                 {!utxoCheck.loading && utxoCheck.count > 0 && !hasEnough && (
-                  <>&#9888; Only {(Number(utxoCheck.totalSats) / 1e8).toFixed(8)} tBTC available but {(Number(needSats) / 1e8).toFixed(8)} tBTC needed. Need {shortfall.toLocaleString()} more sats — use the Faucet inside OP_WALLET or reduce the liquidity amount.</>
+                  <>&#9888; Only {(Number(utxoCheck.totalSats) / 1e8).toFixed(8)} {FUNDING_BTC_SYMBOL} available but {(Number(needSats) / 1e8).toFixed(8)} {FUNDING_BTC_SYMBOL} needed. Need {shortfall.toLocaleString()} more sats — fund the wallet or reduce the liquidity amount.</>
                 )}
                 {!utxoCheck.loading && utxoCheck.count === 0 && (
-                  <>&#9888; No spendable UTXOs found for your address on OPNet RPC. If your balance shows only under &ldquo;+ CSV Balances&rdquo; in OP_WALLET, those funds are time-locked — fund this address with fresh tBTC from the signet faucet first.</>
+                  <>&#9888; No spendable UTXOs found for your address on OPNet RPC. If your balance shows only under &ldquo;+ CSV Balances&rdquo; in OP_WALLET, those funds are time-locked — fund this address with fresh {FUNDING_BTC_SYMBOL} first.</>
                 )}
                 {!utxoCheck.loading && utxoCheck.count === -1 && (
                   <>⚠ Could not reach OPNet RPC to check UTXOs. Proceeding anyway.</>
@@ -485,7 +515,7 @@ export default function CreatePage() {
           )}
 
           {(() => {
-            const insufficientBalance = !skipFunding && utxoCheck && !utxoCheck.loading
+            const insufficientBalance = isNativeBtcFunding && !skipFunding && utxoCheck && !utxoCheck.loading
               && utxoCheck.count > 0
               && BigInt(utxoCheck.totalSats) < BigInt(fundingPreview.totalSats);
             return (

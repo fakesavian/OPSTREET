@@ -427,7 +427,7 @@ export function getRuntimeContractConfig(): RuntimeContractConfig {
 }
 
 export function getLiquidityTokenContractAddress(symbol: LiquidityToken): string {
-  if (symbol === "TBTC") {
+  if (symbol === "BTC" || symbol === "TBTC") {
     return ensureConfigured(
       "OPNET_TBTC_CONTRACT_ADDRESS",
       TBTC_CONTRACT_ADDRESS,

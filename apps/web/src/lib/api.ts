@@ -153,7 +153,7 @@ export async function createProject(data: {
   links: Record<string, string>;
   iconUrl?: string;
   sourceRepoUrl?: string;
-  liquidityToken?: "TBTC" | "MOTO" | "PILL";
+  liquidityToken?: "BTC" | "TBTC" | "MOTO" | "PILL";
   liquidityAmount?: string;
   liquidityFundingTx?: string;
 }): Promise<ProjectDTO> {

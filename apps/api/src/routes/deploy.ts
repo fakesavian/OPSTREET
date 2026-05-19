@@ -38,7 +38,7 @@ export async function queueDeployForProject(
   const liquidityAmount = typeof liquidityAmountRaw === "string" ? Number(liquidityAmountRaw) : 0;
   if (
     typeof liquidityToken !== "string" ||
-    !["TBTC", "MOTO", "PILL"].includes(liquidityToken) ||
+    !["BTC", "TBTC", "MOTO", "PILL"].includes(liquidityToken) ||
     !Number.isFinite(liquidityAmount) ||
     liquidityAmount <= 0 ||
     typeof liquidityFundingTx !== "string" ||
@@ -48,7 +48,7 @@ export async function queueDeployForProject(
       ok: false,
       statusCode: 409,
       error: "Initial liquidity is required before deployment.",
-      hint: "Create with liquidity token (TBTC/MOTO/PILL), positive amount, and a valid wallet funding tx.",
+      hint: "Create with liquidity token (BTC/TBTC/MOTO/PILL), positive amount, and a valid wallet funding tx.",
     };
   }
 
@@ -214,6 +214,7 @@ async function runDeploy(project: any, checkRunId: string, app: FastifyInstance)
       iconUrl: project.iconUrl as string | undefined,
       buildHash: project.buildHash as string ?? "",
       liquidityToken: (project as Record<string, unknown>)["liquidityToken"] as
+        | "BTC"
         | "TBTC"
         | "MOTO"
         | "PILL"

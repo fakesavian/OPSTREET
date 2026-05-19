@@ -119,7 +119,7 @@ function serializeProject(p: any) {
 
 function projectLiquidityToken(project: { liquidityToken: string | null }): LiquidityToken {
   const value = project.liquidityToken ?? "MOTO";
-  if (value !== "TBTC" && value !== "MOTO" && value !== "PILL") {
+  if (value !== "BTC" && value !== "TBTC" && value !== "MOTO" && value !== "PILL") {
     throw new RuntimeConfigError(`Unsupported liquidity token '${value}'.`);
   }
   return value;
@@ -912,7 +912,7 @@ async function runBuild(project: any, app: FastifyInstance): Promise<void> {
         iconUrl: project.iconUrl as string | undefined,
         buildHash: (project.buildHash as string) ?? "",
         liquidityToken: (project as Record<string, unknown>)["liquidityToken"] as
-          | "TBTC" | "MOTO" | "PILL" | undefined,
+          | "BTC" | "TBTC" | "MOTO" | "PILL" | undefined,
         liquidityAmount: (project as Record<string, unknown>)["liquidityAmount"] as string | undefined,
         generatedDir: path.join(GENERATED_DIR, projectId),
         // Pass bonding curve config when the project is a bonding curve launch
