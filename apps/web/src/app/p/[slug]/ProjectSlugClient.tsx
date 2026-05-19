@@ -39,7 +39,9 @@ export function ProjectSlugClient({ slug }: { slug: string }) {
               : e instanceof Error
               ? e.message
               : "Failed to load project.";
-          if (lastError === "NOT_FOUND") break; // no point retrying a 404
+          // Newly created projects can briefly 404 while the API/database/proxy path
+          // catches up after creation. Keep retrying instead of marooning the user on
+          // a false "not found" page immediately after launch.
         }
       }
 

@@ -181,9 +181,18 @@ export async function projectRoutes(app: FastifyInstance) {
 
   // GET /projects/:slug
   app.get<{ Params: { slug: string } }>("/projects/:slug", async (request, reply) => {
-    const { slug } = request.params;
-    const project = await prisma.project.findUnique({
-      where: { slug },
+    const rawSlug = decodeURIComponent(request.params.slug).trim();
+    const slug = rawSlug.toLowerCase();
+    const project = await prisma.project.findFirst({
+      where: {
+        OR: [
+          { slug },
+          { id: rawSlug },
+          { contractAddress: rawSlug },
+          { poolAddress: rawSlug },
+          { curveAddress: rawSlug },
+        ],
+      },
       include: {
         checkRuns: { orderBy: { createdAt: "desc" }, take: 20 },
         watchEvents: { orderBy: { createdAt: "desc" }, take: 20 },

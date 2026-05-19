@@ -85,6 +85,8 @@ function validateSecrets(): void {
 }
 
 async function registerPlugins(app: FastifyInstance): Promise<void> {
+  app.addHook("preSerialization", async (_request, _reply, payload) => normalizeJsonPayload(payload));
+
   await app.register(cors, {
     origin: process.env["CORS_ORIGIN"] ?? "http://localhost:3000",
     credentials: true,
@@ -115,6 +117,19 @@ async function registerPlugins(app: FastifyInstance): Promise<void> {
 
   await app.register(cookie);
   await app.register(jwt, { secret: process.env["JWT_SECRET"] ?? "dev-jwt-secret-change-me" });
+}
+
+function normalizeJsonPayload(payload: unknown): unknown {
+  if (typeof payload === "bigint") return payload.toString();
+  if (payload instanceof Date) return payload.toISOString();
+  if (Array.isArray(payload)) return payload.map(normalizeJsonPayload);
+  if (!payload || typeof payload !== "object") return payload;
+
+  const normalized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(payload)) {
+    normalized[key] = normalizeJsonPayload(value);
+  }
+  return normalized;
 }
 
 async function registerRoutes(app: FastifyInstance): Promise<void> {

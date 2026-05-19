@@ -1508,18 +1508,24 @@ export async function submitOpnetLiquidityFundingWithWallet(
   // Broadcast the signed raw hex to the configured OP_NET network.
   // If the wallet already broadcast it, sendRawTransaction returns null — that's fine.
   const broadcastResult = await rpcProvider.sendRawTransaction(rawHex, false);
+  let broadcastTxId = txId;
   if (broadcastResult && typeof (broadcastResult as unknown as Record<string, unknown>)["success"] !== "undefined") {
     const b = broadcastResult as unknown as Record<string, unknown>;
     if (b["success"] === false) {
       const err = b["error"] as string | undefined;
-      // "already in utxo set" = duplicate broadcast = tx is live, not a real failure
+      // "already in utxo set" / duplicate tx = tx is already live, not a real failure
       if (err && !err.toLowerCase().includes("already") && !err.toLowerCase().includes("utxo")) {
         throw new Error(`OPNet broadcast rejected: ${err}`);
       }
+    } else if (typeof b["result"] === "string" && b["result"].length >= 8) {
+      // The OP_NET node returns the canonical txid it accepted. Use that for the
+      // loading overlay/explorer link instead of a locally-computed id so users
+      // never get sent to a mempool URL for the wrong transaction hash.
+      broadcastTxId = b["result"];
     }
   }
 
-  return { txId, raw: result };
+  return { txId: broadcastTxId, raw: { signed: result, broadcast: broadcastResult, localTxId: txId } };
 }
 
 // ── Wallet-native interaction signing ─────────────────────────────────────
