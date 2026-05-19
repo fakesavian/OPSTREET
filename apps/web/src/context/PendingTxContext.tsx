@@ -34,7 +34,7 @@ interface PendingTxState {
   clearPendingTx: () => void;
 }
 
-const MEMPOOL_API = "https://mempool.opnet.org/api/tx";
+const OP_NET_TX_STATUS_API = "/api/opnet-tx";
 const POLL_INTERVAL_MS = 30_000;
 
 const PendingTxContext = createContext<PendingTxState>({
@@ -69,18 +69,24 @@ export function PendingTxProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // Poll mempool for confirmation (~every 30s)
+  // Poll OP_NET RPC for confirmation (~every 30s). Do not use public mempool
+  // pages here: this app runs against OP_NET's configured chain/RPC, and mempool
+  // explorers can lag or disagree for freshly-broadcast interaction txs.
   useEffect(() => {
     if (!txId || confirmed) return;
     // Skip fake testnet-skip txIds
     if (txId.startsWith("testnet-skip-")) return;
 
+    const pendingTxId = txId;
+
     async function checkConfirmed() {
       try {
-        const res = await fetch(`${MEMPOOL_API}/${txId}`);
+        const res = await fetch(`${OP_NET_TX_STATUS_API}?txId=${encodeURIComponent(pendingTxId)}`, {
+          cache: "no-store",
+        });
         if (!res.ok) return;
-        const data = await res.json() as { status?: { confirmed?: boolean } };
-        if (data?.status?.confirmed) setConfirmed(true);
+        const data = await res.json() as { confirmed?: boolean; status?: string };
+        if (data.confirmed || data.status === "confirmed" || data.status === "failed") setConfirmed(true);
       } catch {
         // network error — retry next interval
       }

@@ -1549,9 +1549,12 @@ export async function signInteractionBuffer(
   const api = opnet as Record<string, unknown>;
   const payload = { interactionBuffer: offlineBufferHex };
 
-  // Try direct method calls first, then request-style calls
+  // This helper must return signed raw transaction hex for the backend to
+  // broadcast and record the canonical OP_NET txid. Do not call
+  // signAndBroadcastInteraction here: some OP_WALLET builds broadcast inside
+  // that method and return only a txid, which we cannot safely rebroadcast as
+  // raw transaction hex.
   const directMethods = [
-    "signAndBroadcastInteraction",
     "signInteraction",
     "signTransaction",
   ];
@@ -1573,7 +1576,6 @@ export async function signInteractionBuffer(
   if (typeof api["request"] === "function") {
     const request = api["request"] as (args: { method: string; params: unknown }) => Promise<unknown>;
     const requestMethods = [
-      "signAndBroadcastInteraction",
       "signInteraction",
       "signTransaction",
       "opnet_signInteraction",
@@ -1610,6 +1612,10 @@ function parseSignedInteraction(result: unknown): SignedInteractionResult | null
     obj["result"];
 
   if (typeof interactionRaw !== "string" || interactionRaw.length < 10) return null;
+  // A broadcast helper may return a 64-hex txid instead of signed raw hex. That
+  // is not acceptable for this path because the backend expects raw transaction
+  // bytes and performs the broadcast itself.
+  if (/^[0-9a-f]{64}$/i.test(interactionRaw.trim())) return null;
 
   const fundingRaw =
     obj["fundingTransactionRaw"] ??
