@@ -70,7 +70,11 @@ export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
 
   const launchStatus = launch?.launchStatus ?? project.launchStatus ?? "DRAFT";
   const currentStep = launchStatusToStep(launchStatus);
-  const canStartBuild = project.status === "READY" || project.status === "LAUNCHED" || project.status === "DEPLOY_PACKAGE_READY";
+  const canStartBuild =
+    project.status === "READY" ||
+    project.status === "FLAGGED" ||
+    project.status === "LAUNCHED" ||
+    project.status === "DEPLOY_PACKAGE_READY";
 
   // Fetch launch status on mount + poll when in transitional states
   const refreshLaunchStatus = useCallback(async () => {

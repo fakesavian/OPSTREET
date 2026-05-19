@@ -497,6 +497,7 @@ export function ProjectPageClient({ initialProject }: { initialProject: FullProj
 
           {/* Launch pipeline — wallet-native deploy + pool */}
           {(project.status === "READY" ||
+            project.status === "FLAGGED" ||
             project.status === "LAUNCHED" ||
             project.status === "DEPLOY_PACKAGE_READY" ||
             Boolean(project.launchStatus) ||

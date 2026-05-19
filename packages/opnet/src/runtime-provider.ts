@@ -377,6 +377,27 @@ function txBlockHeight(raw: unknown): number | undefined {
   return undefined;
 }
 
+function hasOpnetReceiptPayload(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object") return false;
+  const receipt = raw as Record<string, unknown>;
+
+  // The OP_NET RPC can return an empty TransactionReceipt object for a normal
+  // Bitcoin transaction. That means the tx is mined, but it is not an OP_NET
+  // interaction receipt and must not advance launch/pool state.
+  if (receipt["receipt"] !== undefined && receipt["receipt"] !== null) return true;
+  if (typeof receipt["revert"] === "string" && receipt["revert"].length > 0) return true;
+  if (typeof receipt["rawRevert"] === "string" && receipt["rawRevert"].length > 0) return true;
+  if (receipt["failed"] === true) return true;
+
+  const events = receipt["events"];
+  if (events && typeof events === "object" && Object.keys(events as Record<string, unknown>).length > 0) return true;
+
+  const rawEvents = receipt["rawEvents"];
+  if (rawEvents && typeof rawEvents === "object" && Object.keys(rawEvents as Record<string, unknown>).length > 0) return true;
+
+  return false;
+}
+
 function buildPreparedInteraction(
   offlineBuffer: Uint8Array,
   refundTo: string,
@@ -815,6 +836,18 @@ export async function fetchTransactionReceipt(txId: string): Promise<Transaction
     const transaction = await providerInstance.getTransaction(txId).catch(() => null);
     const blockHeight = txBlockHeight(transaction);
     const revert = receipt.revert;
+
+    if (!hasOpnetReceiptPayload(receipt)) {
+      return {
+        found: transaction !== null,
+        status: "pending",
+        blockHeight,
+        raw: {
+          receipt,
+          transaction,
+        },
+      };
+    }
 
     return {
       found: true,
