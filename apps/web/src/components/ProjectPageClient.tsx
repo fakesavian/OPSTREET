@@ -14,6 +14,7 @@ import { AchievementBadges } from "./AchievementBadges";
 import { OpBadge } from "./opfun/OpBadge";
 import { getApiBase } from "@/lib/apiBase";
 import { getOpScanContractUrl, getOpScanHomeUrl } from "@/lib/opscan";
+import { usePendingTx } from "@/context/PendingTxContext";
 
 const API = typeof window !== "undefined" ? getApiBase() : "";
 
@@ -144,6 +145,7 @@ function launchStatusHint(project: ProjectDTO): string {
 
 export function ProjectPageClient({ initialProject }: { initialProject: FullProject }) {
   const { wallet } = useWallet();
+  const { txId: activePendingTxId, setPendingTx } = usePendingTx();
   const [project, setProject] = useState<FullProject>(initialProject);
   const [marketState, setMarketState] = useState<MarketStateResponse | null>(null);
   // T4: admin secret for resolving watch events
@@ -160,6 +162,20 @@ export function ProjectPageClient({ initialProject }: { initialProject: FullProj
   useEffect(() => {
     viewProject(project.id);
   }, [project.id]);
+
+  // If the user refreshes a newly-created token while trading is blocked on an
+  // on-chain deploy/pool confirmation, reopen the persistent loading screen so
+  // elapsed time and block confirmation feedback stay visible.
+  useEffect(() => {
+    const waitingTx =
+      project.launchStatus === "POOL_SUBMITTED"
+        ? project.poolTx
+        : project.launchStatus === "DEPLOY_SUBMITTED"
+          ? project.deployTx
+          : null;
+
+    if (waitingTx && waitingTx !== activePendingTxId) setPendingTx(waitingTx);
+  }, [activePendingTxId, project.deployTx, project.launchStatus, project.poolTx, setPendingTx]);
 
   useEffect(() => {
     if (project.launchStatus !== "LIVE") {

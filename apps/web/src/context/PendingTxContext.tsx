@@ -92,13 +92,14 @@ export function PendingTxProvider({ children }: { children: React.ReactNode }) {
   }, [txId, confirmed]);
 
   const setPendingTx = useCallback((id: string) => {
+    if (id === txId) return;
     const now = Date.now();
     const stored: StoredTx = { txId: id, startedAt: now };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
     setTxId(id);
     setStartedAt(now);
     setConfirmed(false);
-  }, []);
+  }, [txId]);
 
   const clearPendingTx = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY);

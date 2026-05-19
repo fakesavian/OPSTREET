@@ -36,13 +36,13 @@ function isNativeBtcFundingToken(token: LiquidityToken): boolean {
 
 function parseNativeBtcAmountToSats(amount: string): { sats: number; error?: string } {
   const trimmed = amount.trim();
-  const match = /^(\d+)(?:\.(\d{1,8})?)?$/.exec(trimmed);
-  if (!match) {
+  if (!/^(?:\d+(?:\.\d{0,8})?|\.\d{1,8})$/.test(trimmed)) {
     return { sats: 0, error: "BTC/tBTC liquidity can use up to 8 decimal places." };
   }
 
-  const whole = BigInt(match[1] ?? "0");
-  const fraction = (match[2] ?? "").padEnd(8, "0");
+  const [wholePart = "0", fractionPart = ""] = trimmed.split(".");
+  const whole = BigInt(wholePart || "0");
+  const fraction = fractionPart.padEnd(8, "0");
   const satsBigInt = whole * BigInt(SATS_PER_BTC) + BigInt(fraction || "0");
 
   if (satsBigInt <= BigInt(0)) return { sats: 0, error: "Liquidity amount must be greater than zero." };
@@ -114,7 +114,7 @@ function validateStep0(form: {
     : null;
   if (nativeBtcAmount?.error) {
     errors["liquidityAmount"] = nativeBtcAmount.error;
-  } else if (!form.liquidityAmount || !/^\d+(\.\d+)?$/.test(form.liquidityAmount)) {
+  } else if (!form.liquidityAmount || !/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(form.liquidityAmount.trim())) {
     errors["liquidityAmount"] = "Liquidity amount must be a positive number.";
   } else if (Number(form.liquidityAmount) <= 0) {
     errors["liquidityAmount"] = "Liquidity amount must be greater than zero.";

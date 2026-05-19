@@ -55,15 +55,14 @@ export interface ApiRuntimeConfig {
 export function getApiRuntimeConfig(): ApiRuntimeConfig {
   const configured = getConfiguredApiUrl();
   ensureValidConfiguredApiUrl(configured);
-  if (configured) {
-    return {
-      mode: "explicit",
-      base: configured,
-      environment: NODE_ENV === "development" ? "development" : "production",
-      explicit: true,
-    };
-  }
 
+  // Browser requests should go through the same-origin Next.js API proxy by
+  // default. Shipping NEXT_PUBLIC_API_URL into the client makes the browser hit
+  // the backend directly, which is fragile in production because CORS / Vercel
+  // deployment-protection failures surface as the unhelpful TypeError
+  // "Failed to fetch". The server-side proxy still resolves OPFUN_API_URL (and
+  // can fall back to NEXT_PUBLIC_API_URL for older deployments), so using
+  // /api here preserves the configured backend without exposing it to CORS.
   if (typeof window !== "undefined") {
     const { origin } = window.location;
     return {
@@ -71,6 +70,15 @@ export function getApiRuntimeConfig(): ApiRuntimeConfig {
       base: `${trimTrailingSlash(origin)}/api`,
       environment: NODE_ENV === "development" ? "development" : "production",
       explicit: false,
+    };
+  }
+
+  if (configured) {
+    return {
+      mode: "explicit",
+      base: configured,
+      environment: NODE_ENV === "development" ? "development" : "production",
+      explicit: true,
     };
   }
 

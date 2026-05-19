@@ -29,13 +29,13 @@ export const CreateProjectSchema = z.object({
   liquidityToken: LiquidityTokenSchema.optional(),
   liquidityAmount: z
     .string()
-    .regex(/^\d+(\.\d+)?$/, "liquidityAmount must be a positive number string")
+    .regex(/^(?:\d+(?:\.\d*)?|\.\d+)$/, "liquidityAmount must be a positive number string")
     .refine((v) => Number(v) > 0, "liquidityAmount must be greater than 0")
     .optional(),
   liquidityFundingTx: z.string().min(8).optional(),
 }).superRefine((value, ctx) => {
   if ((value.liquidityToken === "BTC" || value.liquidityToken === "TBTC") && value.liquidityAmount) {
-    if (!/^\d+(?:\.\d{1,8})?$/.test(value.liquidityAmount)) {
+    if (!/^(?:\d+(?:\.\d{0,8})?|\.\d{1,8})$/.test(value.liquidityAmount)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["liquidityAmount"],

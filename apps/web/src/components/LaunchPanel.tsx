@@ -13,6 +13,7 @@ import {
 import { getOpScanContractUrl, getOpScanHomeUrl } from "@/lib/opscan";
 import { useWallet } from "./WalletProvider";
 import { signOpnetInteractionWithWallet } from "@/lib/wallet";
+import { usePendingTx } from "@/context/PendingTxContext";
 
 interface LaunchPanelProps {
   project: ProjectDTO;
@@ -54,6 +55,7 @@ function launchStatusToStep(ls: string): LaunchStep {
 
 export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
   const { wallet } = useWallet();
+  const { setPendingTx } = usePendingTx();
   const [launch, setLaunch] = useState<LaunchStatusResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -142,6 +144,7 @@ export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
         contractAddress: contractAddr,
         buildHash: launch?.buildHash ?? undefined,
       });
+      setPendingTx(deployTx);
       await refreshLaunchStatus();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Deploy submit failed");
@@ -165,12 +168,14 @@ export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
     try {
       const intent = await fetchPoolCreateIntent(project.id);
       const signed = await signOpnetInteractionWithWallet(wallet.provider, intent.interaction);
-      await submitPool(project.id, {
+      const updated = await submitPool(project.id, {
         poolAddress: intent.poolAddress,
         poolBaseToken: intent.poolBaseToken,
         signedFundingTxHex: signed.signedFundingTxHex ?? undefined,
         signedInteractionTxHex: signed.signedInteractionTxHex,
       });
+
+      if (updated.poolTx) setPendingTx(updated.poolTx);
 
       await refreshLaunchStatus();
     } catch (err) {
