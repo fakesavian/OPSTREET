@@ -121,13 +121,25 @@ function buildForwardHeaders(request: NextRequest): Headers {
   HOP_BY_HOP_HEADERS.forEach((header) => {
     headers.delete(header);
   });
+  // Ask the backend for identity bytes. The proxy materializes the body before
+  // returning it; avoiding upstream compression removes an entire class of
+  // server-fetch decompression/header mismatches for JSON APIs.
+  headers.set("accept-encoding", "identity");
   return headers;
 }
 
 function buildResponseHeaders(upstream: Response): Headers {
   const headers = new Headers();
   upstream.headers.forEach((value, key) => {
-    if (!HOP_BY_HOP_HEADERS.includes(key.toLowerCase())) {
+    const normalizedKey = key.toLowerCase();
+    if (
+      !HOP_BY_HOP_HEADERS.includes(normalizedKey) &&
+      // Node/undici fetch transparently decompresses upstream responses, but it
+      // preserves the original content-encoding header. If we forward that
+      // header with decoded bytes, browsers try to decompress JSON a second time
+      // and the app sees successful responses with unusable/empty bodies.
+      normalizedKey !== "content-encoding"
+    ) {
       headers.append(key, value);
     }
   });
@@ -236,7 +248,18 @@ async function proxyRequest(
       if (normalized) return normalized;
     }
 
-    return new Response(upstream.body, {
+    // Do not stream the upstream body through directly. On the Vercel/Next.js
+    // route-handler runtime, proxying `upstream.body` as a live ReadableStream
+    // has produced successful 200 responses with empty bodies for some JSON
+    // routes (/projects and /opnet/diagnostics), while smaller routes appeared
+    // fine. Materializing the response before returning makes the proxy body
+    // deterministic and keeps client-side `res.json()` from failing on an
+    // empty successful response.
+    const responseBody = method === "HEAD" || upstream.status === 204 || upstream.status === 304
+      ? null
+      : await upstream.arrayBuffer();
+
+    return new Response(responseBody, {
       status: upstream.status,
       statusText: upstream.statusText,
       headers: buildResponseHeaders(upstream),
