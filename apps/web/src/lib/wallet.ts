@@ -200,6 +200,25 @@ function toOpnetNetworkAddress(address: string): string {
   return address; // Return original if conversion fails (let wallet/provider decide)
 }
 
+/**
+ * BTC transfer outputs must use the underlying Bitcoin HRP for the configured
+ * OP_NET chain (testnet tb1, mainnet bc1). OP_NET account addresses like opt1
+ * encode the same witness program, but Bitcoin transaction builders/nodes reject
+ * them as payment outputs.
+ */
+function toBitcoinNetworkAddress(address: string): string {
+  const lower = address.toLowerCase();
+  const { bitcoinAddressHrp } = getBrowserOpnetWalletConfig();
+
+  if (BITCOIN_ADDRESS_HRPS.some((hrp) => lower.startsWith(`${hrp}1`))) return address;
+  if (OP_NET_ADDRESS_HRPS.some((hrp) => lower.startsWith(`${hrp}1`))) {
+    const converted = convertBech32Hrp(address, bitcoinAddressHrp);
+    if (converted) return converted;
+  }
+
+  return address;
+}
+
 // ── Provider detection ───────────────────────────────────────────────────
 
 type AnyWindow = Window & {
@@ -1478,7 +1497,12 @@ export async function submitOpnetLiquidityFundingWithWallet(
     );
   }
 
-  const toAddress = toOpnetNetworkAddress(rawAddr);
+  const toAddress = toBitcoinNetworkAddress(rawAddr);
+  if (!BITCOIN_ADDRESS_HRPS.some((hrp) => toAddress.toLowerCase().startsWith(`${hrp}1`))) {
+    throw new Error(
+      `Liquidity vault address must resolve to a Bitcoin payment address for this OP_NET network. Got ${toAddress.slice(0, 12)}...`,
+    );
+  }
   const factory = new TransactionFactory();
 
   // opnet.web3.sendBitcoin (called by detectFundingOPWallet) SIGNS but does NOT
@@ -1521,7 +1545,7 @@ export async function submitOpnetLiquidityFundingWithWallet(
     if (error && /already|mempool|known|utxo/i.test(error)) {
       return { txId, raw: { signed: result, broadcast: broadcastResult, localTxId: txId } };
     }
-    throw new Error(`OPNet broadcast rejected: ${error ?? "unknown error"}`);
+    throw new Error(`OPNet broadcast rejected: ${error ?? JSON.stringify(broadcastResult)}`);
   }
 
   if (!resultTxId || !/^[0-9a-f]{64}$/i.test(resultTxId)) {
