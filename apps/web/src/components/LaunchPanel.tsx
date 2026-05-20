@@ -197,7 +197,7 @@ export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
     const contractUrl = getOpScanContractUrl(launch?.contractAddress);
     const poolUrl = getOpScanContractUrl(launch?.poolAddress);
     return (
-      <div id="launch-pipeline" className="op-panel border-opGreen">
+      <div id="launch-pipeline" className="op-panel border-opGreen scroll-mt-24">
         <div className="border-b-2 border-ink/10 px-4 py-3">
           <h2 className="font-black text-ink text-sm uppercase tracking-wider">Token Live</h2>
         </div>
@@ -246,7 +246,7 @@ export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
   }
 
   return (
-    <div id="launch-pipeline" className="op-panel">
+    <div id="launch-pipeline" className="op-panel scroll-mt-24">
       <div className="border-b-2 border-ink/10 px-4 py-3">
         <h2 className="font-black text-ink text-sm uppercase tracking-wider">Launch Pipeline</h2>
         <p className="text-[10px] text-[var(--text-muted)] mt-0.5">

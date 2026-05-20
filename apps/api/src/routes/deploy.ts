@@ -228,7 +228,9 @@ async function runDeploy(project: any, checkRunId: string, app: FastifyInstance)
         ? "LAUNCHED"
         : output.status === "FAILED"
         ? "FLAGGED"
-        : "READY"; // PACKAGE_READY or COMPILED — stay READY, needs manual deploy
+        : output.status === "PACKAGE_READY"
+        ? "DEPLOY_PACKAGE_READY"
+        : "READY"; // COMPILED — ready for manual deploy
 
     await prisma.checkRun.update({
       where: { id: checkRunId },

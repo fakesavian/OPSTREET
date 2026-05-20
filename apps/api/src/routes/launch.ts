@@ -68,6 +68,15 @@ const PoolCreateIntentSchema = z.object({
   walletAddress: z.string().min(10).optional(),
 });
 
+interface QueueLaunchBuildResult {
+  ok: boolean;
+  statusCode?: number;
+  error?: string;
+  hint?: string;
+  projectId?: string;
+  launchStatus?: LaunchStatus;
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function currentLaunchStatus(project: { launchStatus: string | null }): LaunchStatus {
@@ -133,6 +142,55 @@ function projectLaunchType(project: { launchType?: string | null }): LaunchType 
   return value as LaunchType;
 }
 
+export async function queueLaunchBuildForProject(
+  projectId: string,
+  app: FastifyInstance,
+): Promise<QueueLaunchBuildResult> {
+  const project = await prisma.project.findUnique({ where: { id: projectId } });
+  if (!project) return { ok: false, statusCode: 404, error: "Project not found" };
+
+  // Security checks are advisory Risk Card data, not a launch gate. The only
+  // project statuses that cannot build are terminal/unknown legacy statuses.
+  if (
+    project.status !== "DRAFT" &&
+    project.status !== "CHECKING" &&
+    project.status !== "READY" &&
+    project.status !== "FLAGGED" &&
+    project.status !== "LAUNCHED" &&
+    project.status !== "DEPLOY_PACKAGE_READY"
+  ) {
+    return {
+      ok: false,
+      statusCode: 409,
+      error: `Cannot build from project status '${project.status}'.`,
+    };
+  }
+
+  const current = currentLaunchStatus(project);
+  if (current === "BUILDING" || current === "AWAITING_WALLET_DEPLOY") {
+    return { ok: true, projectId: project.id, launchStatus: current };
+  }
+  if (current !== "DRAFT" && current !== "FAILED") {
+    return {
+      ok: false,
+      statusCode: 409,
+      error: `Cannot start build from launch status '${current}'.`,
+    };
+  }
+
+  if (current === "FAILED") {
+    await setLaunchStatus(project.id, "FAILED", "DRAFT", { launchError: null });
+  }
+
+  await setLaunchStatus(project.id, "DRAFT", "BUILDING", { launchError: null });
+
+  runBuild(project, app).catch((err: unknown) => {
+    app.log.error(err, `launch-build failed for project ${project.id}`);
+  });
+
+  return { ok: true, projectId: project.id, launchStatus: "BUILDING" };
+}
+
 function resolvePoolPair(project: {
   contractAddress: string | null;
   liquidityToken: string | null;
@@ -164,54 +222,22 @@ export async function launchRoutes(app: FastifyInstance) {
       const sessionWallet = request.walletSession?.walletAddress;
       if (!sessionWallet) return reply.status(401).send({ error: "Authentication required." });
 
-      const project = await prisma.project.findUnique({ where: { id: request.params.id } });
-      if (!project) return reply.status(404).send({ error: "Project not found" });
-
-      // Security checks are an advisory Risk Card, not a launch gate. Allow users
-      // to build from a newly-created DRAFT project or from audited/warned states.
-      if (
-        project.status !== "DRAFT" &&
-        project.status !== "CHECKING" &&
-        project.status !== "READY" &&
-        project.status !== "FLAGGED" &&
-        project.status !== "LAUNCHED" &&
-        project.status !== "DEPLOY_PACKAGE_READY"
-      ) {
-        return reply.status(409).send({
-          error: `Cannot build from project status '${project.status}'.`,
+      const queued = await queueLaunchBuildForProject(request.params.id, app);
+      if (!queued.ok) {
+        return reply.status(queued.statusCode ?? 409).send({
+          error: queued.error ?? "Unable to start launch build",
+          hint: queued.hint,
         });
       }
 
-      const current = currentLaunchStatus(project);
-
-      // Allow rebuild from DRAFT or FAILED
-      if (current !== "DRAFT" && current !== "FAILED") {
-        return reply.status(409).send({
-          error: `Cannot start build from launch status '${current}'.`,
-          hint: current === "AWAITING_WALLET_DEPLOY"
-            ? "Build already complete — sign and submit the deploy transaction."
-            : undefined,
-        });
-      }
-
-      // Reset to DRAFT first if retrying from FAILED
-      if (current === "FAILED") {
-        await setLaunchStatus(project.id, "FAILED", "DRAFT", { launchError: null });
-      }
-
-      // Transition DRAFT → BUILDING
-      await setLaunchStatus(project.id, "DRAFT", "BUILDING", { launchError: null });
-
-      // Return 202 immediately — build runs async
       reply.status(202).send({
-        message: "Build started",
-        projectId: project.id,
-        launchStatus: "BUILDING",
-      });
-
-      // Run build in background
-      runBuild(project, app).catch((err: unknown) => {
-        app.log.error(err, `launch-build failed for project ${project.id}`);
+        message: queued.launchStatus === "AWAITING_WALLET_DEPLOY"
+          ? "Build already complete"
+          : queued.launchStatus === "BUILDING"
+            ? "Build started"
+            : "Build queued",
+        projectId: queued.projectId,
+        launchStatus: queued.launchStatus,
       });
     },
   );

@@ -21,7 +21,6 @@ import type {
   FloorStatsDTO,
   FloorTickerDTO,
 } from "@opfun/shared";
-import { AvatarCrowd } from "./AvatarCrowd";
 import { AvatarFigure } from "./AvatarFigure";
 import { CalloutFeed } from "./CalloutFeed";
 import { ChartPanel } from "./ChartPanel";
@@ -39,6 +38,8 @@ const STATS_INTERVAL = 10_000;
 const HEARTBEAT_INTERVAL = 30_000;
 
 const DESKTOP_BACKGROUND_SRC = "/opstreet/floor/trading-floor-backdrop-square-v1.png";
+const MOBILE_PANEL_BUTTON_CLASS =
+  "flex w-full items-center justify-between rounded-[20px] border-[3px] border-ink bg-opYellow px-4 py-3 shadow-[4px_4px_0_#111] transition-all hover:bg-[#ffe36b] active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0_#111]";
 
 type MobilePanelKey = "chart" | "callouts" | "chat";
 
@@ -234,6 +235,8 @@ export function TradingFloorClient() {
   const latestCallout = callouts[0] ?? null;
   const desktopParticipants = presence.slice(0, 30);
   const desktopOverflow = Math.max(0, presence.length - desktopParticipants.length);
+  const mobileParticipants = presence.slice(0, 12);
+  const mobileOverflow = Math.max(0, presence.length - mobileParticipants.length);
   const desktopCalloutFrequency = getDesktopCalloutFrequency(callouts);
 
   return (
@@ -362,25 +365,71 @@ export function TradingFloorClient() {
 
       {/* ── Mobile layout ─────────────────────────────────────── */}
       <div className="pb-28 md:hidden">
-        <TickerTape items={ticker} />
-
-        {/* Floor */}
         <div className="px-4 pt-3">
-          <div className="overflow-hidden rounded-[28px] border-[3px] border-ink bg-[var(--panel-cream)] shadow-[6px_6px_0_#111]">
-            <AvatarCrowd
-              presence={presence}
-              walletAddress={walletAddress}
-              latestCallout={latestCallout}
-              callouts={callouts}
-              ticker={ticker}
-              onJoinClick={handleJoinClick}
-              mobile
+          <div className="relative aspect-square overflow-hidden rounded-[28px] border-[3px] border-ink bg-[#FFF7E8] shadow-[6px_6px_0_#111]">
+            <Image
+              src={DESKTOP_BACKGROUND_SRC}
+              alt=""
+              aria-hidden="true"
+              fill
+              sizes="100vw"
+              className="object-cover"
+              priority
             />
-          </div>
-        </div>
+            <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(255,247,232,0.08)_0%,rgba(255,247,232,0)_22%,rgba(17,17,17,0.08)_100%)]" />
 
-        <div className="px-4 pt-3">
-          <FloorStats stats={stats} />
+            <div className="absolute left-[4%] right-[4%] top-[3%] z-10 overflow-hidden rounded-xl border-[3px] border-ink shadow-[4px_4px_0_rgba(17,17,17,0.28)]">
+              <TickerTape items={ticker} />
+            </div>
+
+            <div className="absolute left-[4.5%] bottom-[5.5%] z-10 max-w-[70%]">
+              <FloorStats stats={stats} />
+            </div>
+
+            <div className="absolute inset-x-[8%] bottom-[4.5%] top-[16%] z-10 overflow-hidden">
+              {mobileParticipants.length === 0 && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center">
+                  <p className="rounded-full bg-black/65 px-4 py-2 text-sm font-semibold text-[var(--panel-cream)] shadow-lg">
+                    The floor is quiet...
+                  </p>
+                  {!walletAddress && (
+                    <p className="rounded-full bg-[var(--panel-cream)]/80 px-3 py-1 text-xs font-semibold text-black/70 shadow-lg">
+                      Connect your wallet to join.
+                    </p>
+                  )}
+                  {walletAddress && (
+                    <button onClick={handleJoinClick} className="btn-primary px-4 py-2 text-xs">
+                      Enter the Floor
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {mobileParticipants.map((entry) => {
+                const seed = hashStr(entry.walletAddress);
+                const posX = 0.12 + seededRand(seed, 0) * 0.96;
+                const posY = 0.14 + seededRand(seed, 1) * 0.86;
+
+                return (
+                  <AvatarFigure
+                    key={entry.walletAddress}
+                    entry={entry}
+                    latestCallout={latestCallout}
+                    size="sm"
+                    posX={posX}
+                    posY={posY}
+                    calloutFrequency={desktopCalloutFrequency}
+                  />
+                );
+              })}
+
+              {mobileOverflow > 0 && (
+                <div className="absolute bottom-2 right-2 rounded-full border border-amber-900/60 bg-amber-950/85 px-2 py-0.5 text-[10px] font-mono text-amber-200">
+                  +{mobileOverflow} more
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Chart accordion */}
@@ -388,7 +437,7 @@ export function TradingFloorClient() {
           <button
             type="button"
             onClick={() => setOpenMobilePanels((c) => ({ ...c, chart: !c.chart }))}
-            className="flex w-full items-center justify-between rounded-[20px] border-[3px] border-ink bg-[linear-gradient(180deg,#f7e6be_0%,#e6bd78_48%,#c07b3f_100%)] px-4 py-3 shadow-[4px_4px_0_#111] transition-all active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0_#111]"
+            className={MOBILE_PANEL_BUTTON_CLASS}
           >
             <span className="flex items-center gap-2 text-sm font-black text-ink">
               <span aria-hidden>📈</span> Chart
@@ -412,7 +461,7 @@ export function TradingFloorClient() {
           <button
             type="button"
             onClick={() => setOpenMobilePanels((c) => ({ ...c, callouts: !c.callouts }))}
-            className="flex w-full items-center justify-between rounded-[20px] border-[3px] border-ink bg-[linear-gradient(180deg,#f7e6be_0%,#e6bd78_48%,#c07b3f_100%)] px-4 py-3 shadow-[4px_4px_0_#111] transition-all active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0_#111]"
+            className={MOBILE_PANEL_BUTTON_CLASS}
           >
             <span className="flex items-center gap-2 text-sm font-black text-ink">
               <span aria-hidden>📡</span> Alpha Callouts
@@ -443,7 +492,7 @@ export function TradingFloorClient() {
           <button
             type="button"
             onClick={() => setOpenMobilePanels((c) => ({ ...c, chat: !c.chat }))}
-            className="flex w-full items-center justify-between rounded-[20px] border-[3px] border-ink bg-[linear-gradient(180deg,#f7e6be_0%,#e6bd78_48%,#c07b3f_100%)] px-4 py-3 shadow-[4px_4px_0_#111] transition-all active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0_#111]"
+            className={MOBILE_PANEL_BUTTON_CLASS}
           >
             <span className="flex items-center gap-2 text-sm font-black text-ink">
               <span aria-hidden>💬</span> Trollbox

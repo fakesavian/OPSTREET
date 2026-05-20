@@ -6,11 +6,10 @@ import { CreateProjectSchema } from "../schemas.js";
 import { slugify } from "@opfun/shared";
 import { scaffoldContract } from "@opfun/opnet";
 import { auditContract, getOpnetNetwork } from "@opfun/opnet";
-import { assertCanTransition } from "../statusMachine.js";
 import { onProjectCreated } from "./floor.js";
 import { verifyWalletToken } from "../middleware/verifyWalletToken.js";
 import { recordFoundationProgressFromProjectCreate } from "../services/foundation.js";
-import { queueDeployForProject } from "./deploy.js";
+import { queueLaunchBuildForProject } from "./launch.js";
 
 // Resolve to packages/opnet/generated/
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -126,20 +125,25 @@ export async function projectRoutes(app: FastifyInstance) {
       },
     });
 
-    // Auto-pipeline: run checks first, then attempt deploy when READY.
-    const queuedProject = await prisma.project.update({
-      where: { id: project.id },
-      data: { status: "CHECKING" },
-    });
-    runChecksAndAutoDeploy(queuedProject, app).catch((err: unknown) => {
-      app.log.error(err, `auto deploy pipeline failed for project ${queuedProject.id}`);
+    // Token creation now starts the wallet-native launch build immediately.
+    // Bob/audit checks still run in parallel as advisory Risk Card metadata.
+    const queuedLaunch = await queueLaunchBuildForProject(project.id, app);
+    if (!queuedLaunch.ok) {
+      app.log.warn(
+        `[create-project] Launch build skipped for ${project.id}: ${queuedLaunch.error ?? "unknown reason"}`,
+      );
+    }
+    runChecks(project, { preserveStatus: true }).catch((err: unknown) => {
+      app.log.error(err, `advisory checks failed for project ${project.id}`);
     });
 
     // Achievement/progression hooks for authenticated creators
     onProjectCreated(sessionWallet).catch(() => undefined);
     recordFoundationProgressFromProjectCreate(sessionWallet, project.id).catch(() => undefined);
 
-    return reply.status(201).send(serializeProject(queuedProject));
+    const createdProject =
+      (await prisma.project.findUnique({ where: { id: project.id } })) ?? project;
+    return reply.status(201).send(serializeProject(createdProject));
   });
 
   // GET /projects?sort=trending|new&status=LAUNCHED&cursor=xxx&limit=50&q=search
@@ -237,29 +241,10 @@ export async function projectRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: "Project not found" });
     }
 
-    const advisoryOnly = project.status === "LAUNCHED" || project.status === "DEPLOY_PACKAGE_READY";
-
-    // Risk checks are advisory. For pre-launch states we still show CHECKING in
-    // the audit panel; for launched/package-ready tokens, keep launch status
-    // intact and run the audit in the background without blocking trading/launch.
-    if (!advisoryOnly) {
-      try {
-        assertCanTransition(project.status as string, "CHECKING");
-      } catch {
-        return reply.status(409).send({
-          error: `Cannot run checks from status '${project.status}'.`,
-          hint:
-            project.status === "CHECKING"
-              ? "Checks already in progress."
-              : undefined,
-        });
-      }
-
-      await prisma.project.update({
-        where: { id },
-        data: { status: "CHECKING" },
-      });
-    }
+    // Security/audit checks are advisory Risk Card data. Never move the
+    // project into CHECKING here, because CHECKING can block deploy/launch flows.
+    // The CheckRun rows still show progress/history in the Risk Card panel.
+    const advisoryOnly = true;
 
     // Reply immediately — checks run async
     reply.status(202).send({
@@ -317,21 +302,7 @@ export async function projectRoutes(app: FastifyInstance) {
   });
 }
 
-async function runChecksAndAutoDeploy(project: any, app: FastifyInstance): Promise<void> {
-  await runChecks(project);
 
-  const refreshed = await prisma.project.findUnique({ where: { id: project.id } });
-  if (!refreshed || refreshed.status !== "READY") return;
-
-  const queued = await queueDeployForProject(project.id, app);
-  if (!queued.ok) {
-    app.log.warn(
-      `[auto-pipeline] Deploy skipped for ${project.id}: ${queued.error ?? "unknown reason"}`,
-    );
-  }
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function runChecks(
   project: any,
   opts: { preserveStatus?: boolean; originalStatus?: string } = {},
@@ -394,10 +365,12 @@ async function runChecks(
         }),
       },
     });
-    await prisma.project.update({
-      where: { id: projectId },
-      data: { status: finalFailureStatus },
-    });
+    if (!opts.preserveStatus) {
+      await prisma.project.update({
+        where: { id: projectId },
+        data: { status: finalFailureStatus },
+      });
+    }
     return;
   }
 
@@ -434,13 +407,14 @@ async function runChecks(
       },
     });
 
-    // Store Risk Card + score on project
+    // Store Risk Card + score on project. Advisory runs must never mutate launch
+    // status, because Bob/audit failures are buyer-facing risk info only.
     await prisma.project.update({
       where: { id: projectId },
       data: {
         riskScore: auditResult.riskScore,
         riskCardJson: JSON.stringify(auditResult.riskCard),
-        status: finalSuccessStatus,
+        ...(!opts.preserveStatus ? { status: finalSuccessStatus } : {}),
       },
     });
   } catch (err) {
@@ -453,10 +427,12 @@ async function runChecks(
         }),
       },
     });
-    await prisma.project.update({
-      where: { id: projectId },
-      data: { status: finalFailureStatus },
-    });
+    if (!opts.preserveStatus) {
+      await prisma.project.update({
+        where: { id: projectId },
+        data: { status: finalFailureStatus },
+      });
+    }
   }
 }
 
