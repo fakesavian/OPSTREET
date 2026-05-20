@@ -22,14 +22,17 @@ const TTL_MS = 2 * 60 * 60 * 1000; // 2 hours — max reasonable BTC block wait
 interface StoredTx {
   txId: string;
   startedAt: number; // epoch ms
+  purpose?: PendingTxPurpose;
 }
+
+type PendingTxPurpose = "opnet" | "funding";
 
 interface PendingTxState {
   txId: string | null;
   startedAt: number | null;
   confirmed: boolean;
   /** Call this when a BTC funding transaction is broadcast */
-  setPendingTx: (txId: string) => void;
+  setPendingTx: (txId: string, purpose?: PendingTxPurpose) => void;
   /** Call this to dismiss the overlay (user action or confirmation) */
   clearPendingTx: () => void;
 }
@@ -49,6 +52,7 @@ const PendingTxContext = createContext<PendingTxState>({
 export function PendingTxProvider({ children }: { children: React.ReactNode }) {
   const [txId, setTxId] = useState<string | null>(null);
   const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [purpose, setPurpose] = useState<PendingTxPurpose>("opnet");
   const [confirmed, setConfirmed] = useState(false);
 
   // Hydrate from localStorage on mount
@@ -69,6 +73,10 @@ export function PendingTxProvider({ children }: { children: React.ReactNode }) {
       }
       setTxId(stored.txId);
       setStartedAt(stored.startedAt);
+      // Backward compatibility: pending txs saved before purpose tracking were
+      // create-page funding txs, so treat missing purpose as funding. Deploy/pool
+      // pages write "opnet" explicitly when they reopen their own pending tx.
+      setPurpose(stored.purpose === "opnet" ? "opnet" : "funding");
     } catch {
       localStorage.removeItem(STORAGE_KEY);
     }
@@ -86,7 +94,7 @@ export function PendingTxProvider({ children }: { children: React.ReactNode }) {
 
     async function checkConfirmed() {
       try {
-        const res = await fetch(`${OP_NET_TX_STATUS_API}?txId=${encodeURIComponent(pendingTxId)}`, {
+        const res = await fetch(`${OP_NET_TX_STATUS_API}?txId=${encodeURIComponent(pendingTxId)}&purpose=${purpose}`, {
           cache: "no-store",
         });
         if (!res.ok) return;
@@ -100,31 +108,34 @@ export function PendingTxProvider({ children }: { children: React.ReactNode }) {
     void checkConfirmed();
     const id = setInterval(() => void checkConfirmed(), POLL_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [txId, confirmed]);
+  }, [txId, confirmed, purpose]);
 
-  const setPendingTx = useCallback((id: string) => {
+  const setPendingTx = useCallback((id: string, pendingPurpose: PendingTxPurpose = "opnet") => {
     const pendingId = id.trim();
     if (!pendingId.startsWith("testnet-skip-") && !TXID_RE.test(pendingId)) {
       console.warn("Ignoring invalid pending tx id", pendingId.slice(0, 32));
       localStorage.removeItem(STORAGE_KEY);
       setTxId(null);
       setStartedAt(null);
+      setPurpose("opnet");
       setConfirmed(false);
       return;
     }
-    if (pendingId === txId) return;
+    if (pendingId === txId && pendingPurpose === purpose) return;
     const now = Date.now();
-    const stored: StoredTx = { txId: pendingId, startedAt: now };
+    const stored: StoredTx = { txId: pendingId, startedAt: now, purpose: pendingPurpose };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
     setTxId(pendingId);
     setStartedAt(now);
+    setPurpose(pendingPurpose);
     setConfirmed(false);
-  }, [txId]);
+  }, [txId, purpose]);
 
   const clearPendingTx = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY);
     setTxId(null);
     setStartedAt(null);
+    setPurpose("opnet");
   }, []);
 
   return (

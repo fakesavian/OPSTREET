@@ -207,8 +207,10 @@ export default function CreatePage() {
             throw new Error("Liquidity funding transaction was not returned by wallet.");
           }
           fundingTxId = funding.txId;
-          // Show block-wait overlay globally — persists across page navigation
-          setPendingTx(fundingTxId);
+          // Show block-wait overlay globally — persists across page navigation.
+          // This is a plain funding transfer, so a mined Generic OP_NET tx counts
+          // as confirmed for the overlay even though it has no contract receipt.
+          setPendingTx(fundingTxId, "funding");
         } else {
           // MOTO/PIL are OP-20 token liquidity choices. Do not convert them into a BTC/tBTC transfer.
           // Token transfer/approval funding is handled by the OP_NET launch pipeline after project creation.

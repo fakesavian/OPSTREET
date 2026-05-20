@@ -3,6 +3,13 @@
 import { useEffect, useState } from "react";
 import { fetchBlockStatus, type BlockStatus } from "@/lib/api";
 
+function formatOpnetNetworkLabel(network?: string): string {
+  const normalized = (network ?? "opnet-testnet").toLowerCase();
+  if (normalized.includes("mainnet")) return "OPNET MAINNET";
+  if (normalized.includes("testnet")) return "OPNET TESTNET";
+  return normalized.replace(/[-_]+/g, " ").toUpperCase();
+}
+
 export function BlockTimerBar() {
   const [status, setStatus] = useState<BlockStatus | null>(null);
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -16,7 +23,8 @@ export function BlockTimerBar() {
         .then((data) => {
           if (mounted) {
             setStatus(data);
-            // degraded = RPC unreachable but API alive; treat as offline for indicators
+            // Green means connected to the configured OP_NET RPC and receiving
+            // block heights. Red means the API returned a degraded/offline poll.
             const healthy = !data.degraded && data.blockHeight > 0;
             setLastPollOk(healthy);
             setCountdown(healthy && data.nextBlockEstimateMs > 0 ? Math.floor(data.nextBlockEstimateMs / 1000) : null);
@@ -53,10 +61,11 @@ export function BlockTimerBar() {
     countdown === null
       ? "--:--"
       : `${String(Math.floor(countdown / 60)).padStart(2, "0")}:${String(countdown % 60).padStart(2, "0")}`;
+  const networkLabel = formatOpnetNetworkLabel(status?.network);
   const networkTitle = lastPollOk
-    ? "OPNET testnet reachable. Badge reflects the latest successful poll."
+    ? `${networkLabel} reachable. Badge reflects the latest successful poll.`
     : status
-      ? "Latest OPNET status poll failed. Showing the last known block height."
+      ? `${networkLabel} status poll failed. Showing the last known block height.`
       : "OPNET status is currently unavailable.";
   const timerTitle =
     countdown === null
@@ -68,13 +77,13 @@ export function BlockTimerBar() {
       <div className="mx-auto flex max-w-6xl w-full items-center justify-between">
         {/* Left: network indicator */}
         <div className="flex items-center gap-2" title={networkTitle}>
-          <span className={`inline-flex h-5 w-5 items-center justify-center rounded-md border-2 border-ink ${lastPollOk ? "bg-opGreen" : "bg-gray-400"}`}>
-            <span className={`inline-block h-1.5 w-1.5 rounded-full ${lastPollOk ? "bg-white animate-pulse-dot" : "bg-gray-200"}`} />
+          <span className={`inline-flex h-5 w-5 items-center justify-center rounded-md border-2 border-ink ${lastPollOk ? "bg-opGreen" : "bg-opRed"}`}>
+            <span className={`inline-block h-1.5 w-1.5 rounded-full bg-white ${lastPollOk ? "animate-pulse-dot" : ""}`} />
           </span>
           <span className="hidden sm:inline font-black tracking-widest uppercase text-[10px] text-ink">
-            OPNET TESTNET
+            {networkLabel}
           </span>
-          <span className="sm:hidden font-black text-[10px] text-ink">OPNET</span>
+          <span className="sm:hidden font-black text-[10px] text-ink">{networkLabel}</span>
         </div>
 
         {/* Center: block height */}

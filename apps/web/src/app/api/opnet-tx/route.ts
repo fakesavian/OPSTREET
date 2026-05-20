@@ -15,6 +15,7 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(request: NextRequest): Promise<Response> {
   const txId = request.nextUrl.searchParams.get("txId")?.trim() ?? "";
+  const purpose = request.nextUrl.searchParams.get("purpose")?.trim() ?? "opnet";
   const networkConfig = getOpnetNetworkConfig();
 
   if (!/^[0-9a-f]{64}$/i.test(txId)) {
@@ -29,8 +30,12 @@ export async function GET(request: NextRequest): Promise<Response> {
     return Response.json({
       txId,
       found: receipt.found,
-      status: receipt.status,
-      confirmed: receipt.status === "confirmed" || receipt.status === "failed",
+      status: purpose === "funding" && receipt.found && receipt.blockHeight !== undefined
+        ? "confirmed"
+        : receipt.status,
+      confirmed: purpose === "funding" && receipt.found && receipt.blockHeight !== undefined
+        ? true
+        : receipt.status === "confirmed" || receipt.status === "failed",
       blockHeight: receipt.blockHeight ?? null,
       revert: receipt.revert ?? null,
       network: networkConfig.network,

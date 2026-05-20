@@ -7,7 +7,7 @@
  * No explorer data is authoritative for launch/trade logic.
  */
 
-import { checkProviderHealth, getProvider } from "@opfun/opnet";
+import { checkProviderHealth, getOpnetNetworkConfig, getProvider } from "@opfun/opnet";
 
 const OPNET_EXPLORER_URL = process.env["OPNET_EXPLORER_URL"] || "https://testnet.opnet.org";
 const OPNET_MEMPOOL_URL = process.env["OPNET_MEMPOOL_URL"] || "";
@@ -254,6 +254,7 @@ function parseTimestampMs(value: unknown): number | null {
 }
 
 export async function fetchBlockStatus(): Promise<BlockStatusData> {
+  const network = `opnet-${getOpnetNetworkConfig().network}`;
   const health = await checkProviderHealth();
   if (!health.healthy || typeof health.blockHeight !== "number") {
     throw new UpstreamError("block-status", null, health.error ?? "OP_NET RPC unavailable");
@@ -273,12 +274,15 @@ export async function fetchBlockStatus(): Promise<BlockStatusData> {
   }
 
   return {
-    network: "opnet-testnet",
+    network,
     blockHeight: health.blockHeight,
     nextBlockEstimateMs,
     timestamp: new Date().toISOString(),
     source: "rpc",
-    degraded: nextBlockEstimateMs <= 0,
+    // Connectivity is healthy once the RPC returns a block height. A missing
+    // next-block estimate only disables the countdown timer; it should not make
+    // the network status light look disconnected.
+    degraded: false,
   };
 }
 

@@ -237,36 +237,39 @@ export async function projectRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: "Project not found" });
     }
 
-    // S3 + M5: Validate CHECKING transition through the state machine.
-    try {
-      assertCanTransition(project.status as string, "CHECKING");
-    } catch {
-      return reply.status(409).send({
-        error: `Cannot run checks from status '${project.status}'.`,
-        hint:
-          project.status === "CHECKING"
-            ? "Checks already in progress."
-            : project.status === "READY"
-            ? "Project already has a Risk Card. Re-run only from DRAFT or FLAGGED."
-            : undefined,
+    const advisoryOnly = project.status === "LAUNCHED" || project.status === "DEPLOY_PACKAGE_READY";
+
+    // Risk checks are advisory. For pre-launch states we still show CHECKING in
+    // the audit panel; for launched/package-ready tokens, keep launch status
+    // intact and run the audit in the background without blocking trading/launch.
+    if (!advisoryOnly) {
+      try {
+        assertCanTransition(project.status as string, "CHECKING");
+      } catch {
+        return reply.status(409).send({
+          error: `Cannot run checks from status '${project.status}'.`,
+          hint:
+            project.status === "CHECKING"
+              ? "Checks already in progress."
+              : undefined,
+        });
+      }
+
+      await prisma.project.update({
+        where: { id },
+        data: { status: "CHECKING" },
       });
     }
-
-    // Mark project as CHECKING
-    await prisma.project.update({
-      where: { id },
-      data: { status: "CHECKING" },
-    });
 
     // Reply immediately — checks run async
     reply.status(202).send({
       message: "Checks started",
       projectId: id,
-      status: "CHECKING",
+      status: advisoryOnly ? project.status : "CHECKING",
     });
 
     // Run checks in background (don't await reply)
-    runChecks(project).catch((err: unknown) => {
+    runChecks(project, { preserveStatus: advisoryOnly, originalStatus: project.status as string }).catch((err: unknown) => {
       app.log.error(err, `run-checks failed for project ${id}`);
     });
   });
@@ -329,8 +332,13 @@ async function runChecksAndAutoDeploy(project: any, app: FastifyInstance): Promi
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function runChecks(project: any): Promise<void> {
+async function runChecks(
+  project: any,
+  opts: { preserveStatus?: boolean; originalStatus?: string } = {},
+): Promise<void> {
   const projectId = project.id as string;
+  const finalFailureStatus = opts.preserveStatus ? opts.originalStatus ?? project.status : "FLAGGED";
+  const finalSuccessStatus = opts.preserveStatus ? opts.originalStatus ?? project.status : "READY";
 
   // ── SCAFFOLD ──────────────────────────────────────────────────────────────
   const scaffoldRun = await prisma.checkRun.create({
@@ -388,7 +396,7 @@ async function runChecks(project: any): Promise<void> {
     });
     await prisma.project.update({
       where: { id: projectId },
-      data: { status: "FLAGGED" },
+      data: { status: finalFailureStatus },
     });
     return;
   }
@@ -432,7 +440,7 @@ async function runChecks(project: any): Promise<void> {
       data: {
         riskScore: auditResult.riskScore,
         riskCardJson: JSON.stringify(auditResult.riskCard),
-        status: "READY",
+        status: finalSuccessStatus,
       },
     });
   } catch (err) {
@@ -447,7 +455,7 @@ async function runChecks(project: any): Promise<void> {
     });
     await prisma.project.update({
       where: { id: projectId },
-      data: { status: "FLAGGED" },
+      data: { status: finalFailureStatus },
     });
   }
 }

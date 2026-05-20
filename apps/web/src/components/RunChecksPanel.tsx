@@ -11,7 +11,7 @@ const STATUS_LABELS: Record<string, string> = {
   CHECKING: "Running checks...",
   READY: "Checks passed",
   LAUNCHED: "Launched on OP_NET",
-  FLAGGED: "Flagged - anomaly detected",
+  FLAGGED: "Audit warning - review risk card",
   GRADUATED: "Graduated",
   DEPLOY_PACKAGE_READY: "Deploy package ready",
 };
@@ -138,7 +138,8 @@ export function RunChecksPanel({
         const err = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
         throw new Error(err.message ?? err.error ?? `HTTP ${res.status}`);
       }
-      setProject((p) => ({ ...p, status: "CHECKING" }));
+      const data = (await res.json().catch(() => ({}))) as { status?: string };
+      setProject((p) => ({ ...p, status: (data.status ?? "CHECKING") as ProjectDTO["status"] }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start checks");
     } finally {
@@ -173,7 +174,7 @@ export function RunChecksPanel({
             <p className="mt-1 font-mono text-[10px] text-[var(--text-muted)] truncate max-w-xs">sha256: {project.buildHash}</p>
           )}
         </div>
-        {(project.status === "DRAFT" || project.status === "READY" || project.status === "FLAGGED") && (
+        {(project.status === "DRAFT" || project.status === "READY" || project.status === "FLAGGED" || project.status === "LAUNCHED" || project.status === "DEPLOY_PACKAGE_READY") && (
           <button
             onClick={runChecks}
             disabled={running || isChecking}

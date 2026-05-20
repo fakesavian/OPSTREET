@@ -496,7 +496,9 @@ export function ProjectPageClient({ initialProject }: { initialProject: FullProj
           <RiskScoreCard riskScore={project.riskScore} />
 
           {/* Launch pipeline — wallet-native deploy + pool */}
-          {(project.status === "READY" ||
+          {(project.status === "DRAFT" ||
+            project.status === "CHECKING" ||
+            project.status === "READY" ||
             project.status === "FLAGGED" ||
             project.status === "LAUNCHED" ||
             project.status === "DEPLOY_PACKAGE_READY" ||

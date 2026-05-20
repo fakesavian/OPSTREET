@@ -71,6 +71,8 @@ export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
   const launchStatus = launch?.launchStatus ?? project.launchStatus ?? "DRAFT";
   const currentStep = launchStatusToStep(launchStatus);
   const canStartBuild =
+    project.status === "DRAFT" ||
+    project.status === "CHECKING" ||
     project.status === "READY" ||
     project.status === "FLAGGED" ||
     project.status === "LAUNCHED" ||
@@ -265,7 +267,7 @@ export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
             )}
             {!canStartBuild && (
               <p className="text-xs text-[var(--text-muted)]">
-                Run security checks first — project must be in READY status.
+                Launch is unavailable from this project status.
               </p>
             )}
             {canStartBuild && (

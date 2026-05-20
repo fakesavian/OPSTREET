@@ -167,15 +167,18 @@ export async function launchRoutes(app: FastifyInstance) {
       const project = await prisma.project.findUnique({ where: { id: request.params.id } });
       if (!project) return reply.status(404).send({ error: "Project not found" });
 
-      // Project must have passed audit or be explicitly flagged for review/launch continuation.
+      // Security checks are an advisory Risk Card, not a launch gate. Allow users
+      // to build from a newly-created DRAFT project or from audited/warned states.
       if (
+        project.status !== "DRAFT" &&
+        project.status !== "CHECKING" &&
         project.status !== "READY" &&
         project.status !== "FLAGGED" &&
         project.status !== "LAUNCHED" &&
         project.status !== "DEPLOY_PACKAGE_READY"
       ) {
         return reply.status(409).send({
-          error: `Cannot build from project status '${project.status}'. Run checks first.`,
+          error: `Cannot build from project status '${project.status}'.`,
         });
       }
 

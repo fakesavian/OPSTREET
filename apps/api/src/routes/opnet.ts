@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { getRuntimeDiagnostics } from "@opfun/opnet";
+import { getOpnetNetworkConfig, getRuntimeDiagnostics } from "@opfun/opnet";
 import {
   fetchBlockStatus,
   fetchTokenPrices,
@@ -50,7 +50,7 @@ export async function opnetRoutes(app: FastifyInstance) {
       // Return a degraded 200 (not 503) so the frontend can distinguish
       // "RPC offline" from "API offline". The BlockTimerBar checks degraded flag.
       const degraded: BlockStatusData = {
-        network: "opnet-testnet",
+        network: blockCache?.data.network ?? `opnet-${getOpnetNetworkConfig().network}`,
         blockHeight: blockCache?.data.blockHeight ?? 0,
         nextBlockEstimateMs: -1,
         timestamp: new Date().toISOString(),
