@@ -92,6 +92,21 @@ export interface OpnetPreparedInteraction {
   feeRate: number;
 }
 
+export interface OpnetDeployIntent {
+  bytecodeHex: string;
+  from: string;
+  feeRate: number;
+  priorityFee: string;
+  gasSatFee: string;
+}
+
+export interface OpnetDeploySubmitResult {
+  contractAddress: string;
+  deployTx: string;
+  fundingTx?: string;
+  raw?: unknown;
+}
+
 export interface OpnetSignedInteractionResult {
   signedFundingTxHex?: string | null;
   signedInteractionTxHex: string;
@@ -1558,6 +1573,118 @@ export async function submitOpnetLiquidityFundingWithWallet(
   }
 
   return { txId: resultTxId, raw: { signed: result, broadcast: broadcastResult, localTxId: txId } };
+}
+
+export async function submitOpnetDeploymentWithWallet(
+  provider: WalletProviderType,
+  intent: OpnetDeployIntent,
+): Promise<OpnetDeploySubmitResult | null> {
+  if (provider !== "opnet") return null;
+
+  const opnet = getOPNet();
+  if (!opnet) throw new Error("OPNet wallet extension not found.");
+
+  await ensureOPNetConfiguredNetwork(opnet);
+
+  const from = intent.from.trim();
+  if (!from) throw new Error("Deploy signer address is empty.");
+
+  const bytecodeHex = intent.bytecodeHex.replace(/^0x/i, "");
+  if (!/^[0-9a-f]+$/i.test(bytecodeHex) || bytecodeHex.length < 2 || bytecodeHex.length % 2 !== 0) {
+    throw new Error("Deploy artifact bytecode is invalid or empty.");
+  }
+
+  const { TransactionFactory } = await import("@btc-vision/transaction");
+  const { JSONRpcProvider } = await import("opnet");
+  const { networks: btcNetworks, Transaction: BtcTransaction } = await import("@btc-vision/bitcoin");
+
+  const walletConfig = getBrowserOpnetWalletConfig();
+  const bitcoinNetwork = (btcNetworks as Record<string, unknown>)[walletConfig.bitcoinNetworkKey];
+  if (!bitcoinNetwork) {
+    throw new Error(`@btc-vision/bitcoin does not expose ${walletConfig.bitcoinNetworkKey} network params.`);
+  }
+
+  const rpcProvider = new JSONRpcProvider({
+    url: walletConfig.rpcUrl,
+    network: bitcoinNetwork as never,
+  });
+
+  const utxos = await rpcProvider.utxoManager.getUTXOs({
+    address: from,
+    optimize: false,
+  });
+
+  if (!utxos || utxos.length === 0) {
+    throw new Error(
+      "No UTXOs found for your wallet address on the configured OP_NET network. Fund your OP_WALLET BTC balance before deploying.",
+    );
+  }
+
+  const factory = new TransactionFactory();
+  const result = await factory.signDeployment({
+    from,
+    bytecode: hexToBytes(bytecodeHex),
+    utxos,
+    feeRate: intent.feeRate,
+    priorityFee: BigInt(intent.priorityFee),
+    gasSatFee: BigInt(intent.gasSatFee),
+    linkMLDSAPublicKeyToAddress: true,
+    revealMLDSAPublicKey: true,
+  } as never);
+
+  const deployment = result as {
+    transaction?: [string, string] | string[];
+    contractAddress?: string;
+    contractPubKey?: string;
+  };
+  const fundingRaw = deployment.transaction?.[0];
+  const deployRaw = deployment.transaction?.[1];
+  if (!deployment.contractAddress || typeof deployment.contractAddress !== "string") {
+    throw new Error("OP_WALLET did not return the deployed contract address.");
+  }
+  if (!fundingRaw || !deployRaw || typeof fundingRaw !== "string" || typeof deployRaw !== "string") {
+    throw new Error("OP_WALLET did not return signed deploy transactions.");
+  }
+
+  const localFundingTx = BtcTransaction.fromHex(fundingRaw).getId();
+  const localDeployTx = BtcTransaction.fromHex(deployRaw).getId();
+
+  const fundingBroadcast = await rpcProvider.sendRawTransaction(fundingRaw, false);
+  const fundingTx = resolveBroadcastTxId(fundingBroadcast, localFundingTx, "funding");
+
+  const deployBroadcast = await rpcProvider.sendRawTransaction(deployRaw, false);
+  const deployTx = resolveBroadcastTxId(deployBroadcast, localDeployTx, "deploy");
+
+  return {
+    contractAddress: deployment.contractAddress,
+    deployTx,
+    fundingTx,
+    raw: {
+      signed: result,
+      broadcast: { funding: fundingBroadcast, deploy: deployBroadcast },
+      localTxIds: { funding: localFundingTx, deploy: localDeployTx },
+    },
+  };
+}
+
+function resolveBroadcastTxId(broadcastResult: unknown, localTxId: string, label: string): string {
+  if (typeof broadcastResult === "string" && /^[0-9a-f]{64}$/i.test(broadcastResult)) return broadcastResult;
+
+  const b = broadcastResult as Record<string, unknown> | null;
+  const success = b?.["success"];
+  const error = typeof b?.["error"] === "string" ? b["error"] : undefined;
+  const resultTxId = typeof b?.["result"] === "string" ? b["result"] : undefined;
+
+  if (success === false) {
+    if (!error || /already|mempool|known|utxo|txn-already/i.test(error)) return localTxId;
+    throw new Error(`OPNet ${label} broadcast rejected: ${error}`);
+  }
+
+  if (resultTxId && /^[0-9a-f]{64}$/i.test(resultTxId)) return resultTxId;
+
+  throw new Error(
+    `OPNet ${label} broadcast did not return a canonical txid. Response: ${JSON.stringify(broadcastResult)}`,
+  );
 }
 
 // ── Wallet-native interaction signing ─────────────────────────────────────

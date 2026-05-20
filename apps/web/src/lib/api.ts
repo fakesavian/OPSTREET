@@ -796,6 +796,18 @@ export interface PreparedInteractionResponse {
   feeRate: number;
 }
 
+export interface DeployIntentResponse {
+  projectId: string;
+  ticker: string;
+  buildHash: string | null;
+  bytecodeHex: string;
+  from: string;
+  feeRate: number;
+  priorityFee: string;
+  gasSatFee: string;
+  instructions: string[];
+}
+
 export interface PoolCreateIntentResponse {
   status: "POOL_CREATE_INTENT";
   projectId: string;
@@ -856,6 +868,18 @@ export async function fetchLaunchStatus(projectId: string): Promise<LaunchStatus
   const res = await fetch(`${BASE}/projects/${projectId}/launch-status`, { cache: "no-store" });
   if (!res.ok) throw new Error("Failed to fetch launch status");
   return res.json() as Promise<LaunchStatusResponse>;
+}
+
+export async function fetchDeployIntent(projectId: string): Promise<DeployIntentResponse> {
+  const res = await fetchOrExplain(`${BASE}/projects/${projectId}/deploy-intent`, {
+    credentials: "include",
+    cache: "no-store",
+  }, "preparing deploy transaction");
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<DeployIntentResponse>;
 }
 
 export async function submitDeploy(projectId: string, data: {

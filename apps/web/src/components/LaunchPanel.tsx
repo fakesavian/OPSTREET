@@ -6,13 +6,14 @@ import type { LaunchStatusResponse } from "@/lib/api";
 import {
   launchBuild,
   fetchLaunchStatus,
+  fetchDeployIntent,
   fetchPoolCreateIntent,
   submitDeploy,
   submitPool,
 } from "@/lib/api";
 import { getOpScanContractUrl, getOpScanHomeUrl } from "@/lib/opscan";
 import { useWallet } from "./WalletProvider";
-import { signOpnetInteractionWithWallet } from "@/lib/wallet";
+import { signOpnetInteractionWithWallet, submitOpnetDeploymentWithWallet } from "@/lib/wallet";
 import { usePendingTx } from "@/context/PendingTxContext";
 
 interface LaunchPanelProps {
@@ -61,7 +62,7 @@ export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
   const [error, setError] = useState("");
   const [polling, setPolling] = useState(false);
 
-  // Deploy submit form
+  // Deploy signing state (auto-filled from OP_WALLET result; no manual form)
   const [deployTx, setDeployTx] = useState("");
   const [contractAddr, setContractAddr] = useState("");
 
@@ -154,23 +155,34 @@ export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
     }
   }
 
-  async function handleSubmitDeploy() {
-    if (!deployTx || !contractAddr) {
-      setError("Fill in both deploy TX and contract address.");
+  async function handleSignDeploy() {
+    if (!wallet?.address) {
+      setError("Connect your wallet first.");
+      return;
+    }
+    if (wallet.provider !== "opnet") {
+      setError("Use OP_WALLET to sign and broadcast the deploy transaction in-app.");
       return;
     }
     setLoading(true);
     setError("");
     try {
+      const intent = await fetchDeployIntent(project.id);
+      const deployed = await submitOpnetDeploymentWithWallet(wallet.provider, intent);
+      if (!deployed) throw new Error("OP_WALLET did not sign the deploy transaction.");
+
+      setDeployTx(deployed.deployTx);
+      setContractAddr(deployed.contractAddress);
+
       await submitDeploy(project.id, {
-        deployTx,
-        contractAddress: contractAddr,
-        buildHash: launch?.buildHash ?? undefined,
+        deployTx: deployed.deployTx,
+        contractAddress: deployed.contractAddress,
+        buildHash: intent.buildHash ?? launch?.buildHash ?? undefined,
       });
-      setPendingTx(deployTx);
+      setPendingTx(deployed.deployTx);
       await refreshLaunchStatus();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Deploy submit failed");
+      setError(err instanceof Error ? err.message : "Deploy signing failed");
     } finally {
       setLoading(false);
     }
@@ -316,38 +328,41 @@ export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
         {launchStatus === "AWAITING_WALLET_DEPLOY" && (
           <div className="space-y-3">
             <div className="rounded-xl border-2 border-ink bg-opYellow/10 px-3 py-2">
-              <p className="text-xs font-bold text-ink">Build complete. Sign and broadcast the deploy transaction with your wallet.</p>
+              <p className="text-xs font-bold text-ink">Build complete. OP_WALLET will sign, broadcast, and submit the deploy details automatically.</p>
               {launch?.buildHash && (
                 <p className="mt-1 text-[10px] font-mono text-[var(--text-muted)]">
                   Build hash: {launch.buildHash}
                 </p>
               )}
             </div>
-            <div>
-              <label className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)]">Deploy TX ID</label>
-              <input
-                className="mt-1 w-full rounded-lg border-2 border-ink bg-[var(--cream)] px-3 py-2 text-xs font-mono text-ink placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-opYellow"
-                placeholder="Enter the deploy transaction ID"
-                value={deployTx}
-                onChange={(e) => setDeployTx(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)]">Contract Address</label>
-              <input
-                className="mt-1 w-full rounded-lg border-2 border-ink bg-[var(--cream)] px-3 py-2 text-xs font-mono text-ink placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-opYellow"
-                placeholder="bcrt1p..."
-                value={contractAddr}
-                onChange={(e) => setContractAddr(e.target.value)}
-              />
-            </div>
+            {(deployTx || contractAddr) && (
+              <div className="rounded-xl border-2 border-ink/20 bg-[var(--cream)] px-3 py-2 space-y-2">
+                {deployTx && (
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)]">Deploy TX ID</p>
+                    <p className="font-mono text-[10px] text-ink break-all">{deployTx}</p>
+                  </div>
+                )}
+                {contractAddr && (
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)]">Contract Address</p>
+                    <p className="font-mono text-[10px] text-ink break-all">{contractAddr}</p>
+                  </div>
+                )}
+              </div>
+            )}
             <button
-              onClick={handleSubmitDeploy}
-              disabled={loading}
+              onClick={handleSignDeploy}
+              disabled={loading || !wallet?.address || wallet.provider !== "opnet"}
               className="w-full py-3 font-black text-sm rounded-xl border-3 border-ink bg-opGreen text-white shadow-hard-sm hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[3px_3px_0_#111] active:translate-x-[3px] active:translate-y-[3px] active:shadow-none transition-all disabled:opacity-50"
             >
-              {loading ? "Submitting..." : "Submit Deploy TX"}
+              {loading ? "Signing deploy..." : "Sign & Submit Deploy"}
             </button>
+            {wallet?.address && wallet.provider !== "opnet" && (
+              <p className="text-[10px] text-[var(--text-muted)] text-center">
+                Switch to OP_WALLET to sign and submit deploy automatically.
+              </p>
+            )}
           </div>
         )}
 

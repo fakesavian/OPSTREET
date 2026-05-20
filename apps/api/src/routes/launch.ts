@@ -13,6 +13,7 @@
 
 import type { FastifyInstance } from "fastify";
 import path from "node:path";
+import { readFile } from "node:fs/promises";
 import { resolveGeneratedDir } from "../generatedDir.js";
 import { z } from "zod";
 import { prisma } from "../db.js";
@@ -66,6 +67,10 @@ const PoolSubmitSchema = z.object({
 const PoolCreateIntentSchema = z.object({
   walletAddress: z.string().min(10).optional(),
 });
+
+const DEPLOY_FEE_RATE = 10;
+const DEPLOY_PRIORITY_FEE = "10000";
+const DEPLOY_GAS_SAT_FEE = "10000";
 
 interface QueueLaunchBuildResult {
   ok: boolean;
@@ -271,6 +276,53 @@ export async function launchRoutes(app: FastifyInstance) {
         liveAt: project.liveAt?.toISOString() ?? null,
         curveAddress: (p["curveAddress"] as string | null) ?? null,
         checkRuns: project.checkRuns,
+      });
+    },
+  );
+
+  // ─── 2b. GET /projects/:id/deploy-intent ──────────────────────────────────
+  // Returns the compiled WASM + wallet-safe deploy parameters. OP_WALLET signs
+  // the deployment in the browser; the app then broadcasts and records the tx.
+  app.get<{ Params: { id: string } }>(
+    "/projects/:id/deploy-intent",
+    { preHandler: [verifyWalletToken] },
+    async (request, reply) => {
+      const sessionWallet = request.walletSession?.walletAddress;
+      if (!sessionWallet) return reply.status(401).send({ error: "Authentication required." });
+
+      const project = await prisma.project.findUnique({ where: { id: request.params.id } });
+      if (!project) return reply.status(404).send({ error: "Project not found" });
+
+      const current = currentLaunchStatus(project);
+      if (current !== "AWAITING_WALLET_DEPLOY") {
+        return reply.status(409).send({
+          error: `Deploy signing is not available from launch status '${current}'.`,
+        });
+      }
+
+      const wasmPath = path.join(GENERATED_DIR, project.id, "contract", "build", `${project.ticker}.wasm`);
+      let wasm: Buffer;
+      try {
+        wasm = await readFile(wasmPath);
+      } catch {
+        return reply.status(409).send({
+          error: "Compiled contract WASM is not available yet. Retry the build before signing deploy.",
+        });
+      }
+
+      return reply.send({
+        projectId: project.id,
+        ticker: project.ticker,
+        buildHash: project.buildHash ?? null,
+        bytecodeHex: wasm.toString("hex"),
+        from: sessionWallet,
+        feeRate: DEPLOY_FEE_RATE,
+        priorityFee: DEPLOY_PRIORITY_FEE,
+        gasSatFee: DEPLOY_GAS_SAT_FEE,
+        instructions: [
+          "OP_WALLET will sign the deploy funding and deployment transactions.",
+          "OPStreet will broadcast the signed transactions and record the canonical deploy txid automatically.",
+        ],
       });
     },
   );
