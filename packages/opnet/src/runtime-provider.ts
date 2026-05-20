@@ -2,7 +2,7 @@
 // They are loaded lazily (inside functions) via dynamic import() to prevent
 // ERR_PACKAGE_PATH_NOT_EXPORTED / module-init crashes on Vercel when a stale cached
 // version of @btc-vision/transaction is present at lambda startup.
-import { GAME_PAYMENT_TOKENS, type LiquidityToken } from "@opfun/shared";
+import { LIQUIDITY_TOKENS, type LiquidityToken } from "@opfun/shared";
 import {
   getBitcoinNetworkKey,
   getDefaultOpnetRpcUrl,
@@ -500,7 +500,11 @@ export function getLiquidityTokenContractAddress(symbol: LiquidityToken): string
     );
   }
 
-  return GAME_PAYMENT_TOKENS[symbol].contractAddress;
+  const token = LIQUIDITY_TOKENS[symbol];
+  if (!token?.contractAddress) {
+    throw new RuntimeConfigError(`Unsupported liquidity token '${symbol}'.`);
+  }
+  return token.contractAddress;
 }
 
 export function assertRuntimeConfig(requirements?: RuntimeConfigRequirements): RuntimeContractConfig {

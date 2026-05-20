@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createProject } from "@/lib/api";
-import { DEFAULT_GAME_PAYMENT_TOKEN, GAME_PAYMENT_TOKENS } from "@opfun/shared";
+import { DEFAULT_GAME_PAYMENT_TOKEN, GAME_PAYMENT_TOKENS, LIQUIDITY_TOKENS, type LiquidityToken } from "@opfun/shared";
 import { useWallet } from "@/components/WalletProvider";
 import { submitOpnetLiquidityFundingWithWallet, checkWalletUtxos } from "@/lib/wallet";
 import { usePendingTx } from "@/context/PendingTxContext";
@@ -19,13 +19,13 @@ type TouchedFields = Partial<Record<string, boolean>>;
 const DEFAULT_LIQUIDITY_VAULT_ADDRESS = "opt1p0stmw7lmsndpskd4zk6u0skn3lsjrkl0anwyk2t2e906cjsua7ys8wk5nu";
 const LIQUIDITY_VAULT_ADDRESS =
   process.env["NEXT_PUBLIC_LIQUIDITY_VAULT_ADDRESS"]?.trim() || DEFAULT_LIQUIDITY_VAULT_ADDRESS;
-type LiquidityToken = "BTC" | "TBTC" | "MOTO" | "PILL";
 
-const LIQUIDITY_TOKEN_TO_SATS: Record<LiquidityToken, number> = {
+const SUPPORTED_LIQUIDITY_TOKENS: LiquidityToken[] = ["BTC", "TBTC", "MOTO", "PILL", "SLOHM", "YSLOHM"];
+const OP20_LIQUIDITY_TOKENS: Exclude<LiquidityToken, "BTC" | "TBTC">[] = ["MOTO", "PILL", "SLOHM", "YSLOHM"];
+
+const LIQUIDITY_TOKEN_TO_SATS: Partial<Record<LiquidityToken, number>> = {
   BTC: 100_000_000,
   TBTC: 100_000_000,
-  MOTO: 65_000,
-  PILL: 70_000,
 };
 const SATS_PER_BTC = 100_000_000;
 
@@ -36,6 +36,10 @@ const FUNDING_BTC_SYMBOL = IS_OPNET_MAINNET ? "BTC" : "tBTC";
 
 function isNativeBtcFundingToken(token: LiquidityToken): boolean {
   return token === "BTC" || token === "TBTC";
+}
+
+function displayLiquidityToken(token: LiquidityToken): string {
+  return LIQUIDITY_TOKENS[token]?.displaySymbol ?? token;
 }
 
 function parseNativeBtcAmountToSats(amount: string): { sats: number; error?: string } {
@@ -62,18 +66,16 @@ function getLiquidityFundingPreview(
   liquidityAmount: string,
 ) {
   const liquidityUnits = Number(liquidityAmount);
-  const satsRate = LIQUIDITY_TOKEN_TO_SATS[liquidityToken];
   const nativeBtc = isNativeBtcFundingToken(liquidityToken)
     ? parseNativeBtcAmountToSats(liquidityAmount)
     : null;
   const valid = nativeBtc
     ? !nativeBtc.error
     : Number.isFinite(liquidityUnits) && liquidityUnits > 0;
+  const satsRate = LIQUIDITY_TOKEN_TO_SATS[liquidityToken] ?? 0;
   const totalSats = nativeBtc
     ? nativeBtc.sats
-    : valid
-      ? Math.max(1, Math.round(liquidityUnits * satsRate))
-      : 0;
+    : 0;
 
   return {
     liquidityUnits,
@@ -112,7 +114,7 @@ function validateStep0(form: {
   else if (Number(form.maxSupply) <= 0) errors["maxSupply"] = "Max supply must be greater than zero.";
   if (!form.description || form.description.length < 10) errors["description"] = "Description must be at least 10 characters.";
   if (form.description.length > 2000) errors["description"] = "Description must be 2000 characters or fewer.";
-  if (!["BTC", "TBTC", "MOTO", "PILL"].includes(form.liquidityToken)) errors["liquidityToken"] = "Select a liquidity token.";
+  if (!SUPPORTED_LIQUIDITY_TOKENS.includes(form.liquidityToken)) errors["liquidityToken"] = "Select a liquidity token.";
   const nativeBtcAmount = isNativeBtcFundingToken(form.liquidityToken)
     ? parseNativeBtcAmountToSats(form.liquidityAmount)
     : null;
@@ -212,7 +214,7 @@ export default function CreatePage() {
           // as confirmed for the overlay even though it has no contract receipt.
           setPendingTx(fundingTxId, "funding");
         } else {
-          // MOTO/PIL are OP-20 token liquidity choices. Do not convert them into a BTC/tBTC transfer.
+          // OP-20 token liquidity choices. Do not convert them into a BTC/tBTC transfer.
           // Token transfer/approval funding is handled by the OP_NET launch pipeline after project creation.
           fundingTxId = `op20-${form.liquidityToken.toLowerCase()}-funding-pending-${Date.now()}`;
         }
@@ -237,7 +239,7 @@ export default function CreatePage() {
         setError(
           isNativeBtcFunding
             ? `${msg} Need at least ${formatSats(fundingPreview.totalSats)} sats (${formatBtc(fundingPreview.totalBtc)} ${FUNDING_BTC_SYMBOL}) plus network fees.`
-            : `${msg} Check your ${form.liquidityToken === "PILL" ? "PIL/PILL" : form.liquidityToken} balance in OP_WALLET.`,
+            : `${msg} Check your ${displayLiquidityToken(form.liquidityToken)} balance in OP_WALLET.`,
         );
       } else if (/invalid.*address|invalid.*recipient/i.test(msg)) {
         setError(`${msg} Open OP_WALLET and verify you are on "OP_NET Testnet" (Signet).`);
@@ -362,8 +364,9 @@ export default function CreatePage() {
                   onBlur={() => blur("liquidityToken")}
                 >
                   <option value={NATIVE_BTC_LIQUIDITY_TOKEN}>{FUNDING_BTC_SYMBOL}</option>
-                  <option value="MOTO">MOTO</option>
-                  <option value="PILL">PIL / PILL</option>
+                  {OP20_LIQUIDITY_TOKENS.map((token) => (
+                    <option key={token} value={token}>{displayLiquidityToken(token)}</option>
+                  ))}
                 </select>
               </FieldGroup>
               <FieldGroup label="Initial liquidity amount *" error={showError("liquidityAmount")}>
@@ -449,7 +452,7 @@ export default function CreatePage() {
               <ReviewRow label="Ticker" value={form.ticker} mono />
               <ReviewRow label="Max Supply" value={Number(form.maxSupply).toLocaleString()} mono />
               <ReviewRow label="Decimals" value={String(form.decimals)} mono />
-              <ReviewRow label="Liquidity Token" value={form.liquidityToken} mono />
+              <ReviewRow label="Liquidity Token" value={displayLiquidityToken(form.liquidityToken)} mono />
               <ReviewRow label="Liquidity Amount" value={form.liquidityAmount} mono />
             </div>
             <div className="rounded-xl border-2 border-ink bg-[#FFF7E8] px-3 py-2.5">
@@ -471,7 +474,7 @@ export default function CreatePage() {
               <li>
                 {isNativeBtcFunding
                   ? `${form.liquidityAmount} ${FUNDING_BTC_SYMBOL} = ${formatSats(fundingPreview.totalSats)} sats`
-                  : `${form.liquidityAmount} ${form.liquidityToken === "PILL" ? "PIL/PILL" : form.liquidityToken} selected for OP-20 liquidity`
+                  : `${form.liquidityAmount} ${displayLiquidityToken(form.liquidityToken)} selected for OP-20 liquidity`
                 }
               </li>
               {isNativeBtcFunding ? (
@@ -480,7 +483,7 @@ export default function CreatePage() {
                   <li>Your OP_WALLET needs at least {formatSats(fundingPreview.totalSats)} sats + network fees.</li>
                 </>
               ) : (
-                <li>No BTC/tBTC transfer will be made for {form.liquidityToken === "PILL" ? "PIL/PILL" : form.liquidityToken}; OP-20 liquidity funding stays token-native.</li>
+                <li>No BTC/tBTC transfer will be made for {displayLiquidityToken(form.liquidityToken)}; OP-20 liquidity funding stays token-native.</li>
               )}
             </ul>
           </div>

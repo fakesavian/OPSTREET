@@ -25,7 +25,7 @@ export type LaunchStatus =
 export type CheckRunType = "SCAFFOLD" | "STATIC" | "AUDIT" | "DEPLOY";
 export type CheckRunStatus = "PENDING" | "OK" | "WARN" | "FAIL";
 export type WatchSeverity = "INFO" | "WARN" | "CRITICAL";
-export type LiquidityToken = "BTC" | "TBTC" | "MOTO" | "PILL";
+export type LiquidityToken = "BTC" | "TBTC" | "MOTO" | "PILL" | "SLOHM" | "YSLOHM";
 
 /**
  * Controls the launch mechanic for this token:
@@ -252,6 +252,59 @@ export const GAME_PAYMENT_TOKENS: Record<GamePaymentToken, GamePaymentTokenInfo>
     name: "Motoswap",
     standard: "OP-20",
     contractAddress: "opt1sqzkx6wm5acawl9m6nay2mjsm6wagv7gazcgtczds",
+  },
+};
+
+export interface LiquidityTokenInfo {
+  symbol: LiquidityToken;
+  displaySymbol: string;
+  name: string;
+  standard: "OP-20" | "BTC";
+  contractAddress: string | null;
+}
+
+export const LIQUIDITY_TOKENS: Record<LiquidityToken, LiquidityTokenInfo> = {
+  BTC: {
+    symbol: "BTC",
+    displaySymbol: "BTC",
+    name: "Bitcoin",
+    standard: "BTC",
+    contractAddress: null,
+  },
+  TBTC: {
+    symbol: "TBTC",
+    displaySymbol: "tBTC",
+    name: "Bitcoin Testnet",
+    standard: "BTC",
+    contractAddress: null,
+  },
+  MOTO: {
+    symbol: "MOTO",
+    displaySymbol: "MOTO",
+    name: GAME_PAYMENT_TOKENS.MOTO.name,
+    standard: "OP-20",
+    contractAddress: GAME_PAYMENT_TOKENS.MOTO.contractAddress,
+  },
+  PILL: {
+    symbol: "PILL",
+    displaySymbol: "PIL / PILL",
+    name: GAME_PAYMENT_TOKENS.PILL.name,
+    standard: "OP-20",
+    contractAddress: GAME_PAYMENT_TOKENS.PILL.contractAddress,
+  },
+  SLOHM: {
+    symbol: "SLOHM",
+    displaySymbol: "SLOHM",
+    name: "Slohm",
+    standard: "OP-20",
+    contractAddress: "op1sqptkqrfe4lwyjxns8lu3jn4an4gy7v75hcszqxaq",
+  },
+  YSLOHM: {
+    symbol: "YSLOHM",
+    displaySymbol: "ySLOHM",
+    name: "Staked Slohm",
+    standard: "OP-20",
+    contractAddress: "op1sqpxnhm0uztmuw4yl7ckg9mk38p5ctt9c75z65z40",
   },
 };
 

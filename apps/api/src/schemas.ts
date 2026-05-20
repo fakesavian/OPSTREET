@@ -5,8 +5,9 @@ const LiquidityTokenSchema = z.preprocess((value) => {
   const normalized = value.trim().toUpperCase();
   // User-facing shorthand; store canonical OP-20 symbol everywhere else.
   if (normalized === "PIL") return "PILL";
+  if (normalized === "YSLOHM" || normalized === "Y-SLOHM" || normalized === "Y SLOHM") return "YSLOHM";
   return normalized;
-}, z.enum(["BTC", "TBTC", "MOTO", "PILL"]));
+}, z.enum(["BTC", "TBTC", "MOTO", "PILL", "SLOHM", "YSLOHM"]));
 
 export const CreateProjectSchema = z.object({
   name: z.string().min(2).max(80),

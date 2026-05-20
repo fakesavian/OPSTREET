@@ -320,7 +320,7 @@ export function generateDeployScript(vars: {
   ticker: string;
   buildHash: string;
   generatedAt: string;
-  liquidityToken?: "BTC" | "TBTC" | "MOTO" | "PILL";
+  liquidityToken?: "BTC" | "TBTC" | "MOTO" | "PILL" | "SLOHM" | "YSLOHM";
   liquidityAmount?: string;
   /** When set, the deploy script is for a bonding curve launch (two-contract sequence). */
   bondingCurve?: {
@@ -376,7 +376,7 @@ export function generateDeployReadme(vars: {
   buildHash: string;
   generatedAt: string;
   projectId: string;
-  liquidityToken?: "BTC" | "TBTC" | "MOTO" | "PILL";
+  liquidityToken?: "BTC" | "TBTC" | "MOTO" | "PILL" | "SLOHM" | "YSLOHM";
   liquidityAmount?: string;
 }): string {
   const liquidityToken = vars.liquidityToken ?? "MOTO";

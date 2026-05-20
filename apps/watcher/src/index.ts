@@ -86,7 +86,7 @@ function normalizeAddress(address: string | null | undefined): string {
 
 function resolvePoolBaseToken(project: { poolBaseToken?: string | null; liquidityToken?: string | null }): LiquidityToken {
   const value = project.poolBaseToken ?? project.liquidityToken ?? "MOTO";
-  if (value !== "TBTC" && value !== "MOTO" && value !== "PILL") {
+  if (value !== "TBTC" && value !== "MOTO" && value !== "PILL" && value !== "SLOHM" && value !== "YSLOHM") {
     throw new Error(`Unsupported pool base token '${value}'.`);
   }
   return value;

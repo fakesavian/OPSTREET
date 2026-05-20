@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolveGeneratedDir } from "../generatedDir.js";
 import { prisma } from "../db.js";
 import { CreateProjectSchema } from "../schemas.js";
 import { slugify } from "@opfun/shared";
@@ -12,8 +12,7 @@ import { recordFoundationProgressFromProjectCreate } from "../services/foundatio
 import { queueLaunchBuildForProject } from "./launch.js";
 
 // Resolve to packages/opnet/generated/
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const GENERATED_DIR = path.resolve(__dirname, "../../../../packages/opnet/generated");
+const GENERATED_DIR = resolveGeneratedDir(import.meta.url);
 // On testnet (default) there is no creation limit — limit only applies on mainnet.
 // Set CREATE_PROJECT_DAILY_LIMIT in env to enforce a cap (mainnet deployments should set this).
 const CREATE_PROJECT_DAILY_LIMIT = process.env["CREATE_PROJECT_DAILY_LIMIT"]

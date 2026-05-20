@@ -21,15 +21,13 @@ function formatOpnetNetworkLabel(network?: string): string {
 
 function getNetworkBadgeClass(kind: NetworkKind, connected: boolean): string {
   if (!connected) return "bg-opRed";
-  if (kind === "mainnet") return "bg-opGreen";
-  if (kind === "testnet") return "bg-blue-500";
+  if (kind === "mainnet" || kind === "testnet") return "bg-opGreen";
   return "bg-opYellow";
 }
 
 function getNetworkTextClass(kind: NetworkKind, connected: boolean): string {
   if (!connected) return "bg-opRed text-white";
-  if (kind === "mainnet") return "bg-opGreen text-ink";
-  if (kind === "testnet") return "bg-blue-500 text-white";
+  if (kind === "mainnet" || kind === "testnet") return "bg-opGreen text-ink";
   return "bg-opYellow text-ink";
 }
 
@@ -87,7 +85,7 @@ export function BlockTimerBar() {
   const networkLabel = formatOpnetNetworkLabel(status?.network);
   const networkKind = getOpnetNetworkKind(status?.network);
   const networkTitle = lastPollOk
-    ? `${networkLabel} reachable via configured OP_NET RPC. Mainnet and testnet use distinct colors.`
+    ? `${networkLabel} reachable via configured OP_NET RPC. Green indicates an active connection; the text label distinguishes mainnet from testnet.`
     : status
       ? `${networkLabel} status poll failed. Showing the last known block height.`
       : "OPNET status is currently unavailable.";

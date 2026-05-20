@@ -13,7 +13,7 @@
 
 import type { FastifyInstance } from "fastify";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolveGeneratedDir } from "../generatedDir.js";
 import { z } from "zod";
 import { prisma } from "../db.js";
 import { verifyWalletToken } from "../middleware/verifyWalletToken.js";
@@ -29,8 +29,7 @@ import {
 } from "@opfun/opnet";
 import type { LaunchStatus, LaunchType, LiquidityToken } from "@opfun/shared";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const GENERATED_DIR = path.resolve(__dirname, "../../../../packages/opnet/generated");
+const GENERATED_DIR = resolveGeneratedDir(import.meta.url);
 
 const BOB_TIMEOUT_MS = 60_000;
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -128,7 +127,7 @@ function serializeProject(p: any) {
 
 function projectLiquidityToken(project: { liquidityToken: string | null }): LiquidityToken {
   const value = project.liquidityToken ?? "MOTO";
-  if (value !== "BTC" && value !== "TBTC" && value !== "MOTO" && value !== "PILL") {
+  if (value !== "BTC" && value !== "TBTC" && value !== "MOTO" && value !== "PILL" && value !== "SLOHM" && value !== "YSLOHM") {
     throw new RuntimeConfigError(`Unsupported liquidity token '${value}'.`);
   }
   return value;
@@ -946,7 +945,7 @@ async function runBuild(project: any, app: FastifyInstance): Promise<void> {
         iconUrl: project.iconUrl as string | undefined,
         buildHash: (project.buildHash as string) ?? "",
         liquidityToken: (project as Record<string, unknown>)["liquidityToken"] as
-          | "BTC" | "TBTC" | "MOTO" | "PILL" | undefined,
+          | "BTC" | "TBTC" | "MOTO" | "PILL" | "SLOHM" | "YSLOHM" | undefined,
         liquidityAmount: (project as Record<string, unknown>)["liquidityAmount"] as string | undefined,
         generatedDir: path.join(GENERATED_DIR, projectId),
         // Pass bonding curve config when the project is a bonding curve launch

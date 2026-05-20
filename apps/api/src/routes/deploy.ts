@@ -1,13 +1,12 @@
 import type { FastifyInstance } from "fastify";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolveGeneratedDir } from "../generatedDir.js";
 import { z } from "zod";
 import { prisma } from "../db.js";
 import { deployContract } from "@opfun/opnet";
 import { assertCanTransition } from "../statusMachine.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const GENERATED_DIR = path.resolve(__dirname, "../../../../packages/opnet/generated");
+const GENERATED_DIR = resolveGeneratedDir(import.meta.url);
 
 const ADMIN_SECRET = process.env["ADMIN_SECRET"] ?? "dev-secret-change-me";
 
@@ -38,7 +37,7 @@ export async function queueDeployForProject(
   const liquidityAmount = typeof liquidityAmountRaw === "string" ? Number(liquidityAmountRaw) : 0;
   if (
     typeof liquidityToken !== "string" ||
-    !["BTC", "TBTC", "MOTO", "PILL"].includes(liquidityToken) ||
+    !["BTC", "TBTC", "MOTO", "PILL", "SLOHM", "YSLOHM"].includes(liquidityToken) ||
     !Number.isFinite(liquidityAmount) ||
     liquidityAmount <= 0 ||
     typeof liquidityFundingTx !== "string" ||
@@ -48,7 +47,7 @@ export async function queueDeployForProject(
       ok: false,
       statusCode: 409,
       error: "Initial liquidity is required before deployment.",
-      hint: "Create with liquidity token (BTC/TBTC/MOTO/PILL), positive amount, and a valid wallet funding tx.",
+      hint: "Create with liquidity token (BTC/TBTC/MOTO/PILL/SLOHM/ySLOHM), positive amount, and a valid wallet funding tx.",
     };
   }
 
@@ -218,6 +217,8 @@ async function runDeploy(project: any, checkRunId: string, app: FastifyInstance)
         | "TBTC"
         | "MOTO"
         | "PILL"
+        | "SLOHM"
+        | "YSLOHM"
         | undefined,
       liquidityAmount: (project as Record<string, unknown>)["liquidityAmount"] as string | undefined,
       generatedDir: path.join(GENERATED_DIR, projectId),

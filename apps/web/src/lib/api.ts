@@ -153,7 +153,7 @@ export async function createProject(data: {
   links: Record<string, string>;
   iconUrl?: string;
   sourceRepoUrl?: string;
-  liquidityToken?: "BTC" | "TBTC" | "MOTO" | "PILL";
+  liquidityToken?: "BTC" | "TBTC" | "MOTO" | "PILL" | "SLOHM" | "YSLOHM";
   liquidityAmount?: string;
   liquidityFundingTx?: string;
 }): Promise<ProjectDTO> {
@@ -840,6 +840,10 @@ export async function launchBuild(projectId: string): Promise<{ message: string;
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
+    // Fastify rejects an empty request body when Content-Type is application/json.
+    // Send an explicit empty JSON object so manual retry uses the same shape as
+    // other POST actions and reaches the idempotent launch-build route.
+    body: JSON.stringify({}),
   }, "starting launch build");
   if (!res.ok && res.status !== 202) {
     const err = await res.json().catch(() => ({}));
