@@ -1497,12 +1497,7 @@ export async function submitOpnetLiquidityFundingWithWallet(
     );
   }
 
-  const toAddress = toBitcoinNetworkAddress(rawAddr);
-  if (!BITCOIN_ADDRESS_HRPS.some((hrp) => toAddress.toLowerCase().startsWith(`${hrp}1`))) {
-    throw new Error(
-      `Liquidity vault address must resolve to a Bitcoin payment address for this OP_NET network. Got ${toAddress.slice(0, 12)}...`,
-    );
-  }
+  const toAddress = toOpnetNetworkAddress(rawAddr);
   const factory = new TransactionFactory();
 
   // opnet.web3.sendBitcoin (called by detectFundingOPWallet) SIGNS but does NOT
@@ -1540,12 +1535,20 @@ export async function submitOpnetLiquidityFundingWithWallet(
   const resultTxId = typeof b?.["result"] === "string" ? b["result"] : undefined;
 
   if (success === false) {
-    // Duplicate/already-known means the raw tx has already been accepted before;
-    // use the locally decoded txid in that narrow recovery case.
-    if (error && /already|mempool|known|utxo/i.test(error)) {
+    // OP_WALLET's sendBitcoin path can sign and submit the transaction before
+    // our explicit RPC rebroadcast. Some OP_NET nodes then answer success:false
+    // with no error payload. In that case we still have a signed raw tx and a
+    // deterministic txid; proceed with that txid so token creation is not blocked
+    // after the wallet has already spent/locked the input.
+    if (!error) {
       return { txId, raw: { signed: result, broadcast: broadcastResult, localTxId: txId } };
     }
-    throw new Error(`OPNet broadcast rejected: ${error ?? JSON.stringify(broadcastResult)}`);
+    // Duplicate/already-known means the raw tx has already been accepted before;
+    // use the locally decoded txid in that narrow recovery case.
+    if (/already|mempool|known|utxo|txn-already/i.test(error)) {
+      return { txId, raw: { signed: result, broadcast: broadcastResult, localTxId: txId } };
+    }
+    throw new Error(`OPNet broadcast rejected: ${error}`);
   }
 
   if (!resultTxId || !/^[0-9a-f]{64}$/i.test(resultTxId)) {
