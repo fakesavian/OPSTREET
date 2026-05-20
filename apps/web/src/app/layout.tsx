@@ -3,6 +3,7 @@ import "./globals.css";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import { WalletProvider } from "@/components/WalletProvider";
 import { OpHeader } from "@/components/opfun/OpHeader";
+import { BlockTimerBar } from "@/components/opfun/BlockTimerBar";
 import { OpBottomNav } from "@/components/opfun/OpBottomNav";
 import { NotificationProvider } from "@/context/NotificationContext";
 import { PendingTxProvider } from "@/context/PendingTxContext";
@@ -28,6 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <NotificationProvider>
             <div className="sticky top-0 z-50">
               <OpHeader />
+              <BlockTimerBar />
             </div>
             <main
               className="mx-auto w-full max-w-6xl flex-1 px-4 pb-24 sm:pb-16"

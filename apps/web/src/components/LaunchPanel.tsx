@@ -78,16 +78,33 @@ export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
     project.status === "LAUNCHED" ||
     project.status === "DEPLOY_PACKAGE_READY";
 
-  // Fetch launch status on mount + poll when in transitional states
+  const applyLaunchStatusToPage = useCallback((data: LaunchStatusResponse) => {
+    onStatusChange(data.status, {
+      launchStatus: data.launchStatus as ProjectDTO["launchStatus"],
+      launchError: data.launchError,
+      contractAddress: data.contractAddress,
+      deployTx: data.deployTx,
+      buildHash: data.buildHash,
+      poolAddress: data.poolAddress,
+      poolBaseToken: data.poolBaseToken,
+      poolTx: data.poolTx,
+      liveAt: data.liveAt,
+    });
+  }, [onStatusChange]);
+
+  // Fetch launch status on mount + poll when in transitional states. Keep the
+  // parent project card/header in sync too; otherwise the page can keep showing
+  // a stale BUILDING state while this panel has already advanced.
   const refreshLaunchStatus = useCallback(async () => {
     try {
       const data = await fetchLaunchStatus(project.id);
       setLaunch(data);
+      applyLaunchStatusToPage(data);
       return data;
     } catch {
       return null;
     }
-  }, [project.id]);
+  }, [applyLaunchStatusToPage, project.id]);
 
   useEffect(() => {
     refreshLaunchStatus();
@@ -197,7 +214,7 @@ export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
     const contractUrl = getOpScanContractUrl(launch?.contractAddress);
     const poolUrl = getOpScanContractUrl(launch?.poolAddress);
     return (
-      <div id="launch-pipeline" className="op-panel border-opGreen scroll-mt-24">
+      <div id="launch-pipeline" tabIndex={-1} className="op-panel border-opGreen scroll-mt-36 focus:outline-none focus:ring-4 focus:ring-opYellow/40">
         <div className="border-b-2 border-ink/10 px-4 py-3">
           <h2 className="font-black text-ink text-sm uppercase tracking-wider">Token Live</h2>
         </div>
@@ -246,7 +263,7 @@ export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
   }
 
   return (
-    <div id="launch-pipeline" className="op-panel scroll-mt-24">
+    <div id="launch-pipeline" tabIndex={-1} className="op-panel scroll-mt-36 focus:outline-none focus:ring-4 focus:ring-opYellow/40">
       <div className="border-b-2 border-ink/10 px-4 py-3">
         <h2 className="font-black text-ink text-sm uppercase tracking-wider">Launch Pipeline</h2>
         <p className="text-[10px] text-[var(--text-muted)] mt-0.5">
@@ -418,38 +435,50 @@ export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
 
 function LaunchSteps({ currentStep }: { currentStep: LaunchStep }) {
   return (
-    <div className="flex items-center gap-0">
+    <div className="grid gap-2">
       {LAUNCH_STEPS.map((s, i) => {
         const done = i < currentStep;
         const active = i === currentStep;
+        const statusLabel = done ? "Done" : active ? "Now" : "Next";
         return (
-          <div key={s.label} className="flex items-center flex-1 last:flex-none">
-            <div className="flex items-center gap-1.5">
+          <div
+            key={s.label}
+            className={`min-w-0 rounded-xl border-2 px-2.5 py-2 transition-colors ${
+              done
+                ? "border-opGreen bg-opGreen/10"
+                : active
+                  ? "border-opYellow bg-opYellow/15"
+                  : "border-ink/15 bg-[var(--cream)]/60"
+            }`}
+          >
+            <div className="flex min-w-0 items-start gap-2">
               <div
-                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-black border-2 transition-colors ${
+                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 text-[10px] font-black ${
                   done
                     ? "border-opGreen bg-opGreen/20 text-opGreen"
                     : active
-                    ? "border-opYellow bg-opYellow/20 text-ink"
-                    : "border-ink/20 text-[var(--text-muted)]"
+                      ? "border-opYellow bg-opYellow/30 text-ink"
+                      : "border-ink/20 text-[var(--text-muted)]"
                 }`}
               >
                 {done ? "\u2713" : i + 1}
               </div>
-              <div>
-                <p
-                  className={`text-[10px] font-black leading-none ${
-                    done ? "text-opGreen" : active ? "text-ink" : "text-[var(--text-muted)]"
-                  }`}
-                >
-                  {s.label}
-                </p>
-                <p className="text-[8px] text-[var(--text-muted)] leading-tight mt-0.5 hidden sm:block">{s.desc}</p>
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                  <p
+                    className={`min-w-0 text-[11px] font-black leading-tight ${
+                      done ? "text-opGreen" : active ? "text-ink" : "text-[var(--text-muted)]"
+                    }`}
+                  >
+                    {s.label}
+                  </p>
+                  <span className="shrink-0 rounded-full border border-ink/15 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wide text-[var(--text-muted)]">
+                    {statusLabel}
+                  </span>
+                </div>
+                <p className="mt-0.5 break-words text-[9px] leading-snug text-[var(--text-muted)]">{s.desc}</p>
               </div>
             </div>
-            {i < LAUNCH_STEPS.length - 1 && (
-              <div className={`mx-1.5 flex-1 h-0.5 ${i < currentStep ? "bg-opGreen" : "bg-ink/10"}`} />
-            )}
           </div>
         );
       })}

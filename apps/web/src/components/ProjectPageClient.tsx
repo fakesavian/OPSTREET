@@ -154,9 +154,9 @@ export function ProjectPageClient({ initialProject }: { initialProject: FullProj
   const contractUrl = getOpScanContractUrl(project.contractAddress);
   const poolUrl = getOpScanContractUrl(project.poolAddress);
 
-  function handleStatusChange(newStatus: string, updates?: Partial<ProjectDTO>) {
+  const handleStatusChange = useCallback((newStatus: string, updates?: Partial<ProjectDTO>) => {
     setProject((p) => ({ ...p, status: newStatus as ProjectDTO["status"], ...updates }));
-  }
+  }, []);
 
   // Record a view on mount
   useEffect(() => {
@@ -238,6 +238,14 @@ export function ProjectPageClient({ initialProject }: { initialProject: FullProj
     [project.id, watcherAdminSecret],
   );
 
+  const scrollToLaunchPipeline = useCallback(() => {
+    const panel = document.getElementById("launch-pipeline");
+    if (!panel) return;
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.history.replaceState(null, "", "#launch-pipeline");
+    panel.focus({ preventScroll: true });
+  }, []);
+
   return (
     <div className="mx-auto max-w-4xl space-y-5">
       {/* ── Header ──────────────────────────────────────────────────────────── */}
@@ -281,12 +289,13 @@ export function ProjectPageClient({ initialProject }: { initialProject: FullProj
           </div>
           <div className="flex flex-wrap gap-2">
             {project.launchStatus !== "LIVE" && (
-              <a
-                href="#launch-pipeline"
+              <button
+                type="button"
+                onClick={scrollToLaunchPipeline}
                 className="inline-flex items-center rounded-lg border-2 border-ink bg-opYellow px-3 py-1.5 text-xs font-black text-ink transition-colors hover:bg-opYellow/80"
               >
                 Finish Launch
-              </a>
+              </button>
             )}
             {contractUrl && (
               <a
