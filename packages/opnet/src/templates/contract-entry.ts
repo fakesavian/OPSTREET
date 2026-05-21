@@ -43,11 +43,15 @@ export const CONTRACT_PACKAGE_JSON_TEMPLATE = `{
     "@btc-vision/btc-runtime": "1.10.12"
   },
   "devDependencies": {
-    "@btc-vision/assemblyscript": "^0.29.2",
+    "@btc-vision/assemblyscript": "0.29.2",
     "@btc-vision/opnet-transform": "1.2.0",
-    "@assemblyscript/loader": "^0.28.9"
+    "@assemblyscript/loader": "0.28.9"
   },
   "overrides": {
+    "opnet": "1.7.16",
+    "@btc-vision/transaction": "1.7.19",
+    "@btc-vision/bitcoin": "6.4.11",
+    "@noble/curves": "1.9.7",
     "@noble/hashes": "1.8.0"
   }
 }
@@ -83,10 +87,7 @@ export const CONTRACT_ASCONFIG_JSON = `{
     "runtime": "stub",
     "memoryBase": 0,
     "initialMemory": 1,
-    "exportStart": "start",
-    "use": [
-      "abort=index/abort"
-    ]
+    "exportStart": "start"
   }
 }
 `;

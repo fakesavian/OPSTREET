@@ -268,7 +268,9 @@ function resolveAscCommand(contractDir: string): string | null {
     : path.join(contractDir, "node_modules", ".bin", "asc");
 
   if (existsSync(localAsc)) {
-    return `"${localAsc}"`;
+    // execSync already runs through the platform shell; use an absolute .cmd path
+    // so relative generated dirs like `.tmp-*` are not parsed as a command name.
+    return path.resolve(localAsc);
   }
 
   return "npx asc";

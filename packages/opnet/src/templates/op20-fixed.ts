@@ -20,6 +20,7 @@ import {
     Blockchain,
     Calldata,
     BytesWriter,
+    Address,
 } from '@btc-vision/btc-runtime/runtime';
 
 /**

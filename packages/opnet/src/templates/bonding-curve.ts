@@ -96,6 +96,13 @@ const PTR_GRADUATED: u16        = 6;
 const PTR_INITIALIZED: u16      = 7;
 
 @final
+class BondingCurveEvent extends NetEvent {
+    constructor(eventType: string, data: BytesWriter) {
+        super(eventType, data);
+    }
+}
+
+@final
 export class BondingCurve extends OP_NET {
     // ── Storage ──────────────────────────────────────────────────────────────
     private readonly tokenAddress: StoredAddress;
@@ -109,15 +116,13 @@ export class BondingCurve extends OP_NET {
 
     public constructor() {
         super();
-        // Default address = BURN_ADDRESS; will be replaced in onDeployment.
-        const burnAddr = Address.fromString(BURN_ADDRESS_STR);
-        this.tokenAddress   = new StoredAddress(PTR_TOKEN_ADDRESS,   burnAddr);
-        this.creatorAddress = new StoredAddress(PTR_CREATOR_ADDRESS, burnAddr);
-        this.feeRecipient   = new StoredAddress(PTR_FEE_RECIPIENT,   burnAddr);
-        this.tokenReserve   = new StoredU256(PTR_TOKEN_RESERVE,   u256.Zero);
-        this.moToReserve    = new StoredU256(PTR_MOTO_RESERVE,    u256.Zero);
-        this.graduated      = new StoredU256(PTR_GRADUATED,       u256.Zero);
-        this.initialized    = new StoredU256(PTR_INITIALIZED,     u256.Zero);
+        this.tokenAddress   = new StoredAddress(PTR_TOKEN_ADDRESS);
+        this.creatorAddress = new StoredAddress(PTR_CREATOR_ADDRESS);
+        this.feeRecipient   = new StoredAddress(PTR_FEE_RECIPIENT);
+        this.tokenReserve   = new StoredU256(PTR_TOKEN_RESERVE,   new Uint8Array(0));
+        this.moToReserve    = new StoredU256(PTR_MOTO_RESERVE,    new Uint8Array(0));
+        this.graduated      = new StoredU256(PTR_GRADUATED,       new Uint8Array(0));
+        this.initialized    = new StoredU256(PTR_INITIALIZED,     new Uint8Array(0));
     }
 
     // ── Deployment ────────────────────────────────────────────────────────────
@@ -244,7 +249,7 @@ export class BondingCurve extends OP_NET {
         const eventData = new BytesWriter(64);
         eventData.writeAddress(caller);
         eventData.writeU256(tokenOut);
-        Blockchain.emit(new NetEvent('Buy', eventData));
+        Blockchain.emit(new BondingCurveEvent('Buy', eventData));
 
         const result = new BytesWriter(32);
         result.writeU256(tokenOut);
@@ -300,7 +305,7 @@ export class BondingCurve extends OP_NET {
         const eventData = new BytesWriter(64);
         eventData.writeAddress(caller);
         eventData.writeU256(netMoToOut);
-        Blockchain.emit(new NetEvent('Sell', eventData));
+        Blockchain.emit(new BondingCurveEvent('Sell', eventData));
 
         const result = new BytesWriter(32);
         result.writeU256(netMoToOut);
@@ -368,7 +373,10 @@ export class BondingCurve extends OP_NET {
         createPoolData.writeAddress(tokenAddr);
         createPoolData.writeAddress(moToToken);
         const poolResult = Blockchain.call(factoryAddr, createPoolData);
-        const poolAddress = poolResult.readAddress();
+        if (!poolResult.success) {
+            throw new Revert('BondingCurve: pool creation failed');
+        }
+        const poolAddress = poolResult.data.readAddress();
 
         // 2. Transfer remaining token supply to pool
         this._transfer(tokenAddr, poolAddress, this.tokenReserve.value);
@@ -391,7 +399,7 @@ export class BondingCurve extends OP_NET {
         eventData.writeAddress(poolAddress);
         eventData.writeU256(this.tokenReserve.value);
         eventData.writeU256(this.moToReserve.value);
-        Blockchain.emit(new NetEvent('Graduated', eventData));
+        Blockchain.emit(new BondingCurveEvent('Graduated', eventData));
     }
 
     // ── Cross-contract call helpers ───────────────────────────────────────────
@@ -402,7 +410,7 @@ export class BondingCurve extends OP_NET {
         calldata.writeAddress(to);
         calldata.writeU256(amount);
         const result = Blockchain.call(token, calldata);
-        if (!result.readBoolean()) {
+        if (!result.success || !result.data.readBoolean()) {
             throw new Revert('BondingCurve: transfer failed');
         }
     }
@@ -414,7 +422,7 @@ export class BondingCurve extends OP_NET {
         calldata.writeAddress(to);
         calldata.writeU256(amount);
         const result = Blockchain.call(token, calldata);
-        if (!result.readBoolean()) {
+        if (!result.success || !result.data.readBoolean()) {
             throw new Revert('BondingCurve: transferFrom failed');
         }
     }
@@ -511,12 +519,13 @@ async function computeSelector(signature: string): Promise<number> {
     const hash = keccak_256(bytes);
     return (((hash[0] ?? 0) << 24) | ((hash[1] ?? 0) << 16) | ((hash[2] ?? 0) << 8) | (hash[3] ?? 0)) >>> 0;
   } catch {
-    // If @noble/hashes is unavailable, warn and return zero (will fail at compile/test time)
-    console.warn(
-      `[bonding-curve] Warning: could not compute keccak256 selector for "${signature}".`,
-      "Install @noble/hashes or pass createPoolSelectorHex explicitly.",
-    );
-    return 0;
+    // Deterministic fallback for the only selector this template computes.
+    // Never bake 0x00000000 into a generated contract: that silently routes
+    // graduation to the wrong method and bricks the pump.fun-style lifecycle.
+    if (signature === "createPool(address,address)") {
+      return 0xe3433615;
+    }
+    throw new Error(`Unable to compute selector for unsupported signature "${signature}".`);
   }
 }
 

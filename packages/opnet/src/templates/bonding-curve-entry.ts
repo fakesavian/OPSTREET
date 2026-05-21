@@ -43,12 +43,16 @@ export const BONDING_CURVE_PACKAGE_JSON_TEMPLATE = `{
     "@btc-vision/btc-runtime": "1.10.12"
   },
   "devDependencies": {
-    "@btc-vision/assemblyscript": "^0.29.2",
+    "@btc-vision/assemblyscript": "0.29.2",
     "@btc-vision/opnet-transform": "1.2.0",
-    "@assemblyscript/loader": "^0.28.9"
+    "@assemblyscript/loader": "0.28.9"
   },
   "overrides": {
-    "@noble/hashes": "2.0.1"
+    "opnet": "1.7.16",
+    "@btc-vision/transaction": "1.7.19",
+    "@btc-vision/bitcoin": "6.4.11",
+    "@noble/curves": "1.9.7",
+    "@noble/hashes": "1.8.0"
   }
 }
 `;
@@ -83,10 +87,7 @@ export const BONDING_CURVE_ASCONFIG_JSON = `{
     "runtime": "stub",
     "memoryBase": 0,
     "initialMemory": 1,
-    "exportStart": "start",
-    "use": [
-      "abort=index/abort"
-    ]
+    "exportStart": "start"
   }
 }
 `;
