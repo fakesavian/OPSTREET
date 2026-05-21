@@ -34,6 +34,7 @@ import type { LaunchStatus, LaunchType, LiquidityToken } from "@opfun/shared";
 const GENERATED_DIR = resolveGeneratedDir(import.meta.url);
 
 const BOB_TIMEOUT_MS = 60_000;
+const BUILD_STALE_MS = BOB_TIMEOUT_MS + 30_000;
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
     promise,
@@ -86,6 +87,10 @@ interface QueueLaunchBuildResult {
 
 function currentLaunchStatus(project: { launchStatus: string | null }): LaunchStatus {
   return (project.launchStatus as LaunchStatus) ?? "DRAFT";
+}
+
+function isStaleBuildingProject(project: { launchStatus: string | null; updatedAt: Date }): boolean {
+  return currentLaunchStatus(project) === "BUILDING" && Date.now() - project.updatedAt.getTime() > BUILD_STALE_MS;
 }
 
 async function setLaunchStatus(
@@ -201,7 +206,11 @@ export async function queueLaunchBuildForProject(
     };
   }
 
-  const current = currentLaunchStatus(project);
+  let current = currentLaunchStatus(project);
+  if (current === "BUILDING" && isStaleBuildingProject(project)) {
+    await failLaunch(project.id, "BUILDING", "Previous build worker timed out before returning a compiled artifact. Retrying build.");
+    current = "FAILED";
+  }
   if (current === "BUILDING" || current === "AWAITING_WALLET_DEPLOY") {
     return { ok: true, projectId: project.id, launchStatus: current };
   }
@@ -219,11 +228,17 @@ export async function queueLaunchBuildForProject(
 
   await setLaunchStatus(project.id, "DRAFT", "BUILDING", { launchError: null });
 
-  runBuild(project, app).catch((err: unknown) => {
-    app.log.error(err, `launch-build failed for project ${project.id}`);
-  });
+  // Serverless runtimes can freeze/kill work scheduled after the response. Run
+  // the compile pipeline inside this request, bounded by BOB_TIMEOUT_MS, so the
+  // project cannot remain in BUILDING forever while the client polls.
+  await runBuild(project, app);
 
-  return { ok: true, projectId: project.id, launchStatus: "BUILDING" };
+  const afterBuild = await prisma.project.findUnique({ where: { id: project.id } });
+  return {
+    ok: true,
+    projectId: project.id,
+    launchStatus: afterBuild ? currentLaunchStatus(afterBuild) : "BUILDING",
+  };
 }
 
 function resolvePoolPair(project: {
@@ -282,13 +297,24 @@ export async function launchRoutes(app: FastifyInstance) {
   app.get<{ Params: { id: string } }>(
     "/projects/:id/launch-status",
     async (request, reply) => {
-      const project = await prisma.project.findUnique({
+      let project = await prisma.project.findUnique({
         where: { id: request.params.id },
         include: {
           checkRuns: { orderBy: { createdAt: "desc" }, take: 5, where: { type: "DEPLOY" } },
         },
       });
       if (!project) return reply.status(404).send({ error: "Project not found" });
+
+      if (isStaleBuildingProject(project)) {
+        await failLaunch(project.id, "BUILDING", "Build worker timed out before returning a compiled artifact. Retry the build.");
+        project = await prisma.project.findUnique({
+          where: { id: request.params.id },
+          include: {
+            checkRuns: { orderBy: { createdAt: "desc" }, take: 5, where: { type: "DEPLOY" } },
+          },
+        });
+        if (!project) return reply.status(404).send({ error: "Project not found" });
+      }
 
       const p = project as Record<string, unknown>;
       return reply.send({
