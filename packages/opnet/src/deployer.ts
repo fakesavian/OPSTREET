@@ -6,7 +6,7 @@
  */
 
 import fs from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
 import {
@@ -259,6 +259,28 @@ function readAscVersion(ascCommand: string, cwd?: string): string | null {
   }
 }
 
+
+export function buildHermeticNpmEnv(cwd: string): NodeJS.ProcessEnv {
+  const npmHome = path.join(cwd, ".npm-home");
+  const npmCache = path.join(cwd, ".npm-cache");
+  const npmTmp = path.join(cwd, ".npm-tmp");
+
+  mkdirSync(npmHome, { recursive: true });
+  mkdirSync(npmCache, { recursive: true });
+  mkdirSync(npmTmp, { recursive: true });
+
+  return {
+    ...process.env,
+    HOME: npmHome,
+    USERPROFILE: npmHome,
+    npm_config_cache: npmCache,
+    npm_config_tmp: npmTmp,
+    npm_config_update_notifier: "false",
+    npm_config_audit: "false",
+    npm_config_fund: "false",
+  };
+}
+
 function resolveAscCommand(contractDir: string): string | null {
   const fromEnv = process.env["ASC_BIN"]?.trim();
   if (fromEnv) return fromEnv;
@@ -316,6 +338,7 @@ function compileSingleContract(input: DeployInput, contractDir: string, wasmName
       stdio: "pipe",
       encoding: "utf8",
       maxBuffer: 10 * 1024 * 1024,
+      env: buildHermeticNpmEnv(contractDir),
     });
 
     const ascCommand = resolveAscCommand(contractDir);
@@ -385,7 +408,7 @@ async function tryAutoDeploy(generatedDir: string): Promise<{
         cwd: generatedDir,
         timeout: 120_000,
         stdio: "inherit",
-        env: { ...process.env },
+        env: buildHermeticNpmEnv(generatedDir),
       });
     }
 

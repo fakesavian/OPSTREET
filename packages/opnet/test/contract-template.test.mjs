@@ -103,3 +103,24 @@ test("bonding curve template emits concrete NetEvent subclass instances", async 
   assert.match(source, /new BondingCurveEvent\('Graduated', eventData\)/);
   assert.doesNotMatch(source, /new NetEvent\(/);
 });
+
+test("deployer npm install uses a hermetic writable home and cache", async () => {
+  const { mkdtempSync, existsSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { buildHermeticNpmEnv } = await import("../dist/deployer.js");
+
+  const cwd = mkdtempSync(join(tmpdir(), "opnet-npm-env-"));
+  const env = buildHermeticNpmEnv(cwd);
+
+  assert.equal(env.HOME, join(cwd, ".npm-home"));
+  assert.equal(env.USERPROFILE, join(cwd, ".npm-home"));
+  assert.equal(env.npm_config_cache, join(cwd, ".npm-cache"));
+  assert.equal(env.npm_config_tmp, join(cwd, ".npm-tmp"));
+  assert.equal(env.npm_config_update_notifier, "false");
+  assert.equal(env.npm_config_audit, "false");
+  assert.equal(env.npm_config_fund, "false");
+  assert.ok(existsSync(env.HOME));
+  assert.ok(existsSync(env.npm_config_cache));
+  assert.ok(existsSync(env.npm_config_tmp));
+});
