@@ -80,3 +80,31 @@ export function resolveCompiledTokenWasmPath(
 ): string | null {
   return tokenWasmCandidates(generatedRoot, projectId, ticker, launchType).find((candidate) => existsSync(candidate)) ?? null;
 }
+
+
+export interface StoredDeployArtifact {
+  bytecodeHex: string;
+  wasmPath?: string;
+  curveWasmPath?: string;
+}
+
+function isValidBytecodeHex(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length % 2 === 0 && /^[0-9a-f]+$/i.test(value);
+}
+
+export function parseStoredDeployArtifact(outputJson: string | null | undefined): StoredDeployArtifact | null {
+  if (!outputJson) return null;
+
+  try {
+    const parsed = JSON.parse(outputJson) as Record<string, unknown>;
+    if (!isValidBytecodeHex(parsed["bytecodeHex"])) return null;
+
+    return {
+      bytecodeHex: parsed["bytecodeHex"].toLowerCase(),
+      ...(typeof parsed["wasmPath"] === "string" ? { wasmPath: parsed["wasmPath"] } : {}),
+      ...(typeof parsed["curveWasmPath"] === "string" ? { curveWasmPath: parsed["curveWasmPath"] } : {}),
+    };
+  } catch {
+    return null;
+  }
+}

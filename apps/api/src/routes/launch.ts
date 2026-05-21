@@ -19,7 +19,7 @@ import { z } from "zod";
 import { prisma } from "../db.js";
 import { verifyWalletToken } from "../middleware/verifyWalletToken.js";
 import { assertLaunchTransition } from "../launchMachine.js";
-import { resolveCompiledTokenWasmPath, resolveLaunchBuildOutcome } from "../launchBuildOutcome.js";
+import { parseStoredDeployArtifact, resolveCompiledTokenWasmPath, resolveLaunchBuildOutcome } from "../launchBuildOutcome.js";
 import {
   RuntimeConfigError,
   OPNET_FEE_RECIPIENT,
@@ -145,6 +145,36 @@ function projectLaunchType(project: { launchType?: string | null }): LaunchType 
     return "DIRECT_POOL"; // safe fallback for legacy projects
   }
   return value as LaunchType;
+}
+
+async function readDeployBytecodeHex(project: {
+  id: string;
+  ticker: string;
+  launchType?: string | null;
+}): Promise<{ bytecodeHex: string; source: "filesystem" | "checkRun" } | null> {
+  const wasmPath = resolveCompiledTokenWasmPath(
+    GENERATED_DIR,
+    project.id,
+    project.ticker,
+    projectLaunchType(project),
+  );
+
+  if (wasmPath) {
+    try {
+      const wasm = await readFile(wasmPath);
+      return { bytecodeHex: wasm.toString("hex"), source: "filesystem" };
+    } catch {
+      // Fall through to the DB-backed artifact. Serverless runtimes may lose /tmp
+      // artifacts between launch-build and deploy-intent requests.
+    }
+  }
+
+  const checkRun = await prisma.checkRun.findFirst({
+    where: { projectId: project.id, type: "DEPLOY", status: "OK" },
+    orderBy: { createdAt: "desc" },
+  });
+  const stored = parseStoredDeployArtifact(checkRun?.outputJson);
+  return stored ? { bytecodeHex: stored.bytecodeHex, source: "checkRun" } : null;
 }
 
 export async function queueLaunchBuildForProject(
@@ -301,24 +331,13 @@ export async function launchRoutes(app: FastifyInstance) {
         });
       }
 
-      const wasmPath = resolveCompiledTokenWasmPath(
-        GENERATED_DIR,
-        project.id,
-        project.ticker,
-        projectLaunchType(project),
-      );
-      if (!wasmPath) {
+      const artifact = await readDeployBytecodeHex(project);
+      if (!artifact) {
+        const error = "Compiled contract WASM is not available yet. Retry the build before signing deploy.";
+        await failLaunch(project.id, current, error);
         return reply.status(409).send({
-          error: "Compiled contract WASM is not available yet. Retry the build before signing deploy.",
-        });
-      }
-
-      let wasm: Buffer;
-      try {
-        wasm = await readFile(wasmPath);
-      } catch {
-        return reply.status(409).send({
-          error: "Compiled contract WASM is not available yet. Retry the build before signing deploy.",
+          error,
+          launchStatus: "FAILED",
         });
       }
 
@@ -326,7 +345,7 @@ export async function launchRoutes(app: FastifyInstance) {
         projectId: project.id,
         ticker: project.ticker,
         buildHash: project.buildHash ?? null,
-        bytecodeHex: wasm.toString("hex"),
+        bytecodeHex: artifact.bytecodeHex,
         from: sessionWallet,
         feeRate: DEPLOY_FEE_RATE,
         priorityFee: DEPLOY_PRIORITY_FEE,
@@ -1053,6 +1072,30 @@ async function runBuild(project: any, app: FastifyInstance): Promise<void> {
       return;
     }
 
+    let bytecodeHex: string;
+    try {
+      bytecodeHex = (await readFile(outcome.wasmPath)).toString("hex");
+    } catch {
+      const error = "Compiled contract WASM disappeared before it could be persisted. Retry the build before signing deploy.";
+      await prisma.checkRun.create({
+        data: {
+          projectId,
+          type: "DEPLOY",
+          status: "WARN",
+          outputJson: JSON.stringify({
+            deployStatus: output.status,
+            wasmPath: outcome.wasmPath,
+            curveWasmPath: outcome.curveWasmPath,
+            packageDir: output.packageDir,
+            compiled: false,
+            error,
+          }),
+        },
+      });
+      await failLaunch(projectId, "BUILDING", error);
+      return;
+    }
+
     // COMPILED with an actual token WASM — ready for wallet deploy.
     // Note: we do NOT auto-deploy. The user's wallet must sign.
     await setLaunchStatus(projectId, "BUILDING", "AWAITING_WALLET_DEPLOY", {
@@ -1070,6 +1113,7 @@ async function runBuild(project: any, app: FastifyInstance): Promise<void> {
           curveWasmPath: outcome.curveWasmPath,
           packageDir: output.packageDir,
           compiled: true,
+          bytecodeHex,
         }),
       },
     });

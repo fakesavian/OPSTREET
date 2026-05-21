@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { resolveCompiledTokenWasmPath, resolveLaunchBuildOutcome, tokenWasmCandidates } from "../src/launchBuildOutcome.js";
+import { parseStoredDeployArtifact, resolveCompiledTokenWasmPath, resolveLaunchBuildOutcome, tokenWasmCandidates } from "../src/launchBuildOutcome.js";
 
 test("PACKAGE_READY without compiled WASM does not advance to wallet deploy", () => {
   const outcome = resolveLaunchBuildOutcome({
@@ -61,4 +61,24 @@ test("resolveCompiledTokenWasmPath finds the bonding curve token artifact", () =
   writeFileSync(wasm, "00", "utf8");
 
   assert.equal(resolveCompiledTokenWasmPath(root, "project-2", "OPX", "BONDING_CURVE"), wasm);
+});
+
+
+test("parseStoredDeployArtifact accepts persisted bytecode for serverless deploy intent fallback", () => {
+  const artifact = parseStoredDeployArtifact(JSON.stringify({
+    bytecodeHex: "A1B2",
+    wasmPath: "/tmp/opfun-generated/project/contract/build/OPX.wasm",
+  }));
+
+  assert.deepEqual(artifact, {
+    bytecodeHex: "a1b2",
+    wasmPath: "/tmp/opfun-generated/project/contract/build/OPX.wasm",
+  });
+});
+
+test("parseStoredDeployArtifact rejects missing or malformed bytecode", () => {
+  assert.equal(parseStoredDeployArtifact(null), null);
+  assert.equal(parseStoredDeployArtifact("not json"), null);
+  assert.equal(parseStoredDeployArtifact(JSON.stringify({ bytecodeHex: "abc" })), null);
+  assert.equal(parseStoredDeployArtifact(JSON.stringify({ bytecodeHex: "zz" })), null);
 });
