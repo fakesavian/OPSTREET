@@ -94,6 +94,52 @@ export interface DeployOutput {
   error?: string;
 }
 
+async function removeIfExists(target: string): Promise<void> {
+  await fs.rm(target, { recursive: true, force: true, maxRetries: 2 }).catch(() => undefined);
+}
+
+async function cleanupGeneratedSiblings(generatedDir: string): Promise<void> {
+  const parent = path.dirname(generatedDir);
+  const current = path.basename(generatedDir);
+
+  if (path.basename(parent) !== "opfun-generated") return;
+
+  let entries: Array<{ name: string; mtimeMs: number }> = [];
+  try {
+    entries = await Promise.all((await fs.readdir(parent, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory() && entry.name !== current)
+      .map(async (entry) => {
+        const fullPath = path.join(parent, entry.name);
+        const stat = await fs.stat(fullPath).catch(() => null);
+        return { name: entry.name, mtimeMs: stat?.mtimeMs ?? 0 };
+      }));
+  } catch {
+    return;
+  }
+
+  // Serverless /tmp is tiny. Keep only the newest previous generated package
+  // and purge older siblings before creating the next compile workspace.
+  entries.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  await Promise.all(entries.slice(1).map((entry) => removeIfExists(path.join(parent, entry.name))));
+}
+
+export async function prepareGeneratedWorkspace(generatedDir: string): Promise<void> {
+  const parent = path.dirname(generatedDir);
+  await fs.mkdir(parent, { recursive: true });
+  await cleanupGeneratedSiblings(generatedDir);
+  await removeIfExists(generatedDir);
+}
+
+export async function cleanupContractInstallArtifacts(contractDir: string): Promise<void> {
+  await Promise.all([
+    removeIfExists(path.join(contractDir, "node_modules")),
+    removeIfExists(path.join(contractDir, "package-lock.json")),
+    removeIfExists(path.join(contractDir, ".npm-home")),
+    removeIfExists(path.join(contractDir, ".npm-cache")),
+    removeIfExists(path.join(contractDir, ".npm-tmp")),
+  ]);
+}
+
 /**
  * Step 1: scaffold the full deploy package under generated/<projectId>/
  * When input.bondingCurve is set, scaffolds both:
@@ -373,6 +419,8 @@ function compileSingleContract(input: DeployInput, contractDir: string, wasmName
     const error = formatCompileError(err);
     console.warn("[deployer] Compile failed:", error);
     return { wasmPath: null, error };
+  } finally {
+    void cleanupContractInstallArtifacts(contractDir);
   }
 }
 
@@ -439,6 +487,10 @@ export async function deployContract(input: DeployInput): Promise<DeployOutput> 
   const packageDir = input.generatedDir;
 
   try {
+    // Serverless /tmp is small and reused across invocations. Start from a clean
+    // per-project workspace and prune old generated siblings before scaffolding.
+    await prepareGeneratedWorkspace(input.generatedDir);
+
     // Always scaffold
     await scaffoldDeployPackage(input);
 

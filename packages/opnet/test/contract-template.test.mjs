@@ -124,3 +124,50 @@ test("deployer npm install uses a hermetic writable home and cache", async () =>
   assert.ok(existsSync(env.npm_config_cache));
   assert.ok(existsSync(env.npm_config_tmp));
 });
+
+test("deployer prunes stale /tmp generated siblings before scaffolding", async () => {
+  const { mkdtempSync, mkdirSync, existsSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { prepareGeneratedWorkspace } = await import("../dist/deployer.js");
+
+  const root = mkdtempSync(join(tmpdir(), "opfun-generated-"));
+  const parent = join(root, "opfun-generated");
+  const staleA = join(parent, "stale-a");
+  const staleB = join(parent, "stale-b");
+  const current = join(parent, "current-project");
+
+  mkdirSync(join(staleA, "node_modules"), { recursive: true });
+  writeFileSync(join(staleA, "node_modules", "junk.txt"), "junk", "utf8");
+  mkdirSync(join(staleB, "node_modules"), { recursive: true });
+  writeFileSync(join(staleB, "node_modules", "junk.txt"), "junk", "utf8");
+  mkdirSync(current, { recursive: true });
+  writeFileSync(join(current, "old.txt"), "old", "utf8");
+
+  await prepareGeneratedWorkspace(current);
+
+  assert.equal(existsSync(current), false);
+  assert.equal(existsSync(staleA) && existsSync(staleB), false);
+});
+
+test("deployer removes contract npm install artifacts after compile attempts", async () => {
+  const { mkdtempSync, mkdirSync, existsSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { cleanupContractInstallArtifacts } = await import("../dist/deployer.js");
+
+  const contractDir = mkdtempSync(join(tmpdir(), "opnet-contract-cleanup-"));
+  for (const dir of ["node_modules", ".npm-home", ".npm-cache", ".npm-tmp"]) {
+    mkdirSync(join(contractDir, dir), { recursive: true });
+    writeFileSync(join(contractDir, dir, "junk.txt"), "junk", "utf8");
+  }
+  writeFileSync(join(contractDir, "package-lock.json"), "{}", "utf8");
+
+  await cleanupContractInstallArtifacts(contractDir);
+
+  assert.equal(existsSync(join(contractDir, "node_modules")), false);
+  assert.equal(existsSync(join(contractDir, ".npm-home")), false);
+  assert.equal(existsSync(join(contractDir, ".npm-cache")), false);
+  assert.equal(existsSync(join(contractDir, ".npm-tmp")), false);
+  assert.equal(existsSync(join(contractDir, "package-lock.json")), false);
+});
