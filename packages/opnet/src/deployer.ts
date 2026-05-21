@@ -6,7 +6,7 @@
  */
 
 import fs from "node:fs/promises";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
 import {
@@ -117,10 +117,10 @@ async function cleanupGeneratedSiblings(generatedDir: string): Promise<void> {
     return;
   }
 
-  // Serverless /tmp is tiny. Keep only the newest previous generated package
-  // and purge older siblings before creating the next compile workspace.
-  entries.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  await Promise.all(entries.slice(1).map((entry) => removeIfExists(path.join(parent, entry.name))));
+  // Serverless /tmp is tiny and npm install can briefly need both cache and
+  // node_modules space. Purge every previous generated package before creating
+  // the next compile workspace; durable WASM artifacts are stored in the DB.
+  await Promise.all(entries.map((entry) => removeIfExists(path.join(parent, entry.name))));
 }
 
 export async function prepareGeneratedWorkspace(generatedDir: string): Promise<void> {
@@ -130,14 +130,14 @@ export async function prepareGeneratedWorkspace(generatedDir: string): Promise<v
   await removeIfExists(generatedDir);
 }
 
+function cleanupContractInstallArtifactsSync(contractDir: string): void {
+  for (const entry of ["node_modules", "package-lock.json", ".npm-home", ".npm-cache", ".npm-tmp"]) {
+    rmSync(path.join(contractDir, entry), { recursive: true, force: true, maxRetries: 2 });
+  }
+}
+
 export async function cleanupContractInstallArtifacts(contractDir: string): Promise<void> {
-  await Promise.all([
-    removeIfExists(path.join(contractDir, "node_modules")),
-    removeIfExists(path.join(contractDir, "package-lock.json")),
-    removeIfExists(path.join(contractDir, ".npm-home")),
-    removeIfExists(path.join(contractDir, ".npm-cache")),
-    removeIfExists(path.join(contractDir, ".npm-tmp")),
-  ]);
+  cleanupContractInstallArtifactsSync(contractDir);
 }
 
 /**
@@ -309,18 +309,17 @@ function readAscVersion(ascCommand: string, cwd?: string): string | null {
 export function buildHermeticNpmEnv(cwd: string): NodeJS.ProcessEnv {
   const npmHome = path.join(cwd, ".npm-home");
   const npmCache = path.join(cwd, ".npm-cache");
-  const npmTmp = path.join(cwd, ".npm-tmp");
 
   mkdirSync(npmHome, { recursive: true });
   mkdirSync(npmCache, { recursive: true });
-  mkdirSync(npmTmp, { recursive: true });
 
   return {
     ...process.env,
     HOME: npmHome,
     USERPROFILE: npmHome,
     npm_config_cache: npmCache,
-    npm_config_tmp: npmTmp,
+    // npm v11 removed the `tmp` config; keep HOME/cache hermetic and let npm
+    // choose its own temp directory to avoid noisy "Unknown env config tmp" warnings.
     npm_config_update_notifier: "false",
     npm_config_audit: "false",
     npm_config_fund: "false",
@@ -420,7 +419,10 @@ function compileSingleContract(input: DeployInput, contractDir: string, wasmName
     console.warn("[deployer] Compile failed:", error);
     return { wasmPath: null, error };
   } finally {
-    void cleanupContractInstallArtifacts(contractDir);
+    // This must be synchronous: bonding-curve builds compile token then curve in
+    // one worker, and a best-effort async cleanup can leave token node_modules
+    // plus npm cache on disk while the curve install starts, exhausting /tmp.
+    cleanupContractInstallArtifactsSync(contractDir);
   }
 }
 

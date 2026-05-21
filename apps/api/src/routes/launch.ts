@@ -31,7 +31,9 @@ import {
 } from "@opfun/opnet";
 import type { LaunchStatus, LaunchType, LiquidityToken } from "@opfun/shared";
 
-const GENERATED_DIR = resolveGeneratedDir(import.meta.url);
+function getGeneratedDir(): string {
+  return resolveGeneratedDir(import.meta.url);
+}
 
 const BOB_TIMEOUT_MS = 12 * 60_000;
 const BUILD_STALE_MS = BOB_TIMEOUT_MS + 2 * 60_000;
@@ -158,7 +160,7 @@ async function readDeployBytecodeHex(project: {
   launchType?: string | null;
 }): Promise<{ bytecodeHex: string; source: "filesystem" | "checkRun" } | null> {
   const wasmPath = resolveCompiledTokenWasmPath(
-    GENERATED_DIR,
+    getGeneratedDir(),
     project.id,
     project.ticker,
     projectLaunchType(project),
@@ -1055,7 +1057,7 @@ async function runBuild(project: any, app: FastifyInstance): Promise<void> {
         liquidityToken: (project as Record<string, unknown>)["liquidityToken"] as
           | "BTC" | "TBTC" | "MOTO" | "PILL" | "SLOHM" | "YSLOHM" | undefined,
         liquidityAmount: (project as Record<string, unknown>)["liquidityAmount"] as string | undefined,
-        generatedDir: path.join(GENERATED_DIR, projectId),
+        generatedDir: path.join(getGeneratedDir(), projectId),
         // Pass bonding curve config when the project is a bonding curve launch
         ...(launchType === "BONDING_CURVE"
           ? {

@@ -104,7 +104,7 @@ test("bonding curve template emits concrete NetEvent subclass instances", async 
   assert.doesNotMatch(source, /new NetEvent\(/);
 });
 
-test("deployer npm install uses a hermetic writable home and cache", async () => {
+test("deployer npm install uses a hermetic writable home and cache without deprecated tmp config", async () => {
   const { mkdtempSync, existsSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
@@ -116,13 +116,12 @@ test("deployer npm install uses a hermetic writable home and cache", async () =>
   assert.equal(env.HOME, join(cwd, ".npm-home"));
   assert.equal(env.USERPROFILE, join(cwd, ".npm-home"));
   assert.equal(env.npm_config_cache, join(cwd, ".npm-cache"));
-  assert.equal(env.npm_config_tmp, join(cwd, ".npm-tmp"));
+  assert.equal(env.npm_config_tmp, undefined);
   assert.equal(env.npm_config_update_notifier, "false");
   assert.equal(env.npm_config_audit, "false");
   assert.equal(env.npm_config_fund, "false");
   assert.ok(existsSync(env.HOME));
   assert.ok(existsSync(env.npm_config_cache));
-  assert.ok(existsSync(env.npm_config_tmp));
 });
 
 test("deployer prunes stale /tmp generated siblings before scaffolding", async () => {
@@ -147,7 +146,8 @@ test("deployer prunes stale /tmp generated siblings before scaffolding", async (
   await prepareGeneratedWorkspace(current);
 
   assert.equal(existsSync(current), false);
-  assert.equal(existsSync(staleA) && existsSync(staleB), false);
+  assert.equal(existsSync(staleA), false);
+  assert.equal(existsSync(staleB), false);
 });
 
 test("deployer removes contract npm install artifacts after compile attempts", async () => {
