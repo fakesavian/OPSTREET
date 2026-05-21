@@ -22,3 +22,7 @@ apps/web/tsconfig.tsbuildinfo
 .vercel
 buidl-opnet-plugin/
 pixel-agents/
+# Hermes / FAKEbot local agent artifacts (do not commit local reports)
+.hermes/
+reports/*.md
+!reports/README.md
