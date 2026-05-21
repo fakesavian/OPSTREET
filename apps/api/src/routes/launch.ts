@@ -33,8 +33,8 @@ import type { LaunchStatus, LaunchType, LiquidityToken } from "@opfun/shared";
 
 const GENERATED_DIR = resolveGeneratedDir(import.meta.url);
 
-const BOB_TIMEOUT_MS = 60_000;
-const BUILD_STALE_MS = BOB_TIMEOUT_MS + 30_000;
+const BOB_TIMEOUT_MS = 12 * 60_000;
+const BUILD_STALE_MS = BOB_TIMEOUT_MS + 2 * 60_000;
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
     promise,
@@ -228,17 +228,16 @@ export async function queueLaunchBuildForProject(
 
   await setLaunchStatus(project.id, "DRAFT", "BUILDING", { launchError: null });
 
-  // Serverless runtimes can freeze/kill work scheduled after the response. Run
-  // the compile pipeline inside this request, bounded by BOB_TIMEOUT_MS, so the
-  // project cannot remain in BUILDING forever while the client polls.
-  await runBuild(project, app);
+  // Compile can exceed reverse-proxy request limits because generated OP_NET
+  // contracts install compiler deps and may build token + curve artifacts. Keep
+  // the HTTP action fast, then let the long-lived API process finish the build
+  // and let the client poll launch-status. BUILD_STALE_MS recovers abandoned
+  // workers instead of leaving the UI in BUILDING forever.
+  runBuild(project, app).catch((err: unknown) => {
+    app.log.error(err, `launch-build failed for project ${project.id}`);
+  });
 
-  const afterBuild = await prisma.project.findUnique({ where: { id: project.id } });
-  return {
-    ok: true,
-    projectId: project.id,
-    launchStatus: afterBuild ? currentLaunchStatus(afterBuild) : "BUILDING",
-  };
+  return { ok: true, projectId: project.id, launchStatus: "BUILDING" };
 }
 
 function resolvePoolPair(project: {

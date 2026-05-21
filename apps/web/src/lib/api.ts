@@ -857,9 +857,11 @@ export async function launchBuild(projectId: string): Promise<{ message: string;
     // other POST actions and reaches the idempotent launch-build route.
     body: JSON.stringify({}),
   }, "starting launch build");
+  if (res.status === 504) {
+    return { message: "Build is still running", launchStatus: "BUILDING" };
+  }
   if (!res.ok && res.status !== 202) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as { error?: string }).error ?? `HTTP ${res.status}`);
+    throw new Error(await readErrorMessage(res, "Starting launch build failed"));
   }
   return res.json() as Promise<{ message: string; launchStatus: string }>;
 }
