@@ -19,6 +19,7 @@ import { z } from "zod";
 import { prisma } from "../db.js";
 import { verifyWalletToken } from "../middleware/verifyWalletToken.js";
 import { assertLaunchTransition } from "../launchMachine.js";
+import { resolveCompiledTokenWasmPath, resolveLaunchBuildOutcome } from "../launchBuildOutcome.js";
 import {
   RuntimeConfigError,
   OPNET_FEE_RECIPIENT,
@@ -300,7 +301,18 @@ export async function launchRoutes(app: FastifyInstance) {
         });
       }
 
-      const wasmPath = path.join(GENERATED_DIR, project.id, "contract", "build", `${project.ticker}.wasm`);
+      const wasmPath = resolveCompiledTokenWasmPath(
+        GENERATED_DIR,
+        project.id,
+        project.ticker,
+        projectLaunchType(project),
+      );
+      if (!wasmPath) {
+        return reply.status(409).send({
+          error: "Compiled contract WASM is not available yet. Retry the build before signing deploy.",
+        });
+      }
+
       let wasm: Buffer;
       try {
         wasm = await readFile(wasmPath);
@@ -1021,27 +1033,43 @@ async function runBuild(project: any, app: FastifyInstance): Promise<void> {
       return;
     }
 
-    if (output.status === "FAILED") {
-      await failLaunch(projectId, "BUILDING", output.error ?? "Build failed");
+    const outcome = resolveLaunchBuildOutcome(output);
+    if (outcome.kind === "buildNotReady") {
+      await prisma.checkRun.create({
+        data: {
+          projectId,
+          type: "DEPLOY",
+          status: "WARN",
+          outputJson: JSON.stringify({
+            deployStatus: output.status,
+            wasmPath: output.wasmPath,
+            packageDir: output.packageDir,
+            compiled: !!output.wasmPath,
+            error: outcome.error,
+          }),
+        },
+      });
+      await failLaunch(projectId, "BUILDING", outcome.error);
       return;
     }
 
-    // PACKAGE_READY or COMPILED — both mean artifact is ready for wallet deploy
+    // COMPILED with an actual token WASM — ready for wallet deploy.
     // Note: we do NOT auto-deploy. The user's wallet must sign.
     await setLaunchStatus(projectId, "BUILDING", "AWAITING_WALLET_DEPLOY", {
-      buildHash: output.buildHash,
+      buildHash: outcome.buildHash,
     });
 
     await prisma.checkRun.create({
       data: {
         projectId,
         type: "DEPLOY",
-        status: output.wasmPath ? "OK" : "WARN",
+        status: "OK",
         outputJson: JSON.stringify({
           deployStatus: output.status,
-          wasmPath: output.wasmPath,
+          wasmPath: outcome.wasmPath,
+          curveWasmPath: outcome.curveWasmPath,
           packageDir: output.packageDir,
-          compiled: !!output.wasmPath,
+          compiled: true,
         }),
       },
     });
