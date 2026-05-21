@@ -277,66 +277,87 @@ function resolveAscCommand(contractDir: string): string | null {
 /**
  * Step 2: try to compile the AssemblyScript contract(s).
  * For bonding curve deployments, compiles token then curve in sequence.
- * Returns { wasmPath, curveWasmPath } — null paths indicate compile failure.
+ * Returns compile paths plus a compile error when compilation was attempted and failed.
  */
-function tryCompile(input: DeployInput): { wasmPath: string | null; curveWasmPath: string | null } {
+function tryCompile(input: DeployInput): { wasmPath: string | null; curveWasmPath: string | null; error?: string } {
   const isBondingCurve = !!input.bondingCurve;
   const tokenContractDir = isBondingCurve
     ? path.join(input.generatedDir, "contract", "token")
     : path.join(input.generatedDir, "contract");
   const curveContractDir = path.join(input.generatedDir, "contract", "curve");
 
-  const tokenWasm = compileSingleContract(input, tokenContractDir, `${input.ticker}.wasm`);
-  const curveWasm = isBondingCurve
+  const token = compileSingleContract(input, tokenContractDir, `${input.ticker}.wasm`);
+  const curve = isBondingCurve
     ? compileSingleContract(input, curveContractDir, "BondingCurve.wasm")
-    : null;
+    : { wasmPath: null as string | null };
 
-  return { wasmPath: tokenWasm, curveWasmPath: curveWasm };
+  const errors = [token.error, curve.error].filter(Boolean) as string[];
+  return {
+    wasmPath: token.wasmPath,
+    curveWasmPath: curve.wasmPath,
+    ...(errors.length > 0 ? { error: errors.join("\n\n") } : {}),
+  };
 }
 
-function compileSingleContract(input: DeployInput, contractDir: string, wasmName: string): string | null {
+function compileSingleContract(input: DeployInput, contractDir: string, wasmName: string): { wasmPath: string | null; error?: string } {
   const wasmPath = path.join(contractDir, "build", wasmName);
   const requiredAscPrefix = process.env["ASC_VERSION_PREFIX"]?.trim() || "0.29";
 
   // Already compiled?
-  if (existsSync(wasmPath)) return wasmPath;
+  if (existsSync(wasmPath)) return { wasmPath };
 
   try {
     console.log("[deployer] Installing AS contract deps...");
-    execSync("npm install --prefer-online", {
+    execSync("npm install --prefer-online --no-audit --no-fund --loglevel=warn", {
       cwd: contractDir,
-      timeout: 120_000,
-      stdio: "inherit",
+      timeout: 240_000,
+      stdio: "pipe",
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
     });
 
     const ascCommand = resolveAscCommand(contractDir);
-    if (!ascCommand) return null;
+    if (!ascCommand) return { wasmPath: null };
 
     const ascVersion = readAscVersion(ascCommand, contractDir);
     if (!ascVersion) {
       console.warn("[deployer] asc not available. Set ASC_BIN or install @btc-vision/assemblyscript.");
-      return null;
+      return { wasmPath: null };
     }
 
     if (!ascVersion.includes(requiredAscPrefix)) {
       console.warn(
         `[deployer] asc version mismatch. required~${requiredAscPrefix}, got="${ascVersion}". Set ASC_BIN to a compatible binary.`,
       );
-      return null;
+      return { wasmPath: null };
     }
 
     console.log(`[deployer] Compiling AssemblyScript contract with asc ${ascVersion}...`);
     execSync(`${ascCommand} src/index.ts --config asconfig.json --target release`, {
       cwd: contractDir,
       timeout: 120_000,
-      stdio: "inherit",
+      stdio: "pipe",
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
     });
 
-    return existsSync(wasmPath) ? wasmPath : null;
+    return existsSync(wasmPath)
+      ? { wasmPath }
+      : { wasmPath: null, error: `AssemblyScript compile finished without producing ${wasmName}.` };
   } catch (err) {
-    console.warn("[deployer] Compile failed:", err instanceof Error ? err.message : String(err));
-    return null;
+    const error = formatCompileError(err);
+    console.warn("[deployer] Compile failed:", error);
+    return { wasmPath: null, error };
   }
+}
+
+function formatCompileError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const maybeOutput = err as Error & { stdout?: Buffer | string; stderr?: Buffer | string };
+  const stdout = typeof maybeOutput.stdout === "string" ? maybeOutput.stdout : maybeOutput.stdout?.toString("utf8") ?? "";
+  const stderr = typeof maybeOutput.stderr === "string" ? maybeOutput.stderr : maybeOutput.stderr?.toString("utf8") ?? "";
+  const output = [stdout, stderr].filter(Boolean).join("\n").trim();
+  return [err.message, output].filter(Boolean).join("\n").slice(0, 4000);
 }
 
 /**
@@ -397,13 +418,25 @@ export async function deployContract(input: DeployInput): Promise<DeployOutput> 
     await scaffoldDeployPackage(input);
 
     // Try to compile (returns { wasmPath, curveWasmPath })
-    const { wasmPath, curveWasmPath } = tryCompile(input);
+    const { wasmPath, curveWasmPath, error: compileError } = tryCompile(input);
 
     // For bonding curve: require both WASMs to advance past PACKAGE_READY
     const tokenReady = !!wasmPath;
     const curveReady = !input.bondingCurve || !!curveWasmPath;
 
     if (!tokenReady || !curveReady) {
+      if (compileError) {
+        return {
+          status: "FAILED",
+          buildHash: input.buildHash,
+          packageDir,
+          wasmPath: wasmPath ?? undefined,
+          curveWasmPath: curveWasmPath ?? undefined,
+          instructions: buildInstructions(input, "compile"),
+          error: compileError,
+        };
+      }
+
       return {
         status: "PACKAGE_READY",
         buildHash: input.buildHash,

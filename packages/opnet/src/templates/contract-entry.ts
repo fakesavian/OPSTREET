@@ -48,7 +48,7 @@ export const CONTRACT_PACKAGE_JSON_TEMPLATE = `{
     "@assemblyscript/loader": "^0.28.9"
   },
   "overrides": {
-    "@noble/hashes": "2.0.1"
+    "@noble/hashes": "1.8.0"
   }
 }
 `;
