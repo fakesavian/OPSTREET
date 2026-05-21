@@ -104,23 +104,25 @@ async function setLaunchStatus(
   assertLaunchTransition(from, to);
   await prisma.project.update({
     where: { id: projectId },
-    data: { launchStatus: to, ...data },
+    data: {
+      launchStatus: to,
+      // A previous failed build can leave launchError populated. Once the launch
+      // has moved back into an active/non-failed state, stale build diagnostics
+      // must not leak into pre-confirm deploy/pool UI states.
+      ...(to === "FAILED" ? {} : { launchError: null }),
+      ...data,
+    },
   });
 }
 
 async function failLaunch(projectId: string, from: LaunchStatus, error: string): Promise<void> {
-  try {
-    assertLaunchTransition(from, "FAILED");
-  } catch {
-    // Already in a terminal state — just record the error
-    await prisma.project.update({
-      where: { id: projectId },
-      data: { launchError: error },
-    });
-    return;
-  }
-  await prisma.project.update({
-    where: { id: projectId },
+  assertLaunchTransition(from, "FAILED");
+
+  // Build workers run asynchronously. A stale worker can report failure after a
+  // newer flow has already advanced to wallet signing or deploy confirmation.
+  // Only fail the project if it is still in the state that spawned this failure.
+  await prisma.project.updateMany({
+    where: { id: projectId, launchStatus: from },
     data: { launchStatus: "FAILED", launchError: error },
   });
 }

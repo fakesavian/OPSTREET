@@ -80,9 +80,10 @@ export function LaunchPanel({ project, onStatusChange }: LaunchPanelProps) {
     project.status === "DEPLOY_PACKAGE_READY";
 
   const applyLaunchStatusToPage = useCallback((data: LaunchStatusResponse) => {
+    const nextLaunchStatus = data.launchStatus as ProjectDTO["launchStatus"];
     onStatusChange(data.status, {
-      launchStatus: data.launchStatus as ProjectDTO["launchStatus"],
-      launchError: data.launchError,
+      launchStatus: nextLaunchStatus,
+      launchError: nextLaunchStatus === "FAILED" ? data.launchError : null,
       contractAddress: data.contractAddress,
       deployTx: data.deployTx,
       buildHash: data.buildHash,
