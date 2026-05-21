@@ -26,3 +26,5 @@ pixel-agents/
 .hermes/
 reports/*.md
 !reports/README.md
+# Local OP_NET launch build workspaces/npm installs
+.opfun-generated/
