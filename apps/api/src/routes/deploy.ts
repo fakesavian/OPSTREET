@@ -1,12 +1,10 @@
 import type { FastifyInstance } from "fastify";
-import path from "node:path";
-import { resolveGeneratedDir } from "../generatedDir.js";
+import { resolveGeneratedProjectDir } from "../generatedDir.js";
 import { z } from "zod";
 import { prisma } from "../db.js";
 import { deployContract } from "@opfun/opnet";
 import { assertCanTransition } from "../statusMachine.js";
 
-const GENERATED_DIR = resolveGeneratedDir(import.meta.url);
 
 const ADMIN_SECRET = process.env["ADMIN_SECRET"] ?? "dev-secret-change-me";
 
@@ -221,7 +219,7 @@ async function runDeploy(project: any, checkRunId: string, app: FastifyInstance)
         | "YSLOHM"
         | undefined,
       liquidityAmount: (project as Record<string, unknown>)["liquidityAmount"] as string | undefined,
-      generatedDir: path.join(GENERATED_DIR, projectId),
+      generatedDir: resolveGeneratedProjectDir(import.meta.url, projectId),
     });
 
     const newStatus =

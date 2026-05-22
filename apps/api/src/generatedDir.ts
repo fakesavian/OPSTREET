@@ -27,3 +27,10 @@ export function resolveGeneratedDir(importMetaUrl: string): string {
 
   return localRepoGeneratedDir;
 }
+
+export function resolveGeneratedProjectDir(importMetaUrl: string, projectId: string): string {
+  // Resolve lazily at call time. app.ts loads .env during buildApp(), after route
+  // modules are imported, so a module-level GENERATED_DIR freezes the fallback
+  // /tmp path and ignores OPFUN_GENERATED_DIR from apps/api/.env.
+  return path.join(resolveGeneratedDir(importMetaUrl), projectId);
+}

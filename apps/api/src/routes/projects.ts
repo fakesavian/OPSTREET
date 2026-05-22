@@ -1,6 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import path from "node:path";
-import { resolveGeneratedDir } from "../generatedDir.js";
+import { resolveGeneratedProjectDir } from "../generatedDir.js";
 import { prisma } from "../db.js";
 import { CreateProjectSchema } from "../schemas.js";
 import { slugify } from "@opfun/shared";
@@ -11,8 +10,6 @@ import { verifyWalletToken } from "../middleware/verifyWalletToken.js";
 import { recordFoundationProgressFromProjectCreate } from "../services/foundation.js";
 import { queueLaunchBuildForProject } from "./launch.js";
 
-// Resolve to packages/opnet/generated/
-const GENERATED_DIR = resolveGeneratedDir(import.meta.url);
 // On testnet (default) there is no creation limit — limit only applies on mainnet.
 // Set CREATE_PROJECT_DAILY_LIMIT in env to enforce a cap (mainnet deployments should set this).
 const CREATE_PROJECT_DAILY_LIMIT = process.env["CREATE_PROJECT_DAILY_LIMIT"]
@@ -319,7 +316,7 @@ async function runChecks(
   let buildHash = "";
 
   try {
-    const outputDir = path.join(GENERATED_DIR, projectId);
+    const outputDir = resolveGeneratedProjectDir(import.meta.url, projectId);
     const result = await withTimeout(
       scaffoldContract({
         projectId,
