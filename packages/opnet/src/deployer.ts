@@ -6,8 +6,9 @@
  */
 
 import fs from "node:fs/promises";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
 import {
   generateContractEntry,
@@ -306,6 +307,58 @@ function readAscVersion(ascCommand: string, cwd?: string): string | null {
 }
 
 
+
+function hasReusableContractDependencies(nodeModulesDir: string): boolean {
+  return (
+    existsSync(path.join(nodeModulesDir, "@btc-vision", "btc-runtime")) &&
+    existsSync(path.join(nodeModulesDir, "@btc-vision", "as-bignum")) &&
+    existsSync(path.join(nodeModulesDir, "@btc-vision", "assemblyscript")) &&
+    existsSync(path.join(nodeModulesDir, "@btc-vision", "opnet-transform")) &&
+    existsSync(path.join(nodeModulesDir, ".bin", process.platform === "win32" ? "asc.cmd" : "asc"))
+  );
+}
+
+function findReusableContractNodeModules(): string | null {
+  const configured = process.env["OPFUN_CONTRACT_NODE_MODULES_DIR"]?.trim();
+  if (configured) {
+    const resolved = path.resolve(configured);
+    return hasReusableContractDependencies(resolved) ? resolved : null;
+  }
+
+  let current = path.dirname(fileURLToPath(import.meta.url));
+  while (true) {
+    const candidate = path.join(current, "node_modules");
+    if (hasReusableContractDependencies(candidate)) return candidate;
+
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+function linkReusableContractDependencies(contractDir: string): boolean {
+  const nodeModulesDir = path.join(contractDir, "node_modules");
+  if (existsSync(nodeModulesDir)) return true;
+
+  const reusable = findReusableContractNodeModules();
+  if (!reusable) return false;
+
+  try {
+    // Serverless /tmp is often too small for npm's node_modules + tar cache.
+    // The generated contract dependency graph is fixed, so when the API bundle
+    // already contains those packages, link to that read-only install instead of
+    // extracting another ~700MB into /tmp/opfun-generated.
+    const symlinkType = process.platform === "win32" ? "junction" : "dir";
+    rmSync(nodeModulesDir, { recursive: true, force: true, maxRetries: 2 });
+    symlinkSync(reusable, nodeModulesDir, symlinkType);
+    return true;
+  } catch (err) {
+    console.warn("[deployer] Failed to link reusable contract node_modules:", err);
+    rmSync(nodeModulesDir, { recursive: true, force: true, maxRetries: 2 });
+    return false;
+  }
+}
+
 export function buildHermeticNpmEnv(cwd: string): NodeJS.ProcessEnv {
   const npmHome = path.join(cwd, ".npm-home");
   const npmCache = path.join(cwd, ".npm-cache");
@@ -376,15 +429,19 @@ function compileSingleContract(input: DeployInput, contractDir: string, wasmName
   if (existsSync(wasmPath)) return { wasmPath };
 
   try {
-    console.log("[deployer] Installing AS contract deps...");
-    execSync("npm install --prefer-online --no-audit --no-fund --loglevel=warn", {
-      cwd: contractDir,
-      timeout: 240_000,
-      stdio: "pipe",
-      encoding: "utf8",
-      maxBuffer: 10 * 1024 * 1024,
-      env: buildHermeticNpmEnv(contractDir),
-    });
+    if (linkReusableContractDependencies(contractDir)) {
+      console.log("[deployer] Using reusable AS contract deps from bundled node_modules.");
+    } else {
+      console.log("[deployer] Installing AS contract deps...");
+      execSync("npm install --prefer-online --no-audit --no-fund --loglevel=warn", {
+        cwd: contractDir,
+        timeout: 240_000,
+        stdio: "pipe",
+        encoding: "utf8",
+        maxBuffer: 10 * 1024 * 1024,
+        env: buildHermeticNpmEnv(contractDir),
+      });
+    }
 
     const ascCommand = resolveAscCommand(contractDir);
     if (!ascCommand) return { wasmPath: null };
